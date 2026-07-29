@@ -1,0 +1,177 @@
+// Package model defines Sphinxor's intermediate model: the
+// framework-independent representation of an application's authorization
+// surface, extracted from source code.
+//
+// The shape here is the normalized, ID-referenced collection design
+// accepted in docs/decisions/0002-intermediate-model-structure.md — flat
+// collections referencing each other by ID, rather than a nested tree.
+package model
+
+// ID identifies an entity within a single Model. IDs are only meaningful
+// within the Model they were produced by; nothing here assumes global
+// uniqueness across separate analysis runs.
+//
+// Endpoint IDs are the exception: they are derived deterministically from
+// HTTPMethod and Path (see NewEndpointID), so the same route produces the
+// same ID across two separate runs. That stability is what the allowlist
+// matcher (docs/decisions/0003-allowlist-format.md) and, later, v1's drift
+// diffing rely on to recognize "the same endpoint" across two points in
+// time.
+type ID string
+
+// HTTPMethod is an HTTP verb as declared on a NestJS route decorator.
+type HTTPMethod string
+
+const (
+	MethodGet    HTTPMethod = "GET"
+	MethodPost   HTTPMethod = "POST"
+	MethodPut    HTTPMethod = "PUT"
+	MethodPatch  HTTPMethod = "PATCH"
+	MethodDelete HTTPMethod = "DELETE"
+)
+
+// Model is the full result of analyzing one project at one point in time:
+// every entity extraction found, plus every finding the lint rules
+// produced from them.
+type Model struct {
+	Controllers       []Controller
+	Endpoints         []Endpoint
+	GuardApplications []GuardApplication
+	RoleDeclarations  []RoleDeclaration
+	RoleReferences    []RoleReference
+	Findings          []Finding
+}
+
+// Controller is a NestJS @Controller() class. It is not itself part of the
+// collection set enumerated in ADR 0002, but Endpoint.ControllerID needs
+// something to reference, so it's included here to keep the model
+// self-contained.
+type Controller struct {
+	ID       ID
+	Name     string
+	BasePath string
+	File     string
+	Line     int
+}
+
+// Endpoint is one route: an HTTP method bound to a path, on a specific
+// controller handler method.
+type Endpoint struct {
+	ID           ID
+	HTTPMethod   HTTPMethod
+	Path         string // full path: controller base path + method path
+	HandlerName  string
+	ControllerID ID
+	File         string
+	Line         int
+}
+
+// NewEndpointID derives an Endpoint's stable ID from its method and path,
+// per the "shared, structure-independent points" section of ADR 0002. This
+// is the identity the allowlist matcher and v1's drift diffing key on.
+//
+// This identity breaks if a route's path is renamed between two analysis
+// runs — an accepted, documented limitation (ADR 0002), not an oversight.
+func NewEndpointID(method HTTPMethod, path string) ID {
+	return ID(string(method) + " " + path)
+}
+
+// GuardScope records whether a GuardApplication's decorator was found at
+// the controller (class) level or the handler (method) level in source.
+//
+// A class-level guard applies to every endpoint on that controller.
+// Extraction is expected to expand a class-level @UseGuards() into one
+// GuardApplication per affected Endpoint (each carrying ScopeClass), rather
+// than a separate controller-scoped collection — this keeps "does this
+// endpoint have a guard" a direct filter over GuardApplications, at the
+// cost of the same class-level guard appearing once per endpoint. That
+// duplication is regenerated on every analysis run, not hand-maintained,
+// so it isn't a drift risk the way a hand-maintained file would be.
+type GuardScope string
+
+const (
+	ScopeClass  GuardScope = "class"
+	ScopeMethod GuardScope = "method"
+)
+
+// GuardApplication is one authorization guard found protecting one
+// Endpoint — e.g. a NestJS @UseGuards(RolesGuard) application.
+type GuardApplication struct {
+	ID         ID
+	EndpointID ID
+	GuardName  string
+	AppliedAt  GuardScope
+	File       string
+	Line       int
+}
+
+// RoleDeclarationKind records how a role's canonical declaration was
+// found, if at all. NestJS has no built-in role registry — projects
+// declare roles as a TypeScript enum, as const values, or not at all
+// (bare string literals passed directly to a decorator).
+type RoleDeclarationKind string
+
+const (
+	RoleDeclarationEnum      RoleDeclarationKind = "enum"
+	RoleDeclarationConst     RoleDeclarationKind = "const"
+	RoleDeclarationNoneFound RoleDeclarationKind = "none-found"
+)
+
+// RoleDeclaration is a role's canonical declaration site, when one can be
+// found. Its Name is the stable key used to diff role declarations across
+// two analysis runs (ADR 0002).
+type RoleDeclaration struct {
+	ID   ID
+	Name string
+	Kind RoleDeclarationKind
+	File string
+	Line int
+}
+
+// RoleReference is one place in the code where a role is required —
+// typically a string literal argument to a @Roles()-style decorator,
+// attached to a GuardApplication.
+//
+// RoleDeclarationID is nil when no matching RoleDeclaration was found
+// (e.g. the project uses bare string literals with no enum or const
+// backing them). This is an explicit, honest "no declaration found"
+// state — it is never inferred into existence.
+type RoleReference struct {
+	ID                 ID
+	GuardApplicationID ID
+	RoleDeclarationID  *ID
+	RawLiteral         string
+	File               string
+	Line               int
+}
+
+// Confidence is the confidence grade attached to a Finding. Sphinxor never
+// reports binary vulnerable/not-vulnerable results (docs/vision.md) —
+// every finding carries an honestly stated confidence grade instead.
+//
+// The concrete set of grades is not yet decided: see
+// docs/decisions/0004-confidence-level-granularity.md (Proposed). This
+// type exists so Finding has a stable field to compile against without
+// hardcoding grades ahead of that decision.
+type Confidence string
+
+// FindingSubjectKind identifies what kind of entity a Finding is about,
+// via Finding.SubjectID.
+type FindingSubjectKind string
+
+const (
+	SubjectEndpoint        FindingSubjectKind = "endpoint"
+	SubjectRoleDeclaration FindingSubjectKind = "role_declaration"
+)
+
+// Finding is one lint result: a single rule's judgment about a single
+// subject entity, at a stated confidence.
+type Finding struct {
+	ID          ID
+	RuleID      string
+	Confidence  Confidence
+	SubjectID   ID
+	SubjectKind FindingSubjectKind
+	Message     string
+	Allowlisted bool
+}
