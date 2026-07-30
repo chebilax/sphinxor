@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/chebilax/sphynxor/internal/model"
+	"github.com/chebilax/sphinxor/internal/model"
 )
 
 // Format selects the RBAC matrix output format.

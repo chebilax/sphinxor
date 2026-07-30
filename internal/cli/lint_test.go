@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/chebilax/sphynxor/internal/model"
+	"github.com/chebilax/sphinxor/internal/model"
 )
 
 func TestHasBlockingFindings(t *testing.T) {

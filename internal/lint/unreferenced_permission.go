@@ -1,6 +1,6 @@
 package lint
 
-import "github.com/chebilax/sphynxor/internal/model"
+import "github.com/chebilax/sphinxor/internal/model"
 
 // PermissionDeclaredButUnreferenced flags a RoleDeclaration with no
 // RoleReference pointing at it anywhere in the model — a role that's

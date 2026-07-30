@@ -5,10 +5,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/chebilax/sphynxor/internal/extract/nestjs"
-	"github.com/chebilax/sphynxor/internal/lint"
-	"github.com/chebilax/sphynxor/internal/model"
-	"github.com/chebilax/sphynxor/internal/report"
+	"github.com/chebilax/sphinxor/internal/extract/nestjs"
+	"github.com/chebilax/sphinxor/internal/lint"
+	"github.com/chebilax/sphinxor/internal/model"
+	"github.com/chebilax/sphinxor/internal/report"
 )
 
 func newLintCmd() *cobra.Command {

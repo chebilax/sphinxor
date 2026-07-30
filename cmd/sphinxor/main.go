@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/chebilax/sphynxor/internal/cli"
+	"github.com/chebilax/sphinxor/internal/cli"
 )
 
 func main() {

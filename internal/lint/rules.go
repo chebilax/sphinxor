@@ -2,7 +2,7 @@
 // lint rules from docs/vision.md, applied to an extracted model.
 package lint
 
-import "github.com/chebilax/sphynxor/internal/model"
+import "github.com/chebilax/sphinxor/internal/model"
 
 // Rule is a single lint rule.
 type Rule interface {

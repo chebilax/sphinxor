@@ -1,6 +1,6 @@
 package lint
 
-import "github.com/chebilax/sphynxor/internal/model"
+import "github.com/chebilax/sphinxor/internal/model"
 
 // EmptyRole flags a role with no real content — e.g. a guard application
 // whose role reference resolves to no permissions, or a role declaration

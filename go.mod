@@ -1,4 +1,4 @@
-module github.com/chebilax/sphynxor
+module github.com/chebilax/sphinxor
 
 go 1.26
 

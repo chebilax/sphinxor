@@ -6,7 +6,7 @@ package nestjs
 import (
 	"errors"
 
-	"github.com/chebilax/sphynxor/internal/model"
+	"github.com/chebilax/sphinxor/internal/model"
 )
 
 var errNotImplemented = errors.New("nestjs: extraction not implemented yet")

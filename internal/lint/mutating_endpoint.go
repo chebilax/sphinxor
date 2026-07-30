@@ -1,6 +1,6 @@
 package lint
 
-import "github.com/chebilax/sphynxor/internal/model"
+import "github.com/chebilax/sphinxor/internal/model"
 
 // MutatingEndpointWithoutAccessControl flags a mutating endpoint
 // (POST/PUT/PATCH/DELETE) with no GuardApplication found protecting it.
