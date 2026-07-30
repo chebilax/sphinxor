@@ -63,12 +63,14 @@ func runLint(cmd *cobra.Command, dir string, format report.Format) error {
 // from the first functional version onward.
 var errBlockingFindings = fmt.Errorf("sphinxor: blocking findings reported")
 
-// hasBlockingFindings decides which findings gate the exit code.
-//
-// Not yet implemented: this depends on Confidence's concrete grades, which
-// are still Proposed in docs/decisions/0004-confidence-level-granularity.md.
-// Once that's Accepted, this becomes a filter over findings by confidence
-// (and, per vision.md, only non-allowlisted ones).
+// hasBlockingFindings reports whether any non-allowlisted, high-confidence
+// finding exists — the CI-gating boundary from
+// docs/decisions/0004-confidence-level-granularity.md.
 func hasBlockingFindings(findings []model.Finding) bool {
-	panic("cli: hasBlockingFindings not implemented yet (pending ADR 0004)")
+	for _, f := range findings {
+		if f.Confidence == model.ConfidenceHigh && !f.Allowlisted {
+			return true
+		}
+	}
+	return false
 }

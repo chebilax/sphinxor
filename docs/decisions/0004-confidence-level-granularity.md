@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — pending confirmation before any implementation starts.
+Accepted.
 
 ## Context
 
@@ -14,29 +14,35 @@ This was deferred out of [`0002-intermediate-model-structure.md`](0002-intermedi
 
 ## Decision
 
-**Not yet made.** Three options, all consistent with "no binary vulnerable/not-vulnerable," differing in how much they ask v0.1 to calibrate.
+**Two-tier: `High` / `Low`.**
 
-### Option A — Two-tier: `HighConfidence` / `NeedsReview`
+CI gating is binary at the end regardless of how many grades exist above it — a build either fails or it doesn't. `High` blocks CI (vision.md's "non-zero exit code on high-confidence findings"); `Low` is a non-blocking warning in the output. That's exactly the boundary `hasBlockingFindings` needs, with no intermediate configuration layer (no threshold to set, no default to justify).
 
-Takes `vision.md`'s own wording as the literal spec: exactly two grades. `HighConfidence` gates CI (non-zero exit); `NeedsReview` is reported but never gates. No further subdivision.
+Label choice: `High` / `Low` over `Confirmed` / `Suspected`. `Confirmed` asserts a finding is true; Sphinxor's heuristic analysis never gets to assert that — it can only say how confident the heuristic is. `High`/`Low` names the confidence, not the underlying claim, which is also the framing `vision.md` itself already uses ("high-confidence findings / needs manual review").
 
-- **Pro**: directly grounded in `vision.md`'s text — nothing invented. Minimal calibration burden: extraction and lint rules only ever have to answer one yes/no question ("is this certain enough to fail a build over"), not rank degrees of uncertainty. The CI-gating rule vision.md specifies is a one-line filter.
-- **Con**: no room to distinguish "worth a comment on the PR" from "worth ignoring by default" within the non-gating bucket — everything that isn't high-confidence lands in one undifferentiated pile. If that pile turns out noisy in practice, there's no grade to de-prioritize by without a later migration.
+The three-tier and numeric alternatives below are rejected for v0.1, not shelved indefinitely: a third tier is worth revisiting for v1, once the diff feature and a larger rule set produce real, genuine middle-ground cases to calibrate against — decided then, from actual findings, not pre-emptively invented now on no evidence.
 
-### Option B — Three-tier ordinal: `High` / `Medium` / `Low`
+### Option A — Two-tier: `High` / `Low` (chosen)
 
-CI gates on `High` by default (matching vision.md's rule), with the threshold configurable later. `Medium` and `Low` exist to let output and future tooling (dashboards, PR comments) prioritize without a hard gate.
+Exactly two grades, per `vision.md`'s own wording. `High` gates CI; `Low` is reported but never gates. No further subdivision.
+
+- **Pro**: directly grounded in `vision.md`'s text — nothing invented. Minimal calibration burden: extraction and lint rules only ever have to answer one yes/no question ("is this certain enough to fail a build over"), not rank degrees of uncertainty. The CI-gating rule vision.md specifies is a one-line filter, with no threshold configuration to design or justify.
+- **Con**: no room to distinguish "worth a comment on the PR" from "worth ignoring by default" within the non-gating bucket — everything that isn't high-confidence lands in one undifferentiated pile. Accepted as a v1 question (see Decision above), not a v0.1 gap to pre-solve.
+
+### Option B — Three-tier ordinal: `High` / `Medium` / `Low` (rejected for v0.1)
+
+CI gates on `High` by default, with the threshold configurable later. `Medium` and `Low` exist to let output and future tooling (dashboards, PR comments) prioritize without a hard gate.
 
 - **Pro**: more room to be honest about degrees of uncertainty instead of collapsing them into one bucket — a guard resolved through straightforward decorator composition and one resolved through a heuristic that had to guess at an ambiguous case are both "not gating," but they aren't equally certain, and this lets that show.
-- **Con**: `Medium` needs its own honest, articulable definition — what specifically demotes a finding from `High` to `Medium` rather than `Low`? Inventing that boundary now, before real NestJS fixtures show what the actual gradations of uncertainty look like in practice, risks encoding a distinction that doesn't match reality and has to be redrawn later anyway.
+- **Con, and reason for rejection**: `Medium` needs its own honest, articulable definition — what specifically demotes a finding from `High` to `Medium` rather than `Low`? Inventing that boundary now, before real NestJS fixtures and a larger rule set show what the actual gradations of uncertainty look like in practice, risks encoding a distinction that doesn't match reality and has to be redrawn later anyway. Revisit once v1's diff feature and more rules create real cases to calibrate the middle tier against.
 
-### Option C — Numeric score (0.0–1.0) with named threshold bands
+### Option C — Numeric score (0.0–1.0) with named threshold bands (rejected)
 
 Findings carry a continuous score; CI gates above a configurable threshold (default matching vision.md's "high-confidence" bar).
 
 - **Pro**: most flexible for future tuning — thresholds can move without a data model change, and a future scoring heuristic could produce a real number instead of being forced into a bucket.
-- **Con**: a bare number reads as more precise than a heuristic, confidence-graded tool can honestly justify — `vision.md`'s entire positioning is about not overstating what static analysis can promise, and a score like `0.73` implies a calibration exercise (what does 0.73 mean, precisely?) that hasn't been done and that v0.1's rule set (three simple rules) doesn't produce enough data to justify. This risks reintroducing, in a different form, exactly the false precision `vision.md` warns general-purpose SAST tools already got wrong.
+- **Con, and reason for rejection**: a bare number reads as more precise than a heuristic, confidence-graded tool can honestly justify — `vision.md`'s entire positioning is about not overstating what static analysis can promise, and a score like `0.73` implies a calibration exercise (what does 0.73 mean, precisely?) that hasn't been done and that v0.1's rule set (three simple rules) doesn't produce enough data to justify. This would reintroduce, in a different form, exactly the false precision `vision.md` warns general-purpose SAST tools already got wrong — unearned rigor, not honest confidence-grading. Rejected explicitly, not just deprioritized.
 
 ## Consequences
 
-Whichever option is chosen fills in `Confidence`'s concrete values in `internal/model/model.go`, and unblocks `hasBlockingFindings` in `internal/cli/lint.go`, which is currently a stub pending this decision. Each of the three v0.1 lint rules will need to assign a grade to every finding it produces, so this also shapes how much justification each rule has to carry for the grade it picks.
+`Confidence` in `internal/model/model.go` now has two concrete values, `ConfidenceHigh` and `ConfidenceLow`. `hasBlockingFindings` in `internal/cli/lint.go` is unblocked: it fails the run when any non-allowlisted finding is `ConfidenceHigh`. Each of the three v0.1 lint rules must assign one of these two grades to every finding it produces — there is no third option to fall back on if a rule's certainty doesn't cleanly fit either bucket, which is an intentional forcing function, not an oversight.

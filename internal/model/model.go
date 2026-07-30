@@ -149,11 +149,16 @@ type RoleReference struct {
 // reports binary vulnerable/not-vulnerable results (docs/vision.md) —
 // every finding carries an honestly stated confidence grade instead.
 //
-// The concrete set of grades is not yet decided: see
-// docs/decisions/0004-confidence-level-granularity.md (Proposed). This
-// type exists so Finding has a stable field to compile against without
-// hardcoding grades ahead of that decision.
+// Per docs/decisions/0004-confidence-level-granularity.md, there are
+// exactly two grades: ConfidenceHigh gates CI, ConfidenceLow is a
+// non-blocking warning. A third, middle tier was deliberately deferred to
+// v1, once real cases exist to calibrate it against.
 type Confidence string
+
+const (
+	ConfidenceHigh Confidence = "high"
+	ConfidenceLow  Confidence = "low"
+)
 
 // FindingSubjectKind identifies what kind of entity a Finding is about,
 // via Finding.SubjectID.
