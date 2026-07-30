@@ -167,6 +167,11 @@ type FindingSubjectKind string
 const (
 	SubjectEndpoint        FindingSubjectKind = "endpoint"
 	SubjectRoleDeclaration FindingSubjectKind = "role_declaration"
+	// SubjectAllowMarker is used by the stale-allow-marker finding
+	// (docs/decisions/0003-allowlist-format.md), whose subject is the
+	// marker's own location rather than any entity in the model — there is,
+	// by definition, no recognized endpoint for it to attach to.
+	SubjectAllowMarker FindingSubjectKind = "allow_marker"
 )
 
 // Finding is one lint result: a single rule's judgment about a single

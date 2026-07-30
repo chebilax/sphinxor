@@ -32,20 +32,16 @@ func newLintCmd() *cobra.Command {
 	return cmd
 }
 
-// runLint wires extraction, rule evaluation, and reporting together, then
-// decides the process exit code.
-//
-// Extraction and rule evaluation are not yet implemented (see
-// internal/extract/nestjs and internal/lint); this wiring exists so the
-// command's shape — flags, argument handling, output plumbing — is
-// reviewable on its own, ahead of that logic landing.
+// runLint wires extraction, allowlist matching, rule evaluation, and
+// reporting together, then decides the process exit code.
 func runLint(cmd *cobra.Command, dir string, format report.Format) error {
-	m, err := nestjs.Extract(dir)
+	m, allow, err := nestjs.Extract(dir)
 	if err != nil {
 		return fmt.Errorf("extracting model: %w", err)
 	}
 
-	findings := lint.Run(m, lint.DefaultRules())
+	findings := lint.Run(m, lint.DefaultRules(), allow.AllowlistedEndpoints)
+	findings = append(findings, allow.StaleMarkers...)
 
 	if err := report.Write(cmd.OutOrStdout(), m, findings, format); err != nil {
 		return fmt.Errorf("writing report: %w", err)
