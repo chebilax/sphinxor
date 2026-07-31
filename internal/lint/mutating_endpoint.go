@@ -11,14 +11,16 @@ import (
 // no @UseGuards() and no @Roles() at either the method or controller
 // level.
 //
-// Confidence: Low. This rule only sees guards declared via decorators on
-// the endpoint or its controller. A global guard (APP_GUARD provider,
-// app.useGlobalGuards()) or AOP-style interceptor can protect an endpoint
-// invisibly to this syntactic analysis — Sphinxor does not parse module
-// provider wiring in v0.1 (see the PR's known blind spots). An endpoint
+// Confidence: Low. This rule only sees literal @UseGuards()/@Roles()
+// decorator call sites on the endpoint or its controller. A global guard
+// (APP_GUARD provider, app.useGlobalGuards()), an AOP-style interceptor,
+// or a custom composite decorator built with applyDecorators() (confirmed
+// on real code, not hypothetical — see docs/limitations.md) can all
+// protect an endpoint invisibly to this syntactic analysis. An endpoint
 // flagged here may genuinely be unguarded, or may be protected by
 // something outside this rule's field of view; either way, it's worth a
-// human look, not an automatic failure.
+// human look, not an automatic failure. See docs/limitations.md for the
+// full, current list of what this rule cannot see.
 type MutatingEndpointWithoutAccessControl struct{}
 
 func (MutatingEndpointWithoutAccessControl) ID() string {

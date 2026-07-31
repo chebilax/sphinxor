@@ -7,6 +7,7 @@ This is the entry point for Sphinxor's documentation. Read this first if you're 
 - [`vision.md`](vision.md) — project vision, positioning, and philosophy. The single source of truth for scope. Read this before anything else.
 - [`decisions/`](decisions/) — Architecture Decision Records (ADRs). One file per non-trivial decision, numbered, written at the moment the decision is made. This is where "why" lives — read it before assuming a design choice was arbitrary.
 - [`testing.md`](testing.md) — testing philosophy: what gets validated, and against what.
+- [`limitations.md`](limitations.md) — known gaps in what the current static analysis can see, found empirically against real code. Not the roadmap — read this before trusting a clean run against your own code.
 - [`benchmarks.md`](benchmarks.md) — honest, numbers-based comparisons. Empty until real measurements exist.
 - [`roadmap-long-term.md`](roadmap-long-term.md) — vision beyond the v0.1/v1/v2 sequencing in `vision.md`, kept separate so it doesn't pollute short-term execution planning.
 
