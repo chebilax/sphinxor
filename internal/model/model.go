@@ -103,6 +103,17 @@ type GuardApplication struct {
 	AppliedAt  GuardScope
 	File       string
 	Line       int
+	// FromComposite is true when this GuardApplication was produced by
+	// resolving a project-defined composite decorator (one built with
+	// applyDecorators(), e.g. @Auth([...])) rather than a literal
+	// @UseGuards()/@Roles() call — see
+	// docs/decisions/0006-composite-decorator-resolution.md.
+	//
+	// The zero value, false, is the normal literal-decorator path: every
+	// GuardApplication built the way extraction has always built them
+	// gets the correct behavior with no explicit initialization. Only
+	// composite resolution sets this true.
+	FromComposite bool
 }
 
 // RoleDeclarationKind records how a role's canonical declaration was

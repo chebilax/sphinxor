@@ -11,11 +11,14 @@ import (
 // no @UseGuards() and no @Roles() at either the method or controller
 // level.
 //
-// Confidence: Low. This rule only sees literal @UseGuards()/@Roles()
-// decorator call sites on the endpoint or its controller. A global guard
-// (APP_GUARD provider, app.useGlobalGuards()), an AOP-style interceptor,
-// or a custom composite decorator built with applyDecorators() (confirmed
-// on real code, not hypothetical — see docs/limitations.md) can all
+// Confidence: Low. This rule sees literal @UseGuards()/@Roles() decorator
+// call sites, plus one level of composite-decorator resolution (ADR 0006:
+// a decorator built with applyDecorators(), resolved when it matches a
+// bounded, stated shape). A global guard (APP_GUARD provider,
+// app.useGlobalGuards()), an AOP-style interceptor, a multi-level
+// composite chain, or a composite outside ADR 0006's resolved shape
+// (conditional construction, destructured parameters, transformed
+// arguments — all confirmed on real code, not hypothetical) can still
 // protect an endpoint invisibly to this syntactic analysis. An endpoint
 // flagged here may genuinely be unguarded, or may be protected by
 // something outside this rule's field of view; either way, it's worth a

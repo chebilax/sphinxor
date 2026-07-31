@@ -52,3 +52,25 @@ func TestEmptyRole_NonRolesGuardsIgnored(t *testing.T) {
 		t.Fatalf("a non-Roles guard with no references should never trigger EmptyRole, got %+v", findings)
 	}
 }
+
+// TestEmptyRole_ExcludesFromComposite is the unit-level check for ADR
+// 0006's exclusion: a composite decorator's roles parameter commonly
+// defaults to an empty list (e.g. Auth(roles: RoleType[] = [])), meaning
+// an empty resolved role set is deliberate "authenticated, no specific
+// role" behavior, not the forgotten-argument smell this rule targets.
+func TestEmptyRole_ExcludesFromComposite(t *testing.T) {
+	m := &model.Model{
+		Endpoints: []model.Endpoint{
+			{ID: "ep", HTTPMethod: model.MethodPost, Path: "/things"},
+		},
+		GuardApplications: []model.GuardApplication{
+			{ID: "ga", EndpointID: "ep", GuardName: "Roles", FromComposite: true},
+		},
+	}
+
+	findings := EmptyRole{}.Check(m)
+
+	if len(findings) != 0 {
+		t.Errorf("a composite-resolved empty Roles application must not trigger empty-role, got %+v", findings)
+	}
+}

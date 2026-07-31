@@ -35,6 +35,10 @@ type pendingGuard struct {
 	roles []roleArg
 	file  string
 	line  int
+	// fromComposite is true when this pendingGuard was produced by
+	// resolving a composite decorator (docs/decisions/0006), not a
+	// literal @UseGuards()/@Roles() call.
+	fromComposite bool
 }
 
 type roleArg struct {
@@ -45,7 +49,7 @@ type roleArg struct {
 // extractControllers finds every @Controller() class in root, and every
 // route handler method within it, populating b.model and returning the
 // endpoint anchors needed for allowlist matching.
-func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID) []endpointAnchor {
+func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID, composites map[string]compositeDecorator) []endpointAnchor {
 	var anchors []endpointAnchor
 
 	for _, group := range groupDecorators(flattenTopLevel(root)) {
@@ -73,7 +77,7 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			Line:     int(group.decl.StartPoint().Row) + 1,
 		})
 
-		classGuards := pendingGuardsFromDecorators(group.decorators, src, file, roleByName)
+		classGuards := pendingGuardsFromDecorators(group.decorators, src, file, roleByName, composites)
 
 		body := group.decl.ChildByFieldName("body")
 		for _, methodGroup := range groupDecorators(namedChildren(body)) {
@@ -112,7 +116,7 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			})
 			anchors = append(anchors, endpointAnchor{EndpointID: endpointID, File: file, Line: anchorLine})
 
-			methodGuards := pendingGuardsFromDecorators(methodGroup.decorators, src, file, roleByName)
+			methodGuards := pendingGuardsFromDecorators(methodGroup.decorators, src, file, roleByName, composites)
 			b.applyGuards(endpointID, classGuards, model.ScopeClass)
 			b.applyGuards(endpointID, methodGuards, model.ScopeMethod)
 		}
@@ -157,8 +161,11 @@ func findHTTPVerbDecorator(decorators []*sitter.Node, src []byte) (decoratorCall
 // pendingGuardsFromDecorators reads @UseGuards(...) and @Roles(...)
 // decorators out of decorators, resolving role arguments against
 // roleByName immediately since it's already complete by the time
-// extraction reaches this pass.
-func pendingGuardsFromDecorators(decorators []*sitter.Node, src []byte, file string, roleByName map[string]model.ID) []pendingGuard {
+// extraction reaches this pass. A decorator that isn't literally named
+// UseGuards or Roles is checked against composites — a registered
+// composite decorator (docs/decisions/0006) is expanded to the
+// pendingGuards it implies; anything else is ignored, same as today.
+func pendingGuardsFromDecorators(decorators []*sitter.Node, src []byte, file string, roleByName map[string]model.ID, composites map[string]compositeDecorator) []pendingGuard {
 	var out []pendingGuard
 	for _, d := range decorators {
 		call, ok := parseDecorator(d, src)
@@ -179,6 +186,22 @@ func pendingGuardsFromDecorators(decorators []*sitter.Node, src []byte, file str
 				roles = append(roles, roleArg{raw: raw, declID: declID})
 			}
 			out = append(out, pendingGuard{kind: "roles", roles: roles, file: file, line: line})
+		default:
+			guardArgs, roleArgs, hasRoles, ok := resolveCompositeArgs(call, src, composites)
+			if !ok {
+				continue
+			}
+			for _, sn := range guardArgs {
+				out = append(out, pendingGuard{kind: "guard", name: guardArgName(sn.node, sn.src), file: file, line: line, fromComposite: true})
+			}
+			if hasRoles {
+				var roles []roleArg
+				for _, sn := range roleArgs {
+					raw, declID := resolveRoleArg(sn.node, sn.src, roleByName)
+					roles = append(roles, roleArg{raw: raw, declID: declID})
+				}
+				out = append(out, pendingGuard{kind: "roles", roles: roles, file: file, line: line, fromComposite: true})
+			}
 		}
 	}
 	return out
@@ -208,22 +231,24 @@ func (b *builder) applyGuards(endpointID model.ID, guards []pendingGuard, scope 
 		switch g.kind {
 		case "guard":
 			b.model.GuardApplications = append(b.model.GuardApplications, model.GuardApplication{
-				ID:         b.nextIDFor("guardapp"),
-				EndpointID: endpointID,
-				GuardName:  g.name,
-				AppliedAt:  scope,
-				File:       g.file,
-				Line:       g.line,
+				ID:            b.nextIDFor("guardapp"),
+				EndpointID:    endpointID,
+				GuardName:     g.name,
+				AppliedAt:     scope,
+				File:          g.file,
+				Line:          g.line,
+				FromComposite: g.fromComposite,
 			})
 		case "roles":
 			guardAppID := b.nextIDFor("guardapp")
 			b.model.GuardApplications = append(b.model.GuardApplications, model.GuardApplication{
-				ID:         guardAppID,
-				EndpointID: endpointID,
-				GuardName:  "Roles",
-				AppliedAt:  scope,
-				File:       g.file,
-				Line:       g.line,
+				ID:            guardAppID,
+				EndpointID:    endpointID,
+				GuardName:     "Roles",
+				AppliedAt:     scope,
+				File:          g.file,
+				Line:          g.line,
+				FromComposite: g.fromComposite,
 			})
 			for _, r := range g.roles {
 				b.model.RoleReferences = append(b.model.RoleReferences, model.RoleReference{

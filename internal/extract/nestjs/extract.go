@@ -36,15 +36,28 @@ func Extract(dir string) (*model.Model, AllowlistOutcome, error) {
 
 	b := newBuilder()
 
+	// Pass 0: composite decorator definitions, project-wide — a composite
+	// (e.g. @Auth(...)) can be defined in a different file than every
+	// place it's used (docs/decisions/0006), same as role enums below.
+	// Name collisions across files last-write-win; composite decorator
+	// names are not expected to collide within one project, and resolving
+	// that generally is out of scope for this heuristic.
+	composites := make(map[string]compositeDecorator)
+	for _, f := range files {
+		for name, cd := range collectCompositeDecorators(f.tree.RootNode(), f.src) {
+			composites[name] = cd
+		}
+	}
+
 	// Pass 1: role declarations, project-wide, before resolving any
 	// reference to them — a role can be declared in a different file than
 	// the one that references it (e.g. roles.enum.ts vs. users.controller.ts).
-	// Restricted to enums actually named by a @Roles() call somewhere (see
-	// roles.go) so unrelated enums (env config, status flags, ...) aren't
-	// mistaken for role registries.
+	// Restricted to enums actually named by a @Roles() call somewhere,
+	// literal or composite-resolved (see roles.go), so unrelated enums
+	// (env config, status flags, ...) aren't mistaken for role registries.
 	usedEnumNames := make(map[string]bool)
 	for _, f := range files {
-		for name := range collectRoleEnumNames(f.tree.RootNode(), f.src) {
+		for name := range collectRoleEnumNames(f.tree.RootNode(), f.src, composites) {
 			usedEnumNames[name] = true
 		}
 	}
@@ -63,7 +76,7 @@ func Extract(dir string) (*model.Model, AllowlistOutcome, error) {
 	// alongside extraction rather than as a separate project-wide pass.
 	outcome := AllowlistOutcome{AllowlistedEndpoints: make(map[model.ID]bool)}
 	for _, f := range files {
-		fileAnchors := extractControllers(f.tree.RootNode(), f.src, f.relPath, b, roleByName)
+		fileAnchors := extractControllers(f.tree.RootNode(), f.src, f.relPath, b, roleByName, composites)
 
 		allowlisted, stale := matchFileAllowlist(f.src, f.relPath, fileAnchors, b.nextID("finding"))
 		for _, id := range allowlisted {

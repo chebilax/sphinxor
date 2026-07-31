@@ -57,18 +57,28 @@ func extractRoleDeclarations(root *sitter.Node, src []byte, file string, next fu
 	return out
 }
 
-// collectRoleEnumNames scans the whole tree for @Roles(...) calls and
-// returns the set of enum names appearing as the object of a qualified
-// member-expression argument, e.g. @Roles(RoleEnum.admin) contributes
-// "RoleEnum". This is the filter extractRoleDeclarations applies.
-func collectRoleEnumNames(root *sitter.Node, src []byte) map[string]bool {
+// collectRoleEnumNames scans the whole tree for @Roles(...) calls —
+// literal, or resolved through a registered composite decorator
+// (docs/decisions/0006, e.g. @Auth([RoleType.USER])) — and returns the
+// set of enum names appearing as the object of a qualified
+// member-expression argument, e.g. RoleType.USER contributes "RoleType".
+// This is the filter extractRoleDeclarations applies.
+func collectRoleEnumNames(root *sitter.Node, src []byte, composites map[string]compositeDecorator) map[string]bool {
 	names := make(map[string]bool)
 	var walk func(n *sitter.Node)
 	walk = func(n *sitter.Node) {
 		if n.Type() == "decorator" {
-			if call, ok := parseDecorator(n, src); ok && call.Name == "Roles" {
-				for _, arg := range argumentNodes(call.Args) {
-					if qualified, ok := memberExpressionName(arg, src); ok {
+			if call, ok := parseDecorator(n, src); ok {
+				var roleArgs []sourceNode
+				if call.Name == "Roles" {
+					for _, arg := range argumentNodes(call.Args) {
+						roleArgs = append(roleArgs, sourceNode{node: arg, src: src})
+					}
+				} else if _, resolved, _, ok := resolveCompositeArgs(call, src, composites); ok {
+					roleArgs = resolved
+				}
+				for _, sn := range roleArgs {
+					if qualified, ok := memberExpressionName(sn.node, sn.src); ok {
 						if dot := strings.IndexByte(qualified, '.'); dot != -1 {
 							names[qualified[:dot]] = true
 						}
