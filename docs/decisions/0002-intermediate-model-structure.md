@@ -67,3 +67,5 @@ Controller
 ## Consequences
 
 The normalized collections above become the shape every NestJS extractor, all three v0.1 lint rules, the RBAC matrix serializer, and the allowlist matcher are built against. The RBAC matrix output (Markdown + JSON) is produced by a join/projection step over these collections rather than being the model's native shape — that projection is implementation, not a further design decision. Retrofitting a tree shape later would mean touching the extractor, all three lint rules, the serializer, and the allowlist matcher at once — this is exactly the kind of decision `vision.md` and `CONTRIBUTING.md` call out as needing an ADR *before* code, not after.
+
+**Amended by** [`0006-composite-decorator-resolution.md`](0006-composite-decorator-resolution.md), which adds a `FromComposite` field to `guardApplications`. Recorded here so the model's current shape is traceable from this ADR, not just discoverable by reading a later one.
