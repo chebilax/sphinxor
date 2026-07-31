@@ -26,7 +26,7 @@ export class UsersController {
 `
 	root, source := parseTS(t, src)
 	b := newBuilder()
-	usedEnums := collectRoleEnumNames(root, source)
+	usedEnums := collectRoleEnumNames(root, source, nil)
 	roleDecls := extractRoleDeclarations(root, source, "users.controller.ts", b.nextID("role"), usedEnums)
 	b.model.RoleDeclarations = roleDecls
 	roleByName := map[string]model.ID{}
@@ -34,7 +34,7 @@ export class UsersController {
 		roleByName[d.Name] = d.ID
 	}
 
-	anchors := extractControllers(root, source, "users.controller.ts", b, roleByName)
+	anchors := extractControllers(root, source, "users.controller.ts", b, roleByName, nil)
 
 	if len(b.model.Endpoints) != 2 {
 		t.Fatalf("got %d endpoints, want 2: %+v", len(b.model.Endpoints), b.model.Endpoints)
@@ -83,7 +83,7 @@ export class UsersController {
 `
 	root, source := parseTS(t, src)
 	b := newBuilder()
-	anchors := extractControllers(root, source, "f.ts", b, nil)
+	anchors := extractControllers(root, source, "f.ts", b, nil, nil)
 
 	if len(anchors) != 1 {
 		t.Fatalf("got %d anchors, want 1", len(anchors))
@@ -105,7 +105,7 @@ export class ThingsController {
 `
 	root, source := parseTS(t, src)
 	b := newBuilder()
-	extractControllers(root, source, "f.ts", b, nil)
+	extractControllers(root, source, "f.ts", b, nil, nil)
 
 	var rolesGuardApp *model.GuardApplication
 	for i := range b.model.GuardApplications {
@@ -139,11 +139,11 @@ export class ThingsController {
 `
 	root, source := parseTS(t, src)
 	b := newBuilder()
-	usedEnums := collectRoleEnumNames(root, source)
+	usedEnums := collectRoleEnumNames(root, source, nil)
 	if usedEnums["RoleEnum"] {
 		t.Fatalf("bare string literal should not mark RoleEnum as used")
 	}
-	extractControllers(root, source, "f.ts", b, nil)
+	extractControllers(root, source, "f.ts", b, nil, nil)
 
 	if len(b.model.RoleReferences) != 1 {
 		t.Fatalf("got %d role references, want 1", len(b.model.RoleReferences))
@@ -167,7 +167,7 @@ export class UsersService {
 `
 	root, source := parseTS(t, src)
 	b := newBuilder()
-	extractControllers(root, source, "f.ts", b, nil)
+	extractControllers(root, source, "f.ts", b, nil, nil)
 
 	if len(b.model.Controllers) != 0 || len(b.model.Endpoints) != 0 {
 		t.Fatalf("expected nothing extracted from a non-@Controller class, got %+v / %+v", b.model.Controllers, b.model.Endpoints)
@@ -186,7 +186,7 @@ export class UsersController {
 `
 	root, source := parseTS(t, src)
 	b := newBuilder()
-	extractControllers(root, source, "f.ts", b, nil)
+	extractControllers(root, source, "f.ts", b, nil, nil)
 
 	if len(b.model.Endpoints) != 1 {
 		t.Fatalf("got %d endpoints, want 1 (helper() should be ignored): %+v", len(b.model.Endpoints), b.model.Endpoints)
@@ -198,6 +198,20 @@ func guardNamesForEndpoint(m model.Model, endpointID model.ID) []string {
 	for _, g := range m.GuardApplications {
 		if g.EndpointID == endpointID {
 			names = append(names, g.GuardName)
+		}
+	}
+	return names
+}
+
+// nonRoleGuardNames is guardNamesForEndpoint excluding the synthetic
+// "Roles" application — the role-check application itself, surfaced via
+// role references rather than as a guard name (matches report.go's
+// Guards column, which excludes it the same way).
+func nonRoleGuardNames(m model.Model, endpointID model.ID) []string {
+	var names []string
+	for _, g := range guardNamesForEndpoint(m, endpointID) {
+		if g != "Roles" {
+			names = append(names, g)
 		}
 	}
 	return names

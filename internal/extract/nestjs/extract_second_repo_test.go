@@ -10,15 +10,16 @@ import (
 // against a second real, vendored NestJS project (see
 // testdata/awesome-nest-boilerplate/NOTICE.md), chosen specifically for a
 // different guard style than testdata/nestjs-boilerplate/: a custom
-// composite @Auth([...]) decorator instead of separate
-// @UseGuards()/@Roles() decorators.
+// composite @Auth([...]) decorator (built with applyDecorators()) instead
+// of separate @UseGuards()/@Roles() decorators at the call site.
 //
-// This is expected to — and does — demonstrate the known blind spot
-// documented in internal/lint/mutating_endpoint.go: POST /posts is
-// genuinely guarded via @Auth(), but that's invisible to this extractor,
-// so it's flagged anyway, at Low confidence. Expected values below were
-// verified by hand against the vendored source and app.module.ts's empty
-// providers list (no global APP_GUARD), not assumed.
+// This fixture set previously demonstrated the composite-decorator blind
+// spot (docs/decisions/0006): POST /posts is genuinely guarded via
+// @Auth(), but was invisible to extraction, producing a Low-confidence
+// false positive. Since ADR 0006 shipped, that false positive is gone —
+// this test is now the regression check for that fix, not a
+// demonstration of the gap. Expected values below were verified by hand
+// against the vendored source, not assumed.
 func TestExtract_RealAwesomeNestBoilerplate(t *testing.T) {
 	m, outcome, err := Extract("testdata/awesome-nest-boilerplate/src")
 	if err != nil {
@@ -34,31 +35,79 @@ func TestExtract_RealAwesomeNestBoilerplate(t *testing.T) {
 		t.Fatalf("got %d endpoints, want 8: %v", len(m.Endpoints), endpointSummaries(m.Endpoints))
 	}
 
-	// Neither vendored file contains a literal @Roles() decorator call —
-	// only the custom @Auth() wrapper, which this extractor does not
-	// unwrap — so no role declarations should be extracted at all, even
-	// though RoleType is a real role enum in the app.
-	if len(m.RoleDeclarations) != 0 {
-		t.Errorf("expected zero role declarations (RoleType is never referenced via a literal @Roles()), got %+v", m.RoleDeclarations)
+	// RoleType.USER and RoleType.ADMIN, both referenced only through
+	// @Auth([...]) calls — resolved now that composite expansion follows
+	// @Auth() to its inner Roles(roles) call and RoleType is vendored
+	// (testdata/awesome-nest-boilerplate/src/constants/role-type.ts).
+	roleNames := make(map[string]bool, len(m.RoleDeclarations))
+	for _, d := range m.RoleDeclarations {
+		roleNames[d.Name] = true
 	}
-	if len(m.RoleReferences) != 0 {
-		t.Errorf("expected zero role references, got %+v", m.RoleReferences)
+	if len(roleNames) != 2 || !roleNames["RoleType.USER"] || !roleNames["RoleType.ADMIN"] {
+		t.Errorf("role declarations = %v, want exactly {RoleType.USER, RoleType.ADMIN}", roleNames)
+	}
+	// One reference per @Auth([...]) call site naming a role: getCurrentUser
+	// (USER + ADMIN), createPost (USER), getPosts (USER) — 4 total.
+	if len(m.RoleReferences) != 4 {
+		t.Fatalf("got %d role references, want 4: %+v", len(m.RoleReferences), m.RoleReferences)
+	}
+	for _, ref := range m.RoleReferences {
+		if ref.RoleDeclarationID == nil {
+			t.Errorf("role reference %+v did not resolve to a declaration — composite role resolution should always resolve a qualified RoleType.X reference here", ref)
+		}
 	}
 
-	// No GuardApplication at all should exist for POST /posts — this is
-	// the blind spot, not a bug: @Auth([RoleType.USER]) is genuinely
-	// present in source but this extractor doesn't recognize it as a
-	// guard or role decorator.
 	endpointByPath := make(map[string]model.Endpoint, len(m.Endpoints))
 	for _, e := range m.Endpoints {
 		endpointByPath[string(e.HTTPMethod)+" "+e.Path] = e
 	}
+
+	// The target false positive: POST /posts now shows the guards
+	// @Auth([RoleType.USER]) genuinely implies (AuthGuard, RolesGuard),
+	// resolved through the composite — not "no guards detected". "Roles"
+	// itself is also a real GuardApplication (the role-check application,
+	// same as for a literal @Roles() call) but is excluded here the same
+	// way report.go's Guards column excludes it — it's surfaced via Roles
+	// references instead, checked separately below.
 	createPost, ok := endpointByPath["POST /posts"]
 	if !ok {
 		t.Fatalf("POST /posts not found: %v", endpointByPath)
 	}
-	if guards := guardNamesForEndpoint(*m, createPost.ID); len(guards) != 0 {
-		t.Errorf("POST /posts: got guards %v, want none (this is the documented @Auth() blind spot)", guards)
+	guards := nonRoleGuardNames(*m, createPost.ID)
+	wantGuards := map[string]bool{"AuthGuard": true, "RolesGuard": true}
+	if len(guards) != len(wantGuards) {
+		t.Errorf("POST /posts guards = %v, want AuthGuard and RolesGuard (resolved via @Auth())", guards)
+	}
+	for _, g := range guards {
+		if !wantGuards[g] {
+			t.Errorf("POST /posts: unexpected guard %q", g)
+		}
+	}
+
+	// GET /posts/:id carries @Auth([]) — an empty, but still genuine,
+	// Roles application (composite-resolved). It must not trigger
+	// empty-role (see the FromComposite exclusion in
+	// internal/lint/empty_role.go), but it should still count as guarded
+	// for mutating-endpoint-without-access-control's purposes (moot here
+	// since GET isn't mutating, but the GuardApplication should exist).
+	getSinglePost, ok := endpointByPath["GET /posts/:id"]
+	if !ok {
+		t.Fatalf("GET /posts/:id not found: %v", endpointByPath)
+	}
+	foundEmptyRolesApp := false
+	for _, g := range m.GuardApplications {
+		if g.EndpointID != getSinglePost.ID {
+			continue
+		}
+		if g.GuardName == "Roles" {
+			foundEmptyRolesApp = true
+			if !g.FromComposite {
+				t.Errorf("GET /posts/:id's Roles application should have FromComposite = true")
+			}
+		}
+	}
+	if !foundEmptyRolesApp {
+		t.Errorf("GET /posts/:id: expected a Roles GuardApplication (from @Auth([])), found none")
 	}
 
 	findings := runAllRules(t, m)
@@ -67,9 +116,12 @@ func TestExtract_RealAwesomeNestBoilerplate(t *testing.T) {
 	wantFlagged := map[string]bool{
 		"POST /auth/login":    true, // genuinely unguarded in source
 		"POST /auth/register": true, // genuinely unguarded in source
-		"POST /posts":         true, // guarded via @Auth(), invisible to this extractor — the blind spot
 		"PUT /posts/:id":      true, // genuinely unguarded in source
 		"DELETE /posts/:id":   true, // genuinely unguarded in source
+		// POST /posts is deliberately absent: it's genuinely guarded via
+		// @Auth([RoleType.USER]), and composite resolution (ADR 0006) now
+		// sees that guard — this is the false positive that resolution
+		// was built to eliminate.
 	}
 	if len(mutating) != len(wantFlagged) {
 		t.Errorf("got %d mutating-endpoint-without-access-control findings, want %d: %+v", len(mutating), len(wantFlagged), mutating)
@@ -86,9 +138,9 @@ func TestExtract_RealAwesomeNestBoilerplate(t *testing.T) {
 	}
 
 	if unreferenced := findingsByRule(findings, "permission-declared-but-unreferenced"); len(unreferenced) != 0 {
-		t.Errorf("expected no permission-declared-but-unreferenced findings (no role declarations exist to check), got %+v", unreferenced)
+		t.Errorf("expected no permission-declared-but-unreferenced findings (both RoleType members are referenced via @Auth()), got %+v", unreferenced)
 	}
 	if empty := findingsByRule(findings, "empty-role"); len(empty) != 0 {
-		t.Errorf("expected no empty-role findings (no literal @Roles() decorator in this fixture set), got %+v", empty)
+		t.Errorf("expected no empty-role findings — GET /posts/:id's @Auth([]) is composite-resolved and must be excluded, got %+v", empty)
 	}
 }

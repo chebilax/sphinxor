@@ -6,15 +6,25 @@ import (
 	"github.com/chebilax/sphinxor/internal/model"
 )
 
-// EmptyRole flags a @Roles() decorator invoked with zero arguments — a
-// role check declared but requiring nothing, on an endpoint that has a
-// RolesGuard-style guard applied to it.
+// EmptyRole flags a literal @Roles() decorator invoked with zero
+// arguments — a role check declared but requiring nothing, on an endpoint
+// that has a RolesGuard-style guard applied to it.
 //
 // Confidence: High. Unlike the other two v0.1 rules, this doesn't depend
 // on assumptions about code this extractor can't see: whether a specific
 // @Roles(...) call has zero arguments is a syntactic fact, verifiable by
 // reading that one line. There's no global-guard or missed-reference
 // scenario that could fool it.
+//
+// Composite-resolved Roles applications (GuardApplication.FromComposite,
+// docs/decisions/0006) are deliberately excluded: a composite decorator
+// commonly defaults its roles parameter to an empty list
+// (e.g. Auth(roles: RoleType[] = [])), meaning an empty resolved role set
+// is that composite's documented "authenticated, no specific role
+// required" behavior, not the forgotten-argument smell this rule targets.
+// Telling those two cases apart would require modeling the composite's
+// own default-parameter semantics — exactly the dataflow ADR 0006 scoped
+// out — so this rule simply doesn't have an opinion about them.
 type EmptyRole struct{}
 
 func (EmptyRole) ID() string {
@@ -34,7 +44,7 @@ func (r EmptyRole) Check(m *model.Model) []model.Finding {
 
 	var findings []model.Finding
 	for _, g := range m.GuardApplications {
-		if g.GuardName != "Roles" || refCount[g.ID] > 0 {
+		if g.GuardName != "Roles" || g.FromComposite || refCount[g.ID] > 0 {
 			continue
 		}
 		e := endpointByID[g.EndpointID]

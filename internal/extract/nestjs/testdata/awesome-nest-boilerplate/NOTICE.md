@@ -10,9 +10,7 @@ second repo, to exercise an extraction path the first fixture set
 decorator**, `@Auth([...])`, instead of separate `@UseGuards()` +
 `@Roles()` decorators.
 
-`@Auth` (`src/decorators/http.decorators.ts`, not vendored — the
-decorator's *definition* isn't relevant to extraction, only its call
-sites are) is implemented as:
+`@Auth` (`src/decorators/http.decorators.ts`) is implemented as:
 
 ```ts
 export function Auth(roles: RoleType[] = [], options?: ...): MethodDecorator {
@@ -26,20 +24,35 @@ export function Auth(roles: RoleType[] = [], options?: ...): MethodDecorator {
 
 `Roles(roles)` and `UseGuards(...)` are called here as plain JavaScript
 function calls inside `applyDecorators(...)` — not as `@Roles()` /
-`@UseGuards()` decorator syntax on any class or method in the vendored
-files. Sphinxor's extractor only recognizes decorator *call sites*
-(`@Name(...)` immediately preceding a class or method declaration), so
-`@Auth(...)` is invisible to it: neither a guard nor a role reference is
-extracted from it, even though the endpoint is genuinely protected.
+`@UseGuards()` decorator syntax on any class or method. This fixture set
+was originally vendored (see PR #2) to demonstrate exactly that: Sphinxor's
+extractor recognized only literal decorator call sites, so `@Auth(...)`
+was invisible to it, and `POST /posts` — genuinely guarded — surfaced as
+a false `mutating-endpoint-without-access-control` finding.
 
-This is a real, intentional demonstration of the blind spot documented in
-`internal/lint/mutating_endpoint.go` and the PR that added this fixture —
-not a bug to fix in v0.1. It's also why `permission-declared-but-unreferenced`
-and `empty-role` cannot fire anywhere in this fixture set: neither file
-contains a literal `@Roles()` decorator, so `RoleType` (the app's actual
-role enum, `src/constants/role-type.ts`, not vendored — nothing here
-references it via a recognized decorator) is filtered out entirely by the
-same enum-usage heuristic documented in `roles.go`.
+**Since [ADR 0006](../../../../docs/decisions/0006-composite-decorator-resolution.md)
+shipped, that false positive is gone.** Extraction now follows a
+composite decorator (one matching ADR 0006's bounded shape: a single
+return path calling `applyDecorators(...)`) to its `Roles`/`UseGuards`
+inner calls, substituting call-site arguments for the composite's own
+parameters. `http.decorators.ts` had to be vendored alongside the two
+controllers below for this to work at all — extraction needs the
+composite's *definition* present in the project being analyzed, not just
+its call sites, which is a real difference from how this fixture set was
+originally described. `src/constants/role-type.ts` (the `RoleType` enum)
+is vendored for the same reason: once `@Auth([RoleType.USER])` resolves
+to a real `Roles(...)` application, `RoleType.USER`/`RoleType.ADMIN`
+become real, resolvable role references, and resolving them needs the
+enum's declaration site in scope.
+
+This fixture set is now the **regression check** for ADR 0006, not a
+demonstration of the gap: `extract_second_repo_test.go` asserts `POST
+/posts` shows `AuthGuard`/`RolesGuard` and no longer appears among the
+`mutating-endpoint-without-access-control` findings, and that
+`GET /posts/:id`'s `@Auth([])` (an empty, but genuine, role list) does
+not newly trigger `empty-role` — composite-resolved `Roles` applications
+are deliberately excluded from that rule (see
+`internal/lint/empty_role.go`).
 
 Files, and why each was picked:
 
@@ -47,9 +60,16 @@ Files, and why each was picked:
   `POST /auth/register` have **no** guard of any kind in source (confirmed:
   `app.module.ts` registers no global `APP_GUARD` either) — genuine true
   positives for `mutating-endpoint-without-access-control`, not blind-spot
-  artifacts.
+  artifacts. `getCurrentUser` (`GET /auth/me`) carries
+  `@Auth([RoleType.USER, RoleType.ADMIN])`, exercising a composite call
+  with two role arguments.
 - `src/modules/post/post.controller.ts` — `POST /posts` carries
-  `@Auth([RoleType.USER])`, genuinely guarded but invisible to this
-  extractor (the blind-spot case). `PUT /posts/:id` and `DELETE /posts/:id`
-  carry no `@Auth` at all — genuine true positives, same as the auth
-  endpoints above.
+  `@Auth([RoleType.USER])`, genuinely guarded, now correctly resolved.
+  `GET /posts/:id` carries `@Auth([])`, the empty-role-list case.
+  `PUT /posts/:id` and `DELETE /posts/:id` carry no `@Auth` at all —
+  genuine true positives, same as the auth endpoints above.
+- `src/decorators/http.decorators.ts` — `Auth`'s own definition, required
+  for composite resolution to have anything to resolve against.
+- `src/constants/role-type.ts` — the `RoleType` enum `Auth`'s calls
+  reference, required for those references to resolve to a declaration
+  rather than staying an unresolved raw literal.

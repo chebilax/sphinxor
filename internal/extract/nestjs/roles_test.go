@@ -29,7 +29,7 @@ export class UsersController {
 }
 `
 	root, source := parseTS(t, src)
-	used := collectRoleEnumNames(root, source)
+	used := collectRoleEnumNames(root, source, nil)
 
 	if used["Environment"] {
 		t.Errorf("Environment should not be considered a role enum: no @Roles() call names it")
@@ -72,7 +72,7 @@ export class UsersController {
 }
 `
 	root, source := parseTS(t, src)
-	used := collectRoleEnumNames(root, source)
+	used := collectRoleEnumNames(root, source, nil)
 	b := newBuilder()
 	decls := extractRoleDeclarations(root, source, "f.ts", b.nextID("role"), used)
 
