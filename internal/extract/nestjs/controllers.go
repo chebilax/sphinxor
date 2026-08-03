@@ -102,13 +102,14 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 				}
 			}
 
-			endpointID := b.nextIDFor("endpoint")
+			path := joinPath(basePath, subPath)
+			endpointID := model.NewEndpointID(httpMethod, path)
 			anchorLine := anchorLineOf(methodGroup)
 
 			b.model.Endpoints = append(b.model.Endpoints, model.Endpoint{
 				ID:           endpointID,
 				HTTPMethod:   httpMethod,
-				Path:         joinPath(basePath, subPath),
+				Path:         path,
 				HandlerName:  handlerNameNode.Content(src),
 				ControllerID: controllerID,
 				File:         file,
