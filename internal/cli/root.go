@@ -18,6 +18,7 @@ func newRootCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(newLintCmd())
+	cmd.AddCommand(newDiffCmd())
 
 	return cmd
 }

@@ -5,8 +5,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/chebilax/sphinxor/internal/extract/nestjs"
-	"github.com/chebilax/sphinxor/internal/lint"
 	"github.com/chebilax/sphinxor/internal/model"
 	"github.com/chebilax/sphinxor/internal/report"
 )
@@ -35,13 +33,10 @@ func newLintCmd() *cobra.Command {
 // runLint wires extraction, allowlist matching, rule evaluation, and
 // reporting together, then decides the process exit code.
 func runLint(cmd *cobra.Command, dir string, format report.Format) error {
-	m, allow, err := nestjs.Extract(dir)
+	m, findings, err := analyzeDirectory(dir)
 	if err != nil {
-		return fmt.Errorf("extracting model: %w", err)
+		return err
 	}
-
-	findings := lint.Run(m, lint.DefaultRules(), allow.AllowlistedEndpoints)
-	findings = append(findings, allow.StaleMarkers...)
 
 	if err := report.Write(cmd.OutOrStdout(), m, findings, format); err != nil {
 		return fmt.Errorf("writing report: %w", err)
