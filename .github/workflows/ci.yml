@@ -1,0 +1,35 @@
+name: CI
+
+# Runs the same checklist CONTRIBUTING.md requires before every PR (`make
+# check`: build, vet, gofmt, test), so it's validated outside the
+# maintainer's own machine -- this project had no CI at all before this
+# workflow existed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      # ubuntu-latest ships a C toolchain (build-essential) already --
+      # needed because github.com/smacker/go-tree-sitter is cgo-based,
+      # confirmed by CGO_ENABLED=0 failing the build outright. No extra
+      # setup step required, but this is why one might otherwise expect
+      # one here.
+      - name: make check
+        run: make check

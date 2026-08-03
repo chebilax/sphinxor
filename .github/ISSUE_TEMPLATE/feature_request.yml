@@ -1,0 +1,27 @@
+name: Feature request
+description: Something Sphinxor doesn't do yet that you think it should.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        See [vision.md](https://github.com/chebilax/sphinxor/blob/main/docs/vision.md) for what this project is (and deliberately isn't) trying to be, and [docs/roadmap-long-term.md](https://github.com/chebilax/sphinxor/blob/main/docs/roadmap-long-term.md) for directions already considered -- may save you writing up something already ruled out for a stated reason.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What are you trying to do that Sphinxor doesn't support today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What would you want Sphinxor to do instead? A new lint rule, a CLI flag, a new output field -- as concrete as you can make it.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Can you work around this today some other way (e.g. a `sphinxor-allow` marker)? Why isn't that enough?
