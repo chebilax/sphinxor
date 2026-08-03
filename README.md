@@ -16,6 +16,10 @@ Currently targets **NestJS** ([`docs/decisions/0001-target-framework-choice.md`]
 go install github.com/chebilax/sphinxor/cmd/sphinxor@latest
 ```
 
+`@latest` tracks the newest tagged release once one exists; pin to a specific
+version instead (e.g. `@v0.3.0`) for reproducible builds. `sphinxor version`
+reports what you have installed.
+
 ## Usage
 
 ### `sphinxor lint` — audit one checkout
