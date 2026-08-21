@@ -9,11 +9,13 @@ name: Release
 # CGO_ENABLED=0 failing the build outright, not assumed -- so a binary can
 # only be built on (and for) the OS/arch it's compiled on, without a
 # cross-compilation C toolchain this project doesn't have a reason to take
-# on yet. The matrix below is native builds on native runners: linux/amd64
-# and darwin/arm64, the two platforms this can build for today. `go
-# install` (see README) remains the primary, all-platform install path;
-# this workflow's binaries are a convenience on top of it, not a
-# replacement.
+# on yet. The matrix below is native builds on native runners --
+# linux/amd64, darwin/arm64, windows/amd64 -- per
+# docs/decisions/0008-release-binary-platform-coverage.md (darwin/amd64
+# deliberately excluded there; see that ADR for why these three and not
+# others). `go install` (see README) remains the primary, all-platform
+# install path; this workflow's binaries are a convenience on top of it,
+# not a replacement.
 on:
   push:
     tags:
@@ -33,6 +35,9 @@ jobs:
           - os: macos-latest
             goos: darwin
             goarch: arm64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -47,10 +52,38 @@ jobs:
       # Makefile) -- a tag is cut from main, which already passed this in
       # its own PR, but a release artifact is expensive to get wrong, so
       # this is checked again right before publishing rather than assumed.
-      - name: make check
+      #
+      # Split by OS rather than installing `make` on Windows: GNU Make's
+      # Windows build needs to locate a POSIX sh.exe to run the Makefile's
+      # shell recipes (fmt-check's `$$unformatted`/`if [ ... ]` syntax
+      # can't run under cmd.exe), which isn't guaranteed to be discoverable
+      # the same way on every runner image revision. Running the same four
+      # checks directly avoids stacking that uncertainty on top of an
+      # already-new platform leg.
+      - name: make check (Unix)
+        if: runner.os != 'Windows'
         run: make check
 
-      - name: Build
+      - name: Verify build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fmt = gofmt -l .
+          if ($fmt) {
+            Write-Host "gofmt needed on:"
+            Write-Host $fmt
+            exit 1
+          }
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -62,11 +95,33 @@ jobs:
           cp LICENSE dist/LICENSE
           tar -C dist -czf "sphinxor_${GITHUB_REF_NAME}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz" sphinxor LICENSE
 
+      # Separate from the Unix build rather than a single bash step forced
+      # onto Windows via `shell: bash`: Git for Windows' bundled bash
+      # (what `shell: bash` resolves to on windows-latest) doesn't ship a
+      # `zip` binary, and a .zip -- not .tar.gz -- is the convention
+      # Windows users actually expect (ADR 0008, Consequences).
+      # Compress-Archive is a built-in PowerShell cmdlet, no extra install.
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          go build -trimpath -ldflags "-s -w -X github.com/chebilax/sphinxor/internal/cli.version=$($env:GITHUB_REF_NAME)" -o dist/sphinxor.exe ./cmd/sphinxor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item LICENSE dist/LICENSE
+          Compress-Archive -Path dist/sphinxor.exe, dist/LICENSE -DestinationPath "sphinxor_$($env:GITHUB_REF_NAME)_windows_amd64.zip"
+
       - name: Upload archive
         uses: actions/upload-artifact@v4
         with:
           name: sphinxor_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}
-          path: sphinxor_${{ github.ref_name }}_*.tar.gz
+          path: |
+            sphinxor_${{ github.ref_name }}_*.tar.gz
+            sphinxor_${{ github.ref_name }}_*.zip
           retention-days: 5
 
   publish:
@@ -89,6 +144,7 @@ jobs:
           merge-multiple: true
 
       - name: Create release
+        if: github.event_name == 'push' # not on a workflow_dispatch dry run -- see the TEMPORARY trigger above
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz --title "$GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
