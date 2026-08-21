@@ -1,0 +1,52 @@
+name: Bug report
+description: Something Sphinxor did wrong -- a crash, unexpected output, or an incorrect finding.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A missed guard or an incorrect finding is a bug too -- use this template for those as well, not just crashes.
+
+        Found a security vulnerability in Sphinxor itself (not a detection accuracy issue)? Please use [private vulnerability reporting](https://github.com/chebilax/sphinxor/security/advisories/new) instead -- see [SECURITY.md](https://github.com/chebilax/sphinxor/blob/main/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: Sphinxor version
+      description: Output of `sphinxor version`.
+      placeholder: "v0.3.0"
+    validations:
+      required: true
+  - type: textarea
+    id: repo
+    attributes:
+      label: Repo tested
+      description: A public NestJS repo URL, or -- if it's private -- enough to reproduce (approximate size, the specific controller/decorator shape involved).
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command run
+      description: The exact `sphinxor` command, including flags.
+      placeholder: "sphinxor lint ."
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Output obtained
+      description: Paste the actual output (or the relevant part of it).
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: OS, install method (`go install` or source build), or anything else that seems relevant.
