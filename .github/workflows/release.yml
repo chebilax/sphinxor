@@ -20,7 +20,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch: # TEMPORARY: dry-run the new Windows leg before any real tag. Reverted before merge.
 
 permissions:
   contents: read
@@ -28,7 +27,6 @@ permissions:
 jobs:
   build:
     strategy:
-      fail-fast: false # TEMPORARY, part of the dry-run trigger above: let every leg finish independently
       matrix:
         include:
           - os: ubuntu-latest
