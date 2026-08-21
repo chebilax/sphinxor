@@ -2,13 +2,13 @@
 
 ## Status
 
-Proposed.
+Accepted.
 
 ## Context
 
-`.github/workflows/release.yml` (`docs/decisions` predates this file, added directly
-alongside the workflow) builds the `sphinxor` binary natively per OS/arch on a tag
-push, rather than cross-compiling from a single runner. That's not an arbitrary
+`.github/workflows/release.yml`, added in the release-readiness pass this ADR
+follows up on, builds the `sphinxor` binary natively per OS/arch on a tag push,
+rather than cross-compiling from a single runner. That's not an arbitrary
 implementation shortcut — it's a direct consequence of a choice this project already
 made and stands by: `vision.md`'s "Technical architecture" section commits Sphinxor
 to Tree-sitter as its parsing engine, "for multi-language parsing," specifically
