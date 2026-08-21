@@ -20,6 +20,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch: # TEMPORARY: dry-run the new Windows leg before any real tag. Reverted before merge.
 
 permissions:
   contents: read
@@ -144,6 +145,7 @@ jobs:
           merge-multiple: true
 
       - name: Create release
+        if: github.event_name == 'push' # not on a workflow_dispatch dry run -- see the TEMPORARY trigger above
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
