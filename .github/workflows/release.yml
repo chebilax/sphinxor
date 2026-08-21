@@ -28,6 +28,7 @@ permissions:
 jobs:
   build:
     strategy:
+      fail-fast: false # TEMPORARY, part of the dry-run trigger above: let every leg finish independently
       matrix:
         include:
           - os: ubuntu-latest
