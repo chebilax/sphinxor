@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`sphinxor export cerbos <dir> --out <policy-dir>`** — the first
+  authorization-engine exporter ([ADR 0009](docs/decisions/0009-cerbos-exporter.md)):
+  translates the normalized model into a Cerbos resource policy set.
+  Downstream of extraction by construction (works for any future
+  framework automatically). Output is explicitly not deploy-ready:
+  a rule is only generated when a real `GuardApplication`/`RoleReference`
+  establishes it; anything the model can't confirm (no guard, guarded
+  with no specific role, or two endpoints whose confirmed roles disagree
+  under the controller+method action mapping) is omitted, never guessed,
+  and flagged both inline in the generated YAML and in a companion
+  `export-report.md`/`.json`. Validated against the two vendored NestJS
+  repos with the real `cerbos compile` CLI, not just structurally.
 - `sphinxor version` (and `--version`), reporting the release tag on a
   release build, `dev` on a local build.
 - CI: `make check` (build, vet, `gofmt -l`, tests) on every push and pull

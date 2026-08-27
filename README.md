@@ -113,6 +113,35 @@ comparing two points in time. If you're gating CI on `diff`, read
 
 Both commands accept `--format markdown` (default) or `--format json`.
 
+### `sphinxor export cerbos` — translate to a real authorization engine
+
+```sh
+sphinxor export cerbos . --out cerbos-policies
+```
+
+The first authorization-engine exporter
+([ADR 0009](docs/decisions/0009-cerbos-exporter.md)): translates the extracted
+model into a [Cerbos](https://cerbos.dev) resource policy set. It's downstream of
+extraction — it never touches NestJS-specific logic — so it works for any future
+framework's extractor automatically.
+
+**The output is explicitly not deploy-ready.** Every generated policy file starts
+with a header saying so. A rule is only generated when a real guard and role were
+actually found in the code; whenever the model can't establish a grant with
+certainty — no guard at all, a guard with no specific role (commonly "authenticated,
+any role," which Cerbos has no way to express without a role name), or two endpoints
+that share a Cerbos action (the exporter maps one Cerbos resource per controller and
+one action per HTTP method, which has no path component — see the ADR) but disagree
+on their confirmed roles — that endpoint is **omitted, never guessed**. Cerbos denies
+by default for any action with no matching rule, so omission is the safe state, not
+a workaround.
+
+Everything omitted is flagged twice: as an inline YAML comment at the point of
+omission, and in a companion `export-report.md` (or `.json` with `--format json`)
+written alongside the policy files. Read the report before deploying anything —
+a sparse export usually means the source code's access control genuinely doesn't
+carry enough information to translate, not that the exporter missed something.
+
 ## Documentation
 
 Start at [`docs/README.md`](docs/README.md). In particular:

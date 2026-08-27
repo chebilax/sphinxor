@@ -31,5 +31,19 @@ jobs:
       # confirmed by CGO_ENABLED=0 failing the build outright. No extra
       # setup step required, but this is why one might otherwise expect
       # one here.
+
+      # internal/export/cerbos's real-world tests validate generated
+      # policies against the real cerbos CLI (ADR 0009 §5) and skip
+      # gracefully if it's absent -- installed here so that validation
+      # actually runs in the pipeline that gates merges, not only on a
+      # machine that happens to have it. Pinned, not @latest, so an
+      # unrelated cerbos release can't break this CI run out of nowhere.
+      - name: Install cerbos CLI
+        run: |
+          curl -sL "https://github.com/cerbos/cerbos/releases/download/v0.55.0/cerbos_0.55.0_Linux_x86_64.tar.gz" -o /tmp/cerbos.tar.gz
+          tar -xzf /tmp/cerbos.tar.gz -C /tmp cerbos
+          sudo mv /tmp/cerbos /usr/local/bin/cerbos
+          cerbos --version
+
       - name: make check
         run: make check
