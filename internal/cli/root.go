@@ -31,6 +31,7 @@ func newRootCmd() *cobra.Command {
 
 	cmd.AddCommand(newLintCmd())
 	cmd.AddCommand(newDiffCmd())
+	cmd.AddCommand(newExportCmd())
 	cmd.AddCommand(newVersionCmd())
 
 	return cmd
