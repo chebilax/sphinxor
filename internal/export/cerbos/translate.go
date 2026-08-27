@@ -1,0 +1,333 @@
+// Package cerbos translates Sphinxor's intermediate model (internal/model)
+// into a Cerbos policy set, per docs/decisions/0009-cerbos-exporter.md.
+//
+// This package depends only on internal/model — never on
+// internal/extract/nestjs or anything NestJS-specific. That boundary is
+// deliberate (ADR 0009): everything here works for any future framework's
+// extractor automatically, because it only ever reads the normalized
+// model.
+package cerbos
+
+import (
+	"sort"
+	"strings"
+
+	"github.com/chebilax/sphinxor/internal/model"
+)
+
+// Rule is one confirmed (resource, action) -> roles grant, ready to become
+// a Cerbos resource policy rule. It always has at least one role and at
+// least one contributing endpoint — an endpoint with no confirmed role
+// never becomes a Rule (see Omission).
+type Rule struct {
+	Resource  string
+	Action    string
+	Roles     []string // deduped, sorted
+	Endpoints []model.Endpoint
+}
+
+// OmissionReason is why an endpoint did not become part of any Rule.
+// Per ADR 0009 §3, omission is the safe default whenever the model can't
+// establish a grant with certainty — never a guess.
+type OmissionReason string
+
+const (
+	// ReasonNoGuard: no GuardApplication at all was found for this
+	// endpoint. Cerbos denies by default for an action with no matching
+	// rule, so omitting it is the structurally safe state.
+	ReasonNoGuard OmissionReason = "no-guard"
+	// ReasonNoRole: at least one GuardApplication exists, but no
+	// RoleReference resolved to a role name — e.g. a bare AuthGuard with
+	// no @Roles(), or @Roles()/composite-resolved with an empty role
+	// list. This usually means "authenticated, any role" in the source,
+	// which the model has no way to express as a Cerbos role grant.
+	ReasonNoRole OmissionReason = "guarded-no-role"
+	// ReasonActionCollision: two or more endpoints on the same resource
+	// map to the same Cerbos action (ADR 0009 §2's controller+method
+	// mapping has no path component), and they don't all carry the exact
+	// same confirmed role set — including the case where some have roles
+	// and others have none. Merging them into one rule would be wrong for
+	// at least one of the real endpoints, in either direction (granting
+	// too much to the endpoint with fewer roles, or too little to the one
+	// with more), so none of the colliding endpoints become a Rule.
+	ReasonActionCollision OmissionReason = "action-collision"
+)
+
+// Omission records one endpoint that could not become part of any Rule,
+// and why — surfaced in both the companion report and inline policy
+// comments (ADR 0009 §4).
+type Omission struct {
+	Endpoint model.Endpoint
+	Resource string // "" if the endpoint's controller couldn't be resolved
+	Reason   OmissionReason
+	Detail   string
+}
+
+// UnverifiedRole flags a Role that WAS exported (it's part of a Rule) but
+// whose RoleReference never resolved to a known RoleDeclaration — Sphinxor
+// itself can't confirm it's a real, canonical role name (ADR 0009 §3).
+// Unlike Omission, this doesn't withhold the grant: Cerbos only needs a
+// role name string, and withholding a role the source code actually
+// checks for would make the exported policy wrong in the denying
+// direction. It's flagged, not omitted.
+type UnverifiedRole struct {
+	Resource string
+	Action   string
+	Role     string
+	Endpoint model.Endpoint
+}
+
+// Result is the full output of translating one Model: every confirmed
+// rule, every omission, and every unverified-but-exported role.
+type Result struct {
+	Rules           []Rule
+	Omissions       []Omission
+	UnverifiedRoles []UnverifiedRole
+}
+
+// roleGrant is one role name resolved for one endpoint, and whether it
+// resolved to a known RoleDeclaration.
+type roleGrant struct {
+	name     string
+	verified bool
+}
+
+// endpointEntry is one endpoint together with whatever roleGrants it has
+// (possibly none), grouped by (resource, action) before any Rule/Omission
+// decision is made — the decision needs every endpoint sharing that key,
+// not just the ones that individually look confirmed, or a confirmed
+// endpoint's rule could silently also govern an unconfirmed sibling that
+// happens to share the same Cerbos action (see ReasonActionCollision).
+type endpointEntry struct {
+	endpoint model.Endpoint
+	grants   []roleGrant
+}
+
+// Translate builds a Result from m. It never consults m.Findings for
+// grant decisions — a Finding documents Sphinxor's own uncertainty about
+// the source, not a fact to translate into a policy; the safety posture
+// (ADR 0009 §3) is built entirely from GuardApplication/RoleReference,
+// the same evidence a human reviewer could check by hand.
+func Translate(m *model.Model) Result {
+	controllerByID := make(map[model.ID]model.Controller, len(m.Controllers))
+	for _, c := range m.Controllers {
+		controllerByID[c.ID] = c
+	}
+
+	guardAppByID := make(map[model.ID]model.GuardApplication, len(m.GuardApplications))
+	guardedEndpoints := make(map[model.ID]bool, len(m.GuardApplications))
+	for _, g := range m.GuardApplications {
+		guardAppByID[g.ID] = g
+		guardedEndpoints[g.EndpointID] = true
+	}
+
+	rolesByEndpoint := make(map[model.ID][]roleGrant)
+	for _, ref := range m.RoleReferences {
+		app, ok := guardAppByID[ref.GuardApplicationID]
+		if !ok {
+			continue
+		}
+		rolesByEndpoint[app.EndpointID] = appendUniqueGrant(rolesByEndpoint[app.EndpointID], roleGrant{
+			name:     ref.RawLiteral,
+			verified: ref.RoleDeclarationID != nil,
+		})
+	}
+
+	type groupKey = [2]string // [resource, action]
+	groups := make(map[groupKey][]endpointEntry)
+	var order []groupKey
+
+	for _, e := range m.Endpoints {
+		resource := ""
+		if c, ok := controllerByID[e.ControllerID]; ok {
+			resource = ResourceKind(c.Name)
+		}
+		key := groupKey{resource, strings.ToLower(string(e.HTTPMethod))}
+		if _, ok := groups[key]; !ok {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], endpointEntry{endpoint: e, grants: rolesByEndpoint[e.ID]})
+	}
+
+	var rules []Rule
+	var omissions []Omission
+	var unverified []UnverifiedRole
+
+	for _, key := range order {
+		resource, action := key[0], key[1]
+		entries := groups[key]
+
+		agree := true
+		for _, en := range entries[1:] {
+			if !sameGrantSet(entries[0].grants, en.grants) {
+				agree = false
+				break
+			}
+		}
+
+		switch {
+		case agree && len(entries[0].grants) == 0:
+			// Nobody in this action shares any evidence at all — no
+			// collision to report, just each endpoint's own plain reason.
+			for _, en := range entries {
+				reason, detail := ReasonNoGuard, "no access control detected for this endpoint"
+				if guardedEndpoints[en.endpoint.ID] {
+					reason, detail = ReasonNoRole, "guarded, but no specific role could be resolved (likely \"authenticated, any role\" in source) — cannot express as a Cerbos role grant"
+				}
+				omissions = append(omissions, Omission{Endpoint: en.endpoint, Resource: resource, Reason: reason, Detail: detail})
+			}
+
+		case agree:
+			// Every endpoint sharing this action agrees on the same
+			// non-empty role set — safe to merge into one Rule.
+			var merged []roleGrant
+			for _, en := range entries {
+				for _, g := range en.grants {
+					merged = appendUniqueGrant(merged, g)
+				}
+			}
+			roleNames := make([]string, 0, len(merged))
+			for _, gr := range merged {
+				roleNames = append(roleNames, gr.name)
+				if !gr.verified {
+					for _, en := range entries {
+						unverified = append(unverified, UnverifiedRole{Resource: resource, Action: action, Role: gr.name, Endpoint: en.endpoint})
+					}
+				}
+			}
+			sort.Strings(roleNames)
+
+			endpoints := make([]model.Endpoint, len(entries))
+			for i, en := range entries {
+				endpoints[i] = en.endpoint
+			}
+			sortEndpoints(endpoints)
+
+			rules = append(rules, Rule{Resource: resource, Action: action, Roles: roleNames, Endpoints: endpoints})
+
+		default:
+			// Endpoints sharing this action disagree — some have roles
+			// and others don't, or they have different roles. The
+			// controller+method mapping can't tell them apart, so none
+			// of them can be safely represented.
+			for _, en := range entries {
+				omissions = append(omissions, Omission{
+					Endpoint: en.endpoint,
+					Resource: resource,
+					Reason:   ReasonActionCollision,
+					Detail:   collisionDetail(resource, action, entries, en.endpoint),
+				})
+			}
+		}
+	}
+
+	sort.Slice(rules, func(i, j int) bool {
+		if rules[i].Resource != rules[j].Resource {
+			return rules[i].Resource < rules[j].Resource
+		}
+		return rules[i].Action < rules[j].Action
+	})
+	sort.Slice(omissions, func(i, j int) bool {
+		if omissions[i].Endpoint.Path != omissions[j].Endpoint.Path {
+			return omissions[i].Endpoint.Path < omissions[j].Endpoint.Path
+		}
+		return omissions[i].Endpoint.HTTPMethod < omissions[j].Endpoint.HTTPMethod
+	})
+	sort.Slice(unverified, func(i, j int) bool {
+		if unverified[i].Resource != unverified[j].Resource {
+			return unverified[i].Resource < unverified[j].Resource
+		}
+		if unverified[i].Action != unverified[j].Action {
+			return unverified[i].Action < unverified[j].Action
+		}
+		return unverified[i].Role < unverified[j].Role
+	})
+
+	return Result{Rules: rules, Omissions: omissions, UnverifiedRoles: unverified}
+}
+
+func collisionDetail(resource, action string, all []endpointEntry, self model.Endpoint) string {
+	var others []string
+	for _, en := range all {
+		if en.endpoint.ID == self.ID {
+			continue
+		}
+		others = append(others, string(en.endpoint.HTTPMethod)+" "+en.endpoint.Path)
+	}
+	return "action \"" + action + "\" on resource \"" + resource + "\" is shared with " + strings.Join(others, ", ") +
+		", which don't all carry the same confirmed roles — the controller+method mapping (ADR 0009 §2) can't distinguish these by path, so none were exported for this action"
+}
+
+// ResourceKind derives a Cerbos resource kind from a NestJS controller
+// class name: strips a trailing "Controller" suffix, then converts to
+// snake_case (e.g. "UsersController" -> "users", "PostController" ->
+// "post"). Per ADR 0009 §2, this is a stated, coarse limitation, not a
+// claim of idiomatic Cerbos naming.
+func ResourceKind(controllerName string) string {
+	name := strings.TrimSuffix(controllerName, "Controller")
+	if name == "" {
+		name = controllerName
+	}
+	var b strings.Builder
+	for i, r := range name {
+		if i > 0 && isUpper(r) && !isUpper(rune(name[i-1])) {
+			b.WriteByte('_')
+		}
+		b.WriteRune(toLower(r))
+	}
+	return b.String()
+}
+
+func isUpper(r rune) bool { return r >= 'A' && r <= 'Z' }
+func toLower(r rune) rune {
+	if isUpper(r) {
+		return r + ('a' - 'A')
+	}
+	return r
+}
+
+func appendUniqueGrant(s []roleGrant, v roleGrant) []roleGrant {
+	for i, existing := range s {
+		if existing.name == v.name {
+			// A role can be referenced more than once for the same
+			// endpoint (e.g. class-level + method-level guards). If any
+			// reference resolved to a declaration, treat the role as
+			// verified overall — one confirmed declaration is enough.
+			if v.verified && !existing.verified {
+				s[i].verified = true
+			}
+			return s
+		}
+	}
+	return append(s, v)
+}
+
+// sameGrantSet compares two grant lists by role name only (not verified
+// status) — two endpoints requiring "the same role" agree for merging
+// purposes even if one of them resolved it more confidently than the
+// other; the merged Rule's UnverifiedRole flagging (see Translate) already
+// accounts for that difference separately.
+func sameGrantSet(a, b []roleGrant) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	an := make(map[string]bool, len(a))
+	for _, g := range a {
+		an[g.name] = true
+	}
+	for _, g := range b {
+		if !an[g.name] {
+			return false
+		}
+	}
+	return true
+}
+
+func sortEndpoints(endpoints []model.Endpoint) {
+	sort.Slice(endpoints, func(i, j int) bool {
+		if endpoints[i].Path != endpoints[j].Path {
+			return endpoints[i].Path < endpoints[j].Path
+		}
+		return endpoints[i].HTTPMethod < endpoints[j].HTTPMethod
+	})
+}
