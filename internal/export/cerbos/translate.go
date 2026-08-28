@@ -59,6 +59,19 @@ const (
 	// too much to the endpoint with fewer roles, or too little to the one
 	// with more), so none of the colliding endpoints become a Rule.
 	ReasonActionCollision OmissionReason = "action-collision"
+	// ReasonNoCommonRole: a single endpoint has role-bearing evidence in
+	// more than one independent layer (e.g. a method annotation and a
+	// URL-pattern rule — docs/decisions/0012-securityfilterchain-effective-policy.md),
+	// and those layers' allowed-role sets share no role in common. Spring
+	// AND-combines both layers, so a role is only safely exportable if a
+	// principal holding it would pass every layer independently — the
+	// empty-intersection case means no single role does. This does not
+	// claim the endpoint is unreachable: a principal holding one
+	// qualifying role for each layer separately could still pass in the
+	// real app even though no role satisfies both at once — the honest
+	// claim is narrower, that no role is safe to export here, not that
+	// nobody can ever reach it.
+	ReasonNoCommonRole OmissionReason = "no-common-role"
 )
 
 // Omission records one endpoint that could not become part of any Rule,
@@ -100,6 +113,35 @@ type roleGrant struct {
 	verified bool
 }
 
+// layer distinguishes where an endpoint's grant-bearing evidence came
+// from, for the method×URL effective-policy reduction (ADR 0012 §2).
+type layer int
+
+const (
+	layerMethod layer = iota
+	layerURL
+)
+
+// layerOf classifies a GuardScope into the layer it contributes to.
+// Everything except a URL-pattern rule is the method layer — class-level,
+// method-level, and composite-resolved guards are all annotation-derived
+// facts about the endpoint's own handler, indistinguishable from each
+// other for this purpose, unlike a rule declared entirely apart from any
+// handler.
+func layerOf(scope model.GuardScope) layer {
+	if scope == model.ScopeRequestMatcher {
+		return layerURL
+	}
+	return layerMethod
+}
+
+// conflictingLayers records what each layer required when an endpoint's
+// method-layer and URL-layer grants share no common role (ReasonNoCommonRole).
+type conflictingLayers struct {
+	method []roleGrant
+	url    []roleGrant
+}
+
 // endpointEntry is one endpoint together with whatever roleGrants it has
 // (possibly none), grouped by (resource, action) before any Rule/Omission
 // decision is made — the decision needs every endpoint sharing that key,
@@ -129,13 +171,30 @@ func Translate(m *model.Model) Result {
 		guardedEndpoints[g.EndpointID] = true
 	}
 
-	rolesByEndpoint := make(map[model.ID][]roleGrant)
+	// Grants are collected per layer, not into one flat set, before being
+	// reduced to each endpoint's final grant list (ADR 0012 §2). A single
+	// layer's grants are still just a union (a class-level and a
+	// method-level guard on the same endpoint remain alternatives, as
+	// always) — the layer split only matters once an endpoint has
+	// role-bearing evidence in more than one layer, which every NestJS
+	// endpoint and most Spring endpoints never do.
+	grantsByEndpointLayer := make(map[model.ID]*[2][]roleGrant)
+	layerGrants := func(endpointID model.ID, l layer) *[]roleGrant {
+		lg, ok := grantsByEndpointLayer[endpointID]
+		if !ok {
+			lg = &[2][]roleGrant{}
+			grantsByEndpointLayer[endpointID] = lg
+		}
+		return &lg[l]
+	}
+
 	for _, ref := range m.RoleReferences {
 		app, ok := guardAppByID[ref.GuardApplicationID]
 		if !ok {
 			continue
 		}
-		rolesByEndpoint[app.EndpointID] = appendUniqueGrant(rolesByEndpoint[app.EndpointID], roleGrant{
+		l := layerGrants(app.EndpointID, layerOf(app.AppliedAt))
+		*l = appendUniqueGrant(*l, roleGrant{
 			name:     ref.RawLiteral,
 			verified: ref.RoleDeclarationID != nil,
 		})
@@ -149,10 +208,45 @@ func Translate(m *model.Model) Result {
 	// "could not be verified against a known declaration" flagging that
 	// applies to RoleReference has nothing to check here.
 	for _, req := range m.AuthenticationRequirements {
-		rolesByEndpoint[req.EndpointID] = appendUniqueGrant(rolesByEndpoint[req.EndpointID], roleGrant{
+		l := layerGrants(req.EndpointID, layerOf(req.Scope))
+		*l = appendUniqueGrant(*l, roleGrant{
 			name:     anyAuthenticatedRole,
 			verified: true,
 		})
+	}
+
+	// Reduce each endpoint's per-layer grants to one final grant list.
+	// When only one layer has role-bearing evidence, that layer's grants
+	// are already the answer — today's behavior, unchanged. When both
+	// layers do, Spring AND-combines them at runtime, so the effective,
+	// safely-exportable grant is the set INTERSECTION, not a subset check
+	// (ADR 0012 §2): sound (never grants a role unless a principal holding
+	// it is provably allowed by both layers) but not complete (a
+	// principal separately holding one qualifying role per layer can
+	// still pass without holding anything in the intersection) — the
+	// accepted, safe-direction incompleteness this project takes
+	// everywhere else, not a new kind of guess.
+	rolesByEndpoint := make(map[model.ID][]roleGrant, len(grantsByEndpointLayer))
+	noCommonRole := make(map[model.ID]conflictingLayers)
+	for endpointID, lg := range grantsByEndpointLayer {
+		method, url := lg[layerMethod], lg[layerURL]
+		switch {
+		case len(method) == 0 && len(url) == 0:
+			// Shouldn't happen — layerGrants is only ever allocated when a
+			// grant is about to be appended — but if it did, there's
+			// nothing to record either way.
+		case len(url) == 0:
+			rolesByEndpoint[endpointID] = method
+		case len(method) == 0:
+			rolesByEndpoint[endpointID] = url
+		default:
+			inter := intersectGrants(method, url)
+			if len(inter) == 0 {
+				noCommonRole[endpointID] = conflictingLayers{method: method, url: url}
+				continue
+			}
+			rolesByEndpoint[endpointID] = inter
+		}
 	}
 
 	type groupKey = [2]string // [resource, action]
@@ -192,6 +286,20 @@ func Translate(m *model.Model) Result {
 			// Nobody in this action shares any evidence at all — no
 			// collision to report, just each endpoint's own plain reason.
 			for _, en := range entries {
+				if conflict, ok := noCommonRole[en.endpoint.ID]; ok {
+					// This endpoint isn't unguarded — it has role-bearing
+					// evidence in two independent layers that share no
+					// common role (ADR 0012 §2), a more specific and more
+					// useful fact than the generic "guarded, no role"
+					// reason below.
+					omissions = append(omissions, Omission{
+						Endpoint: en.endpoint,
+						Resource: resource,
+						Reason:   ReasonNoCommonRole,
+						Detail:   noCommonRoleDetail(conflict),
+					})
+					continue
+				}
 				reason, detail := ReasonNoGuard, "no access control detected for this endpoint"
 				if guardedEndpoints[en.endpoint.ID] {
 					// Endpoints genuinely "authenticated, any role" export
@@ -297,6 +405,20 @@ func collisionDetail(resource, action string, all []endpointEntry, self endpoint
 		" this action rather than risk granting the wrong one"
 }
 
+// noCommonRoleDetail explains a ReasonNoCommonRole omission in plain
+// terms, self-contained per the same "reread cold" standard collisionDetail
+// already meets: states what each independent layer required and that
+// they share no role — deliberately not claiming the endpoint is
+// unreachable (see ReasonNoCommonRole's own doc comment for why that
+// would overclaim).
+func noCommonRoleDetail(c conflictingLayers) string {
+	return "this endpoint is guarded in two independent ways that must both be satisfied — one " +
+		grantSummary(c.method) + ", the other " + grantSummary(c.url) +
+		" — and they share no role in common, so no single role is safe to export as sufficient here." +
+		" A principal holding a different qualifying role for each side separately could still be" +
+		" allowed by the real application; review both locations to confirm the intended access."
+}
+
 // grantSummary renders what an endpoint's confirmed grants require, in
 // plain language rather than Sphinxor's internal role-name format alone —
 // used in collisionDetail and the companion report's role columns.
@@ -358,6 +480,51 @@ func appendUniqueGrant(s []roleGrant, v roleGrant) []roleGrant {
 		}
 	}
 	return append(s, v)
+}
+
+// isUniversalGrant reports whether grants represents "authenticated, any
+// role" (AuthenticationRequirement's `*`) and nothing else. By
+// construction (ADR 0010's own exclusion: an AuthenticationRequirement is
+// never created for an endpoint/layer that also resolved a concrete
+// role), a single layer's grants are never a mix of `*` and a named role
+// — `*` alone or not at all.
+func isUniversalGrant(grants []roleGrant) bool {
+	return len(grants) == 1 && grants[0].name == anyAuthenticatedRole
+}
+
+// intersectGrants computes the set-intersection effective policy for two
+// independent layers that both apply to the same endpoint (ADR 0012 §2):
+// sound (a role survives only if it satisfies both layers) but not
+// complete (a principal who separately holds one qualifying role per
+// layer can still pass the real app without holding anything in the
+// intersection) — the same safe-direction incompleteness this project
+// accepts everywhere else, not a new kind of guess.
+//
+// `*` is the identity element: authenticated-any-role imposes no
+// constraint beyond what the other layer already requires, so it never
+// narrows an intersection with a concrete set, and `*` ∩ `*` = `*`.
+func intersectGrants(a, b []roleGrant) []roleGrant {
+	if isUniversalGrant(a) {
+		return b
+	}
+	if isUniversalGrant(b) {
+		return a
+	}
+
+	bByName := make(map[string]roleGrant, len(b))
+	for _, g := range b {
+		bByName[g.name] = g
+	}
+
+	var out []roleGrant
+	for _, g := range a {
+		other, ok := bByName[g.name]
+		if !ok {
+			continue
+		}
+		out = append(out, roleGrant{name: g.name, verified: g.verified || other.verified})
+	}
+	return out
 }
 
 // sameGrantSet compares two grant lists by role name only (not verified

@@ -77,8 +77,10 @@ func NewEndpointID(method HTTPMethod, path string) ID {
 	return ID(string(method) + " " + path)
 }
 
-// GuardScope records whether a GuardApplication's decorator was found at
-// the controller (class) level or the handler (method) level in source.
+// GuardScope records where a GuardApplication's evidence was found in
+// source: the controller (class) level, the handler (method) level, or —
+// for a framework whose authorization can be declared apart from any
+// annotated method entirely — a request-matcher rule.
 //
 // A class-level guard applies to every endpoint on that controller.
 // Extraction is expected to expand a class-level @UseGuards() into one
@@ -93,6 +95,14 @@ type GuardScope string
 const (
 	ScopeClass  GuardScope = "class"
 	ScopeMethod GuardScope = "method"
+	// ScopeRequestMatcher is a GuardApplication derived from a recognized
+	// URL-pattern-based authorization rule (e.g. Spring's
+	// authorizeHttpRequests) rather than an annotation on the endpoint's
+	// own handler or class — docs/decisions/0012-securityfilterchain-effective-policy.md.
+	// File/Line point at the rule's own location (e.g. a SecurityConfig
+	// class), not the endpoint's controller, since that's where the
+	// evidence actually lives.
+	ScopeRequestMatcher GuardScope = "request_matcher"
 )
 
 // GuardApplication is one authorization guard found protecting one
@@ -194,6 +204,17 @@ type AuthenticationRequirement struct {
 	EndpointID ID
 	File       string
 	Line       int
+	// Scope records which layer established this requirement — the same
+	// GuardScope vocabulary GuardApplication.AppliedAt already uses, for
+	// exactly the same reason: a framework where authorization can be
+	// declared apart from any annotated method (docs/decisions/0012-securityfilterchain-effective-policy.md)
+	// can independently produce an AuthenticationRequirement from more
+	// than one layer for the same Endpoint, and the method×URL
+	// effective-policy reduction (internal/export/cerbos) needs to tell
+	// them apart to reconcile them correctly — it cannot assume every
+	// AuthenticationRequirement on an endpoint came from the same place
+	// the way a single-layer framework like NestJS always does.
+	Scope GuardScope
 }
 
 // Confidence is the confidence grade attached to a Finding. Sphinxor never

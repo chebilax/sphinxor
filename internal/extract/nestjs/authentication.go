@@ -79,6 +79,7 @@ func computeAuthenticationRequirements(m *model.Model, next func() model.ID) []m
 			EndpointID: e.ID,
 			File:       recognized.File,
 			Line:       recognized.Line,
+			Scope:      recognized.AppliedAt,
 		})
 	}
 	return out
