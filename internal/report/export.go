@@ -76,6 +76,7 @@ func writeExportMarkdown(w io.Writer, result cerbos.Result) error {
 	if len(result.Rules) == 0 {
 		b.WriteString("None.\n")
 	} else {
+		anyWildcard := false
 		b.WriteString("| Resource | Action | Roles | Endpoints |\n")
 		b.WriteString("|---|---|---|---|\n")
 		for _, r := range result.Rules {
@@ -83,8 +84,18 @@ func writeExportMarkdown(w io.Writer, result cerbos.Result) error {
 			for _, e := range r.Endpoints {
 				endpoints = append(endpoints, string(e.HTTPMethod)+" "+e.Path)
 			}
+			for _, role := range r.Roles {
+				if role == "*" {
+					anyWildcard = true
+				}
+			}
 			fmt.Fprintf(&b, "| %s | %s | %s | %s |\n",
 				r.Resource, r.Action, strings.Join(r.Roles, ", "), strings.Join(endpoints, "; "))
+		}
+		if anyWildcard {
+			b.WriteString("\n`*` is Cerbos's own special role value: any authenticated principal, regardless\n")
+			b.WriteString("of role. Sphinxor only ever generates it when the source code checks for\n")
+			b.WriteString("authentication but no specific role — never as a fallback or a guess.\n")
 		}
 	}
 

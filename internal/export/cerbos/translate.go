@@ -194,7 +194,14 @@ func Translate(m *model.Model) Result {
 			for _, en := range entries {
 				reason, detail := ReasonNoGuard, "no access control detected for this endpoint"
 				if guardedEndpoints[en.endpoint.ID] {
-					reason, detail = ReasonNoRole, "guarded, but no specific role could be resolved (likely \"authenticated, any role\" in source) — cannot express as a Cerbos role grant"
+					// Endpoints genuinely "authenticated, any role" export
+					// via AuthenticationRequirement (ADR 0010) instead of
+					// landing here — this branch is only reached now by a
+					// guard extraction doesn't recognize (unknown
+					// authentication semantics) or a literal empty
+					// @Roles() (flagged separately, by empty-role, as a
+					// likely mistake, not exported as if it were correct).
+					reason, detail = ReasonNoRole, "has a guard, but Sphinxor could not determine what access it actually requires — either the guard isn't one Sphinxor recognizes, or the @Roles() call is empty (flagged separately as a likely mistake) — nothing was granted rather than guess"
 				}
 				omissions = append(omissions, Omission{Endpoint: en.endpoint, Resource: resource, Reason: reason, Detail: detail})
 			}
@@ -237,7 +244,7 @@ func Translate(m *model.Model) Result {
 					Endpoint: en.endpoint,
 					Resource: resource,
 					Reason:   ReasonActionCollision,
-					Detail:   collisionDetail(resource, action, entries, en.endpoint),
+					Detail:   collisionDetail(resource, action, entries, en),
 				})
 			}
 		}
@@ -268,16 +275,45 @@ func Translate(m *model.Model) Result {
 	return Result{Rules: rules, Omissions: omissions, UnverifiedRoles: unverified}
 }
 
-func collisionDetail(resource, action string, all []endpointEntry, self model.Endpoint) string {
+// collisionDetail explains one action-collision omission in plain terms,
+// self-contained enough to read in the generated report or an inline YAML
+// comment without any other context (no internal doc references) —
+// confirmed by rereading a real generated report cold, the way a user who
+// never saw this project's design conversation would. Names what THIS
+// endpoint requires, what each sibling requires, and why sharing a Cerbos
+// action with a differently-guarded sibling means neither gets exported.
+func collisionDetail(resource, action string, all []endpointEntry, self endpointEntry) string {
 	var others []string
 	for _, en := range all {
-		if en.endpoint.ID == self.ID {
+		if en.endpoint.ID == self.endpoint.ID {
 			continue
 		}
-		others = append(others, string(en.endpoint.HTTPMethod)+" "+en.endpoint.Path)
+		others = append(others, string(en.endpoint.HTTPMethod)+" "+en.endpoint.Path+" ("+grantSummary(en.grants)+")")
 	}
-	return "action \"" + action + "\" on resource \"" + resource + "\" is shared with " + strings.Join(others, ", ") +
-		", which don't all carry the same confirmed roles — the controller+method mapping (ADR 0009 §2) can't distinguish these by path, so none were exported for this action"
+	return "this endpoint " + grantSummary(self.grants) + ", but shares the \"" + action +
+		"\" action on the \"" + resource + "\" resource with " + strings.Join(others, ", ") +
+		" — Sphinxor maps one Cerbos action per HTTP method on a resource and can't tell these routes" +
+		" apart by path, so since they don't all need the same access, none of them were exported for" +
+		" this action rather than risk granting the wrong one"
+}
+
+// grantSummary renders what an endpoint's confirmed grants require, in
+// plain language rather than Sphinxor's internal role-name format alone —
+// used in collisionDetail and the companion report's role columns.
+func grantSummary(grants []roleGrant) string {
+	if len(grants) == 0 {
+		return "requires no specific role"
+	}
+	names := make([]string, len(grants))
+	for i, g := range grants {
+		if g.name == anyAuthenticatedRole {
+			names[i] = "any authenticated user"
+		} else {
+			names[i] = "role " + g.name
+		}
+	}
+	sort.Strings(names)
+	return "requires " + strings.Join(names, " and ")
 }
 
 // ResourceKind derives a Cerbos resource kind from a NestJS controller
