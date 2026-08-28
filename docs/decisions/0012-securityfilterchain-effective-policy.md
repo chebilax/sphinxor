@@ -128,22 +128,48 @@ being combined into the endpoint's final grant set:
   endpoints in either real repo examined have role-bearing applications in *both*
   layers except `SupplierController`), nothing changes — today's flat union *is*
   already correct, because there's only one set to union.
-- If both layers contribute a role-bearing set, treating `*`
-  (`AuthenticationRequirement`, ADR 0010) as the universal superset for comparison:
-  when one layer's set is a subset of (or equal to) the other's, **the subset is
-  the effective set** — this is what correctly resolves `SupplierController`
-  (`method = {ADMIN, PHARMACIST}`, `url = {ADMIN}`, `url ⊆ method` → effective
-  `{ADMIN}`), and what correctly resolves `Pharmacy`'s `CustomerController` shape
-  (`method` not established, `url = authenticated-any-role` → effective is
-  whatever the established side says, `*` never wins over a real subset relation).
-- When neither is a subset of the other (genuinely incomparable — not observed in
-  either real repo, but the mechanism has to be right for the case that would
-  arise, not just the cases already seen, the same discipline ADR 0007 already
-  applied to its own regression-matching logic before real data exercised it): a
-  **new `OmissionReason`, `ReasonConflictingRequirements`** — nothing exported for
-  that endpoint or action, `Detail` states plainly what each layer required (the
-  same shape of message `collisionDetail` already produces for sibling-endpoint
-  collisions), so a reviewer sees exactly why, not a generic "no role resolved."
+- If both layers contribute a role-bearing set, **the operation is set
+  intersection, not a subset check.** Spring's two interceptors AND-combine: a
+  principal must satisfy the method layer *and* the URL layer independently, and
+  any role held by a principal that appears in *both* layers' allowed-role sets is
+  sufficient to satisfy both, whether or not either set contains the other. `*`
+  (`AuthenticationRequirement`, ADR 0010) is the identity element for this
+  operation — `*` ∩ *anything* = that thing, so a concrete set always wins over
+  "authenticated, any role" on the other side, and `*` ∩ `*` = `*` — reproducing
+  exactly the earlier subset-based results for `SupplierController`
+  (`{ADMIN, PHARMACIST} ∩ {ADMIN} = {ADMIN}`) and `Pharmacy`'s `CustomerController`
+  shape (`not-established` treated as imposing no constraint when the *other*
+  layer has one; if *both* are not-established, that's the existing "no guard at
+  all" case, unchanged, not treated as `*`).
+  - **The intersection is *sound*, not *complete*, and that asymmetry is exactly
+    the direction this project already accepts everywhere else: it never claims a
+    role is grantable unless a principal holding it is provably allowed by both
+    layers, but a principal who separately holds one qualifying role for each
+    layer independently (e.g. `ADMIN` and `MANAGER`, for method-set
+    `{ADMIN, PHARMACIST}` and url-set `{PHARMACIST, MANAGER}`) can be authorized by
+    the real app without holding any role in the intersection at all. The exported
+    policy under-grants relative to that edge case rather than over-grants — the
+    acceptable kind of incompleteness, not the dangerous kind, and no different in
+    kind from composite-decorator resolution stopping at one level (ADR 0006) or
+    complex SpEL simply not being parsed (§1) — narrower than perfect, never wrong
+    in the permissive direction.
+  - **Non-empty intersection**: exported as the effective `Rule`, same as any
+    other resolved role set — this is what recovers real, safe answers the
+    original subset-only draft of this ADR discarded. `{ADMIN, PHARMACIST} ∩
+    {PHARMACIST, MANAGER} = {PHARMACIST}` is an exact, zero-guessing effective
+    policy, not an ambiguous case; treating it as unresolved (the original
+    subset-check draft's behavior) would have been avoidable coverage loss, the
+    inverse of this project's own "omit only when necessary" principle.
+  - **Empty intersection** — no role satisfies both layers — is a distinct,
+    honestly-scoped signal, not the same bucket as a genuinely unparseable rule: a
+    **new `OmissionReason`, `ReasonNoCommonRole`**, `Detail` stating plainly what
+    each layer required and that they share no role. Deliberately *not* worded as
+    "this endpoint is unreachable" or "denies everyone" — that would overclaim:
+    per the soundness note above, a principal holding one qualifying role from
+    *each* layer independently could still pass in the real app even when the two
+    layers share no single common role. The honest claim is narrower and still
+    useful: no single role is safely exportable as sufficient here, which is
+    itself worth a reviewer's attention.
 
 **A conscious, stated asymmetry, not an oversight**: `internal/report`'s RBAC
 matrix is not changed to perform this reduction. It is a human-facing audit view
@@ -215,6 +241,18 @@ scoped `SecurityFilterChain` beans, regex/custom request matchers.
   rejected for now: no safety requirement forces it (see §2's stated asymmetry);
   revisit only if real use shows the raw per-layer display is actually confusing
   in practice, not preemptively.
+- **Reduce via subset check ("effective set = whichever layer's set contains the
+  other's, else give up") instead of set intersection** — this was this ADR's own
+  first draft, corrected before Accepted rather than after: subset reduction gives
+  the right answer whenever the two layers happen to be comparable (both real
+  repos' cases are, including `SupplierController`), but discards a real, exact,
+  zero-guessing answer whenever they're not — `{ADMIN, PHARMACIST}` and
+  `{PHARMACIST, MANAGER}` share no subset relationship but do share a role,
+  `PHARMACIST`, which is exactly the effective policy. Treating that as
+  "conflicting, can't determine" would have been avoidable coverage loss, not
+  caution — the inverse of omitting only when a safe answer genuinely isn't
+  available. Intersection subsumes subset reduction as its comparable-sets special
+  case, so nothing already correct regresses.
 
 ## Consequences
 
@@ -224,9 +262,10 @@ scoped `SecurityFilterChain` beans, regex/custom request matchers.
   `SecurityFilterChain` rules: recognized terminal calls, the bounded Ant-pattern
   matcher, first-match-wins rule evaluation against extracted endpoints — sized
   honestly as new engineering, not folded silently into "parsing annotations."
-- `internal/export/cerbos`'s `Translate` gains the per-layer grant grouping and
-  subset-reduction step, plus one new `OmissionReason`
-  (`ReasonConflictingRequirements`). Verified before writing this, not assumed:
+- `internal/export/cerbos`'s `Translate` gains the per-layer grant grouping and the
+  set-intersection reduction step, plus one new `OmissionReason`
+  (`ReasonNoCommonRole`, for the empty-intersection case). Verified before writing
+  this, not assumed:
   `internal/diff` and `internal/report` already treat `GuardScope`/`AppliedAt`
   fully generically (`diff/keys.go` uses it only as part of an identity key;
   `report/diff.go` only prints it) — a new value needs no changes there. All three
