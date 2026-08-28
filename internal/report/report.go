@@ -60,7 +60,7 @@ func BuildMatrix(m *model.Model, findings []model.Finding) Matrix {
 	guardAppByID := make(map[model.ID]model.GuardApplication, len(m.GuardApplications))
 	for _, g := range m.GuardApplications {
 		guardAppByID[g.ID] = g
-		if g.GuardName == "Roles" {
+		if g.DeclaresRoles {
 			continue // surfaced under Roles below, not Guards
 		}
 		guardsByEndpoint[g.EndpointID] = appendUnique(guardsByEndpoint[g.EndpointID], g.GuardName)

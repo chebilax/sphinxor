@@ -115,6 +115,25 @@ type GuardApplication struct {
 	// gets the correct behavior with no explicit initialization. Only
 	// composite resolution sets this true.
 	FromComposite bool
+	// DeclaresRoles is true when this GuardApplication is the one whose
+	// associated RoleReferences (if any) constitute the endpoint's role
+	// requirement, as opposed to a supporting guard with no role list of
+	// its own (e.g. NestJS's AuthGuard/RolesGuard, which only establish
+	// that a check happens elsewhere).
+	//
+	// Framework-independent by construction — added specifically because
+	// docs/decisions/0011-spring-second-framework.md found two consumers
+	// (internal/lint/empty_role.go, internal/report/report.go) inferring
+	// this fact by comparing GuardName against the literal string "Roles",
+	// which is NestJS's own synthetic naming convention for the
+	// GuardApplication it builds from a @Roles() decorator, not a
+	// framework-independent signal. A second framework with a different
+	// convention (Spring's @PreAuthorize/@Secured/@RolesAllowed fuse
+	// presence and role-check into one annotation, with no equivalent
+	// "Roles"-named entity at all) would have made both consumers silently
+	// wrong rather than visibly broken. This field replaces the string
+	// comparison with an explicit fact extraction sets directly.
+	DeclaresRoles bool
 }
 
 // RoleDeclarationKind records how a role's canonical declaration was

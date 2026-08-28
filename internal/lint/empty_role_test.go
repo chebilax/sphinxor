@@ -13,8 +13,8 @@ func TestEmptyRole(t *testing.T) {
 			{ID: "ep-full", HTTPMethod: model.MethodPost, Path: "/things"},
 		},
 		GuardApplications: []model.GuardApplication{
-			{ID: "ga-empty", EndpointID: "ep-empty", GuardName: "Roles"},
-			{ID: "ga-full", EndpointID: "ep-full", GuardName: "Roles"},
+			{ID: "ga-empty", EndpointID: "ep-empty", GuardName: "Roles", DeclaresRoles: true},
+			{ID: "ga-full", EndpointID: "ep-full", GuardName: "Roles", DeclaresRoles: true},
 			{ID: "ga-other", EndpointID: "ep-full", GuardName: "AuthGuard"},
 		},
 		RoleReferences: []model.RoleReference{
@@ -64,7 +64,7 @@ func TestEmptyRole_ExcludesFromComposite(t *testing.T) {
 			{ID: "ep", HTTPMethod: model.MethodPost, Path: "/things"},
 		},
 		GuardApplications: []model.GuardApplication{
-			{ID: "ga", EndpointID: "ep", GuardName: "Roles", FromComposite: true},
+			{ID: "ga", EndpointID: "ep", GuardName: "Roles", FromComposite: true, DeclaresRoles: true},
 		},
 	}
 

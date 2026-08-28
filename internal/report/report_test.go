@@ -19,7 +19,7 @@ func testModel() *model.Model {
 		},
 		GuardApplications: []model.GuardApplication{
 			{ID: "g1", EndpointID: "e1", GuardName: "AuthGuard"},
-			{ID: "g2", EndpointID: "e1", GuardName: "Roles"},
+			{ID: "g2", EndpointID: "e1", GuardName: "Roles", DeclaresRoles: true},
 		},
 		RoleReferences: []model.RoleReference{
 			{ID: "r1", GuardApplicationID: "g2", RawLiteral: "RoleEnum.admin"},
