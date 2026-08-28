@@ -55,7 +55,7 @@ func TestComputeAuthenticationRequirements_ResolvedRoleExcluded(t *testing.T) {
 		Endpoints: []model.Endpoint{{ID: "e1"}},
 		GuardApplications: []model.GuardApplication{
 			{ID: "g1", EndpointID: "e1", GuardName: "AuthGuard"},
-			{ID: "g2", EndpointID: "e1", GuardName: "Roles"},
+			{ID: "g2", EndpointID: "e1", GuardName: "Roles", DeclaresRoles: true},
 		},
 		RoleReferences: []model.RoleReference{
 			{ID: "r1", GuardApplicationID: "g2", RawLiteral: "admin"},
@@ -78,7 +78,7 @@ func TestComputeAuthenticationRequirements_LiteralEmptyRolesExcluded(t *testing.
 			// zero RoleReferences. This is exactly the shape EmptyRole
 			// (internal/lint/empty_role.go) flags as a probable mistake;
 			// AuthenticationRequirement must not export a grant for it.
-			{ID: "g2", EndpointID: "e1", GuardName: "Roles", FromComposite: false},
+			{ID: "g2", EndpointID: "e1", GuardName: "Roles", FromComposite: false, DeclaresRoles: true},
 		},
 	}
 
@@ -98,7 +98,7 @@ func TestComputeAuthenticationRequirements_CompositeEmptyRolesStillQualifies(t *
 			// is the composite's documented "authenticated, no specific
 			// role" default, not the forgotten-argument smell EmptyRole
 			// targets. Must still qualify.
-			{ID: "g2", EndpointID: "e1", GuardName: "Roles", FromComposite: true},
+			{ID: "g2", EndpointID: "e1", GuardName: "Roles", FromComposite: true, DeclaresRoles: true},
 		},
 	}
 

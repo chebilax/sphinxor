@@ -250,6 +250,7 @@ func (b *builder) applyGuards(endpointID model.ID, guards []pendingGuard, scope 
 				File:          g.file,
 				Line:          g.line,
 				FromComposite: g.fromComposite,
+				DeclaresRoles: true,
 			})
 			for _, r := range g.roles {
 				b.model.RoleReferences = append(b.model.RoleReferences, model.RoleReference{

@@ -65,7 +65,7 @@ func computeAuthenticationRequirements(m *model.Model, next func() model.ID) []m
 			if recognizedAuthenticationGuards[g.GuardName] && recognized == nil {
 				recognized = &g
 			}
-			if g.GuardName == "Roles" && !g.FromComposite && roleRefCountByGuard[g.ID] == 0 {
+			if g.DeclaresRoles && !g.FromComposite && roleRefCountByGuard[g.ID] == 0 {
 				literalEmptyRoles = true
 			}
 		}
