@@ -34,12 +34,13 @@ const (
 // every entity extraction found, plus every finding the lint rules
 // produced from them.
 type Model struct {
-	Controllers       []Controller
-	Endpoints         []Endpoint
-	GuardApplications []GuardApplication
-	RoleDeclarations  []RoleDeclaration
-	RoleReferences    []RoleReference
-	Findings          []Finding
+	Controllers                []Controller
+	Endpoints                  []Endpoint
+	GuardApplications          []GuardApplication
+	RoleDeclarations           []RoleDeclaration
+	RoleReferences             []RoleReference
+	AuthenticationRequirements []AuthenticationRequirement
+	Findings                   []Finding
 }
 
 // Controller is a NestJS @Controller() class. It is not itself part of the
@@ -154,6 +155,26 @@ type RoleReference struct {
 	RawLiteral         string
 	File               string
 	Line               int
+}
+
+// AuthenticationRequirement is a positive, confirmed fact about an
+// Endpoint: it has at least one GuardApplication the extractor positively
+// recognizes as an authentication guard, and none of the endpoint's
+// guards resolve to a specific role — "authenticated, any role" in the
+// source (docs/decisions/0010-authenticated-any-role.md).
+//
+// Never inferred from silence, and never inferred from an unrecognized
+// guard's mere presence — only created when extraction can point at a
+// guard it positively recognizes as doing authentication. Which guard
+// names are recognized is framework-specific (per that ADR's Consequences
+// note) and lives in the extractor package, not here; this type only
+// records the resulting fact, framework-independently, the same way
+// RoleDeclaration/RoleReference do for roles.
+type AuthenticationRequirement struct {
+	ID         ID
+	EndpointID ID
+	File       string
+	Line       int
 }
 
 // Confidence is the confidence grade attached to a Finding. Sphinxor never

@@ -85,6 +85,14 @@ func Extract(dir string) (*model.Model, AllowlistOutcome, error) {
 		outcome.StaleMarkers = append(outcome.StaleMarkers, stale...)
 	}
 
+	// Pass 3: authentication requirements (ADR 0010) — derived from the
+	// fully-assembled GuardApplication/RoleReference collections above, so
+	// it runs after Pass 2 rather than incrementally per file: an
+	// endpoint's guards can come from both class- and method-level
+	// decorators, and the "zero resolved roles anywhere on this endpoint"
+	// check needs all of them known first.
+	b.model.AuthenticationRequirements = computeAuthenticationRequirements(&b.model, b.nextID("authreq"))
+
 	return &b.model, outcome, nil
 }
 
