@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Accepted.
 
 ## Context
 
@@ -186,6 +186,17 @@ ADR — a real, stated limit of this fix, not swept under it.
   list rather than a framework-independent computation — expected to stay small and
   grow only from real evidence, the same discipline `extractRoleDeclarations`
   already applies to which enums count as role declarations (ADR 0002).
+- **This is the first piece of framework-specific knowledge to live in what has
+  otherwise been a framework-agnostic path, and that's expected, not an oversight
+  worth flagging as a smell.** Authentication is genuinely expressed differently per
+  framework — Spring has no `AuthGuard`, it has its own conventions (`@PreAuthorize`,
+  `SecurityFilterChain`-configured entry points, and others ADR 0001 already named as
+  reasons Spring was harder to trust for v0.1). When a second framework arrives, the
+  recognized-guard-name list does **not** grow into one shared, multi-framework list
+  — it splits, one small recognized set per extractor package, the same way this one
+  lives in `internal/extract/nestjs` rather than in `internal/model`. Stated here so
+  that decision is legible as anticipated when it happens, not rediscovered as a
+  missing abstraction someone has to justify retrofitting.
 - `internal/export/cerbos`'s `Translate` gains one new source of `roleGrant`
   (value `"*"`) alongside `RoleReference`-derived ones, replacing today's blanket
   `ReasonNoRole` omission for endpoints this now covers. The Rego exporter (v0.5.0)
