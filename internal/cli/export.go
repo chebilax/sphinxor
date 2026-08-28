@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -69,7 +70,13 @@ func runExportCerbos(cmd *cobra.Command, dir, out string, format report.Format) 
 		return fmt.Errorf("writing policies: %w", err)
 	}
 
-	reportPath := filepath.Join(out, "export-report."+reportExtension(format))
+	// A sibling of --out, not nested inside it: cerbos compile scans an
+	// entire directory for .yaml/.yml/.json policy candidates and errors
+	// on anything that doesn't parse as one -- confirmed empirically
+	// (export-report.json inside the policy directory made a real
+	// `cerbos compile` fail with "unknown field \"Rules\""). Nesting the
+	// report only "looked right" until it was actually compiled.
+	reportPath := strings.TrimSuffix(out, string(filepath.Separator)) + ".report." + reportExtension(format)
 	f, err := os.Create(reportPath)
 	if err != nil {
 		return fmt.Errorf("creating export report: %w", err)
@@ -79,7 +86,7 @@ func runExportCerbos(cmd *cobra.Command, dir, out string, format report.Format) 
 		return fmt.Errorf("writing export report: %w", err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Wrote %d policy file(s) and %s to %s\n", len(written), filepath.Base(reportPath), out)
+	fmt.Fprintf(cmd.OutOrStdout(), "Wrote %d policy file(s) to %s, and the export report to %s\n", len(written), out, reportPath)
 	fmt.Fprintf(cmd.OutOrStdout(), "%d rule(s) exported, %d omission(s), %d unverified role reference(s) — review before deploying.\n",
 		len(result.Rules), len(result.Omissions), len(result.UnverifiedRoles))
 

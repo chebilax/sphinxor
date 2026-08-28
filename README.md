@@ -137,10 +137,12 @@ by default for any action with no matching rule, so omission is the safe state, 
 a workaround.
 
 Everything omitted is flagged twice: as an inline YAML comment at the point of
-omission, and in a companion `export-report.md` (or `.json` with `--format json`)
-written alongside the policy files. Read the report before deploying anything —
-a sparse export usually means the source code's access control genuinely doesn't
-carry enough information to translate, not that the exporter missed something.
+omission, and in a companion report written as `<out>.report.md` (or `.json` with
+`--format json`) — a sibling of `--out`, not nested inside it, so it's never
+mistaken for a policy file by `cerbos compile` itself, which scans the whole
+directory it's pointed at. Read the report before deploying anything — a sparse
+export usually means the source code's access control genuinely doesn't carry
+enough information to translate, not that the exporter missed something.
 
 ## Documentation
 
