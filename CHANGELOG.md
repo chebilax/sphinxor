@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **"Authenticated, any role" grants** ([ADR 0010](docs/decisions/0010-authenticated-any-role.md)):
+  the model now has a positive `AuthenticationRequirement` fact for an
+  endpoint guarded by a recognized authentication guard (`AuthGuard`) with
+  no specific role resolved — previously indistinguishable from "extraction
+  found nothing." `sphinxor export cerbos` exports these as Cerbos's
+  documented `*` role grant (confirmed behaviorally, not just from docs),
+  raising real coverage on the two vendored repos from 6 to 9 rules (7 to
+  10 of 24 endpoints) without guessing: the recognized-guard-name set is
+  small and evidence-based, deliberately excludes the literal-empty-`@Roles()`
+  case `empty-role` already flags as a probable mistake, and an endpoint
+  sharing a Cerbos action with a differently-guarded sibling still collides
+  exactly as before.
+
+### Fixed
+
+- `sphinxor export cerbos --format json`'s companion report no longer
+  collides with the generated policy directory — it's written as
+  `<out>.report.json`, a sibling of `--out`, not nested inside it (a real
+  `cerbos compile` against `--out` used to fail on the report file itself).
+
+## [0.4.0] - 2026-08-27
+
+### Added
+
 - **`sphinxor export cerbos <dir> --out <policy-dir>`** — the first
   authorization-engine exporter ([ADR 0009](docs/decisions/0009-cerbos-exporter.md)):
   translates the normalized model into a Cerbos resource policy set.
