@@ -63,6 +63,31 @@ func TestRealWorldExport_NestjsBoilerplate(t *testing.T) {
 		t.Errorf("got %d rules for \"users\", want 4 (one per distinct HTTP method: post, get, patch, delete): %+v", usersRules, result.Rules)
 	}
 
+	// AuthController's get/patch/delete (all AuthGuard('jwt'), no @Roles())
+	// should now export as "authenticated, any role" grants (ADR 0010) --
+	// confirmed against real data, not just the synthetic
+	// authentication_test.go cases. "post" must NOT be among them: it
+	// shares its Cerbos action with six genuinely unguarded siblings
+	// (login, register, confirm, confirm/new, forgot/password,
+	// reset/password), so it still collides -- exactly the corrected
+	// worked example in ADR 0010's Consequences, not the original,
+	// wrong "post covering both logout and refresh" claim.
+	authActions := map[string][]string{}
+	for _, r := range result.Rules {
+		if r.Resource == "auth" {
+			authActions[r.Action] = r.Roles
+		}
+	}
+	for _, action := range []string{"get", "patch", "delete"} {
+		roles, ok := authActions[action]
+		if !ok || len(roles) != 1 || roles[0] != anyAuthenticatedRole {
+			t.Errorf("auth %s roles = %v, want [%q] (AuthenticationRequirement)", action, roles, anyAuthenticatedRole)
+		}
+	}
+	if _, ok := authActions["post"]; ok {
+		t.Errorf("auth \"post\" must still collide (shared with six unguarded siblings), got a rule: %+v", authActions["post"])
+	}
+
 	dir := t.TempDir()
 	if _, err := WritePolicies(dir, result); err != nil {
 		t.Fatalf("WritePolicies: %v", err)

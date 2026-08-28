@@ -15,6 +15,14 @@ import (
 	"github.com/chebilax/sphinxor/internal/model"
 )
 
+// anyAuthenticatedRole is Cerbos's documented special role value: "The
+// special value `*` can be used to disregard roles when evaluating the
+// rule" (Cerbos resource_policies docs). Used for AuthenticationRequirement
+// grants (ADR 0010) — confirmed behaviorally with a real cerbos compile
+// and a passing test asserting EFFECT_ALLOW for an unrelated role, not
+// just read from the docs.
+const anyAuthenticatedRole = "*"
+
 // Rule is one confirmed (resource, action) -> roles grant, ready to become
 // a Cerbos resource policy rule. It always has at least one role and at
 // least one contributing endpoint — an endpoint with no confirmed role
@@ -130,6 +138,20 @@ func Translate(m *model.Model) Result {
 		rolesByEndpoint[app.EndpointID] = appendUniqueGrant(rolesByEndpoint[app.EndpointID], roleGrant{
 			name:     ref.RawLiteral,
 			verified: ref.RoleDeclarationID != nil,
+		})
+	}
+	// AuthenticationRequirement (ADR 0010) is a second, independent grant
+	// source: "authenticated, any role" in the source, confirmed by a
+	// recognized authentication guard with no resolved role — Cerbos's
+	// documented `*` role disregards roles when evaluating a rule. Always
+	// verified=true: this is a positive, confirmed fact extraction itself
+	// establishes, not a reference resolved against a declaration, so the
+	// "could not be verified against a known declaration" flagging that
+	// applies to RoleReference has nothing to check here.
+	for _, req := range m.AuthenticationRequirements {
+		rolesByEndpoint[req.EndpointID] = appendUniqueGrant(rolesByEndpoint[req.EndpointID], roleGrant{
+			name:     anyAuthenticatedRole,
+			verified: true,
 		})
 	}
 
