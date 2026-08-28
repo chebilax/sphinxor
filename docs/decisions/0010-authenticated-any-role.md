@@ -7,7 +7,13 @@ Proposed.
 ## Context
 
 Exporting the two vendored NestJS repos to Cerbos (ADR 0009, PR #7) produced 6
-rules covering 7 of 23 endpoints. The exporter's own companion report is the
+rules covering 7 of 24 endpoints (`nestjs-boilerplate` has 16 — 5 on
+`UsersController`, 11 on `AuthController` — not 15; `UsersController`'s `findAll`
+and `findOne` are two endpoints merged into one exported `get` rule, easy to
+undercount as "4" if the rule count and the endpoint count get conflated. Verified
+by recounting directly against a fresh `export-report.json`, not carried forward
+from an earlier statement in this conversation, which had the same off-by-one.)
+The exporter's own companion report is the
 evidence, not a guess: 17 omissions, split `no-guard` (10), `guarded-no-role` (5),
 `action-collision` (2) — recomputed directly from the real `export-report.json`
 output, not from memory. (An earlier verbal summary in this conversation said "8"
@@ -140,14 +146,32 @@ ADR — a real, stated limit of this fix, not swept under it.
   (value `"*"`) alongside `RoleReference`-derived ones, replacing today's blanket
   `ReasonNoRole` omission for endpoints this now covers. The Rego exporter (v0.5.0)
   inherits the same fix for free, per the whole point of this living in the model.
-- Concretely, applied to the two vendored repos as they stand today: 5 endpoints in
-  `nestjs-boilerplate`'s `AuthController` move from omitted to exported (4 new
-  rules — `get`/`post`/`patch`/`delete` on `auth`, `post` covering both `logout`
-  and `refresh`), taking that repo from 4 to 8 rules and from 4 to 9 of its 15
-  endpoints covered. `awesome-nest-boilerplate` is unchanged (its one relevant case
-  stays inside an action-collision, per the interaction analysis above). Combined
-  across both repos: 6 → 10 rules, 7 → 12 of 23 endpoints covered. A real,
-  meaningful improvement — not a full close of the gap, and not claimed as one.
+- Concretely, applied to the two vendored repos as they stand today: **3**,
+  not 5, of `nestjs-boilerplate` `AuthController`'s omitted endpoints actually
+  become newly exported — `get`/`patch`/`delete` on `auth`, each a single,
+  sibling-free endpoint (`GET`/`PATCH`/`DELETE /auth/me`). The `post` case does
+  **not** newly export, and an earlier draft of this ADR claimed it did without
+  carrying the interaction analysis above through the arithmetic for this specific
+  group. `POST /auth/logout` and `POST /auth/refresh` (the two endpoints that would
+  gain an `AuthenticationRequirement`) share the `auth` resource's `post` action
+  with **six** other endpoints that have no guard at all
+  (`/auth/email/{login,register,confirm,confirm/new}`, `/auth/forgot/password`,
+  `/auth/reset/password`) — confirmed directly against `export-report.json`, not
+  assumed. A grant of `*` and a grant of nothing are different grant sets, so this
+  group collides under the existing algorithm exactly as designed (no special case
+  needed — this is what "no change to the collision algorithm" in the interaction
+  analysis above actually means in practice, including where it costs coverage, not
+  only where it's neutral). Those 8 endpoints don't disappear from the report; they
+  move from six `no-guard` + two `guarded-no-role` omissions to eight
+  `action-collision` omissions instead — same safe outcome (nothing exported),
+  different, more precise stated reason, since two of the eight now demonstrably
+  disagree with the rest rather than all eight uniformly having nothing to say.
+  Net for `nestjs-boilerplate`: 4 → 7 rules, 5 → 8 of its 16 endpoints covered.
+  `awesome-nest-boilerplate` is unchanged (its one relevant case stays inside an
+  action-collision, per the interaction analysis above). Combined across both
+  repos: **6 → 9 rules, 7 → 10 of 24 endpoints covered.** A real, meaningful
+  improvement — not a full close of the gap, and smaller than this ADR first
+  claimed once checked against its own stated mechanism rather than eyeballed.
 - Existing lint rules (`mutating-endpoint-without-access-control`,
   `permission-declared-but-unreferenced`, `empty-role`) are unaffected — none of
   them read `AuthenticationRequirement`, and this ADR doesn't ask them to.
