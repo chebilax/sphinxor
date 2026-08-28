@@ -65,10 +65,12 @@ populated by extraction:
 
 ```go
 // AuthenticationRequirement is a positive, confirmed fact: this endpoint has
-// at least one real GuardApplication, and none of them resolve to a specific
-// role -- "authenticated, any role" in the source. Never inferred from
-// silence; only created when extraction can point at the guard(s) that
-// establish it.
+// at least one real GuardApplication recognized as an authentication guard,
+// and none of the endpoint's guards resolve to a specific role --
+// "authenticated, any role" in the source. Never inferred from silence, and
+// never inferred from an unrecognized guard's mere presence; only created
+// when extraction can point at a guard it positively recognizes as doing
+// authentication.
 type AuthenticationRequirement struct {
     ID         ID
     EndpointID ID
@@ -80,20 +82,50 @@ type AuthenticationRequirement struct {
 Added to `Model.AuthenticationRequirements`. This is additive to ADR 0002's
 collection set — no existing field or type changes shape.
 
+**"At least one `GuardApplication`" must not mean "any guard, unqualified" — that
+would be a second, independent guess-in-the-permissive-direction failure, and this
+decision has to close it explicitly, not leave it implicit.** `GuardApplication.GuardName`
+is a free-form identifier taken straight from the source (whatever the developer
+named their guard class); NestJS's `CanActivate` interface carries no marker
+distinguishing an authentication guard from a rate limiter, a feature flag, or any
+other unrelated `@UseGuards()` use. Treating *any* guard's presence as "this endpoint
+requires authentication" would silently launder an unrelated guard into a `["*"]`
+grant it never asked for — the same shape of error ADR 0009 §3 already rejected for
+"unrecognized construct implies authorization," now recurring one layer upstream.
+
+Extraction therefore only creates an `AuthenticationRequirement` from a **recognized**
+authentication guard — starting with exactly one name: **`AuthGuard`**, matched by
+`GuardName` alone (not by import path, consistent with how `RolesGuard`/`Roles` are
+already recognized by bare identifier elsewhere in this extractor). This is not
+picked speculatively: it's the guard both vendored repos actually use for every one
+of their real "authenticated, any role" endpoints — `nestjs-boilerplate` imports it
+from `@nestjs/passport`; `awesome-nest-boilerplate` defines its own, locally, at
+`guards/auth.guard.ts` — different origins, same convention, confirmed by dumping
+every endpoint's actual `GuardName`s (`internal/extract/nestjs`, real fixture data),
+not assumed from either project's README. Any other guard name — recognized-sounding
+or not, `ThrottlerGuard`, a project's own unrelated custom guard, anything this
+extractor doesn't have positive evidence about — leaves that endpoint exactly where
+it is today: a `GuardApplication` with no resolved role, no `AuthenticationRequirement`,
+still surfaced as the `guarded-no-role` export omission (or the equivalent lint
+finding) it already gets. The recognized set is expected to grow only from the same
+kind of real evidence that justified `AuthGuard` — not extended speculatively ahead
+of a real repo showing another name is common enough to trust.
+
 **Extraction creates one `AuthenticationRequirement` for an endpoint when it has
-at least one `GuardApplication` and zero resolved `RoleReference`s, with one
-deliberate exclusion**: a literal `@Roles()` call with zero arguments (the exact
-shape `EmptyRole` already flags at High confidence as a probable mistake) does
-**not** produce an `AuthenticationRequirement`. `EmptyRole`'s own reasoning already
-draws this line for a related purpose — a composite's empty-by-default role list is
-"that composite's documented... behavior," while a literal empty call is "the
-forgotten-argument smell this rule targets" — and this decision leans on the same
-distinction for a different consumer: exporting `roles: ["*"]` for code already
-flagged as *probably a bug* would mean confidently granting broad access based on
-what might be a mistake, not a deliberate design choice. That's precisely the
-guess-in-the-permissive-direction failure ADR 0009 exists to prevent, now one layer
-upstream in the model instead of in the exporter. Composite-resolved empty role
-lists, and endpoints with no role-checking guard applied at all (the 5 real cases
+at least one recognized-authentication `GuardApplication` and zero resolved
+`RoleReference`s, with one deliberate exclusion**: a literal `@Roles()` call with
+zero arguments (the exact shape `EmptyRole` already flags at High confidence as a
+probable mistake) does **not** produce an `AuthenticationRequirement`. `EmptyRole`'s
+own reasoning already draws this line for a related purpose — a composite's
+empty-by-default role list is "that composite's documented... behavior," while a
+literal empty call is "the forgotten-argument smell this rule targets" — and this
+decision leans on the same distinction for a different consumer: exporting
+`roles: ["*"]` for code already flagged as *probably a bug* would mean confidently
+granting broad access based on what might be a mistake, not a deliberate design
+choice. That's precisely the guess-in-the-permissive-direction failure ADR 0009
+exists to prevent, now one layer upstream in the model instead of in the exporter.
+Composite-resolved empty role lists, and endpoints with no role-checking guard
+applied at all (the 5 real cases above, all `AuthGuard`, confirmed per-endpoint
 above), both still qualify — neither is flagged as a mistake anywhere else in the
 system.
 
@@ -133,15 +165,27 @@ ADR — a real, stated limit of this fix, not swept under it.
   fabricated literal that never appeared in any file would corrupt both, and would
   need its own exclusion logic wherever `RoleReference` is read — worse than one
   new, honestly-named entity.
+- **Treat any `GuardApplication`, regardless of `GuardName`, as establishing
+  "authenticated, any role"** — rejected outright, not a simplification worth
+  considering: a guard's mere presence says nothing about what it does. A rate
+  limiter, a feature-flag check, or any other unrelated `@UseGuards()` use would be
+  silently upgraded to a `["*"]` grant it never earned — exactly the kind of
+  guess-in-the-permissive-direction failure this whole ADR exists to close, just
+  reintroduced one clause later. Recognizing a specific, evidence-backed guard name
+  (`AuthGuard`) instead of "any guard" is the whole point, not an incidental detail.
 
 ## Consequences
 
 - `internal/model` gains `AuthenticationRequirement` and
   `Model.AuthenticationRequirements`, additive per ADR 0002's normalized shape.
-- `internal/extract/nestjs` gains the logic above — the only extraction change;
-  no NestJS-specific concept is introduced, since "guard present, zero resolved
-  roles, not the flagged-empty-literal case" is already exactly what
-  `mutating_endpoint.go` and `empty_role.go` each compute a piece of today.
+- `internal/extract/nestjs` gains the logic above — the only extraction change.
+  The core condition ("guard present, zero resolved roles, not the
+  flagged-empty-literal case") is already exactly what `mutating_endpoint.go` and
+  `empty_role.go` each compute a piece of today; the one genuinely new piece is the
+  recognized-guard-name check (`AuthGuard`), a small, explicit, NestJS-convention
+  list rather than a framework-independent computation — expected to stay small and
+  grow only from real evidence, the same discipline `extractRoleDeclarations`
+  already applies to which enums count as role declarations (ADR 0002).
 - `internal/export/cerbos`'s `Translate` gains one new source of `roleGrant`
   (value `"*"`) alongside `RoleReference`-derived ones, replacing today's blanket
   `ReasonNoRole` omission for endpoints this now covers. The Rego exporter (v0.5.0)
