@@ -6,11 +6,12 @@ import (
 	"github.com/chebilax/sphinxor/internal/model"
 )
 
-// TestExtract_Pharmacy runs structural extraction against the vendored,
-// in-scope Pharmacy fixture (testdata/Pharmacy/NOTICE.md) and checks the
-// resulting Controller/Endpoint list against ground truth verified by hand
-// against the real source, per docs/testing.md. No guard/role/authentication
-// assertions here — this package's first cut extracts structure only.
+// TestExtract_Pharmacy runs full extraction (structure, guards, roles,
+// method-security status) against the vendored, in-scope Pharmacy fixture
+// (testdata/Pharmacy/NOTICE.md) and checks the resulting Controller/Endpoint
+// list against ground truth verified by hand against the real source, per
+// docs/testing.md. Guard/role assertions are in TestExtract_Pharmacy_Guards
+// below, kept separate for readability.
 func TestExtract_Pharmacy(t *testing.T) {
 	m, err := Extract("testdata/Pharmacy/backend/src/main/java")
 	if err != nil {
@@ -68,6 +69,124 @@ func TestExtract_Pharmacy(t *testing.T) {
 		if c := controllerByID[e.ControllerID]; c.Name != want.controller {
 			t.Errorf("%s %s: controller = %q, want %q", want.method, want.path, c.Name, want.controller)
 		}
+	}
+}
+
+// TestExtract_Pharmacy_Guards checks guard/role extraction against
+// Pharmacy's real @PreAuthorize usage — every occurrence in the vendored
+// fixture, hand-verified against the source, per docs/testing.md: real
+// extraction logic (annotation recognition, SpEL parsing, role-declaration
+// resolution) gets real-fixture coverage, not synthetic-only.
+func TestExtract_Pharmacy_Guards(t *testing.T) {
+	m, err := Extract("testdata/Pharmacy/backend/src/main/java")
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	// Role.java declares exactly ADMIN and PHARMACIST, both referenced by
+	// real hasRole/hasAnyRole calls below — both must resolve.
+	if len(m.RoleDeclarations) != 2 {
+		t.Fatalf("got %d role declarations, want 2: %+v", len(m.RoleDeclarations), m.RoleDeclarations)
+	}
+	roleDeclByName := make(map[string]model.ID, len(m.RoleDeclarations))
+	for _, d := range m.RoleDeclarations {
+		if d.Kind != model.RoleDeclarationEnum {
+			t.Errorf("role declaration %q: kind = %q, want enum (Role.java is a plain Java enum)", d.Name, d.Kind)
+		}
+		roleDeclByName[d.Name] = d.ID
+	}
+	if _, ok := roleDeclByName["ADMIN"]; !ok {
+		t.Error("missing role declaration ADMIN")
+	}
+	if _, ok := roleDeclByName["PHARMACIST"]; !ok {
+		t.Error("missing role declaration PHARMACIST")
+	}
+
+	// Every @PreAuthorize in the vendored source, method + resolved roles,
+	// hand-counted against SupplierController.java/CustomerController.java.
+	// AuthController.login carries no @PreAuthorize at all — no entry here,
+	// confirmed separately below (zero guards on that endpoint).
+	wantGuards := []struct {
+		method model.HTTPMethod
+		path   string
+		roles  []string
+	}{
+		{model.MethodPost, "/api/suppliers", []string{"ADMIN"}},
+		{model.MethodGet, "/api/suppliers", []string{"ADMIN", "PHARMACIST"}},
+		{model.MethodPost, "/api/customers", []string{"ADMIN", "PHARMACIST"}},
+		{model.MethodPut, "/api/customers/{id}", []string{"ADMIN", "PHARMACIST"}},
+		{model.MethodGet, "/api/customers/{id}", []string{"ADMIN", "PHARMACIST"}},
+		{model.MethodGet, "/api/customers", []string{"ADMIN", "PHARMACIST"}},
+		{model.MethodDelete, "/api/customers/{id}", []string{"ADMIN"}},
+	}
+
+	roleRefsByGuardApp := make(map[model.ID][]model.RoleReference, len(m.RoleReferences))
+	for _, r := range m.RoleReferences {
+		roleRefsByGuardApp[r.GuardApplicationID] = append(roleRefsByGuardApp[r.GuardApplicationID], r)
+	}
+	guardAppsByEndpoint := make(map[model.ID][]model.GuardApplication, len(m.GuardApplications))
+	for _, g := range m.GuardApplications {
+		guardAppsByEndpoint[g.EndpointID] = append(guardAppsByEndpoint[g.EndpointID], g)
+	}
+
+	if got := len(m.GuardApplications); got != len(wantGuards) {
+		t.Fatalf("got %d GuardApplications, want %d", got, len(wantGuards))
+	}
+
+	for _, want := range wantGuards {
+		e, ok := findEndpoint(m.Endpoints, want.method, want.path)
+		if !ok {
+			t.Errorf("missing endpoint %s %s", want.method, want.path)
+			continue
+		}
+		apps := guardAppsByEndpoint[e.ID]
+		if len(apps) != 1 {
+			t.Errorf("%s %s: got %d GuardApplications, want 1: %+v", want.method, want.path, len(apps), apps)
+			continue
+		}
+		g := apps[0]
+		if g.GuardName != "PreAuthorize" || g.AppliedAt != model.ScopeMethod || !g.DeclaresRoles {
+			t.Errorf("%s %s: GuardApplication = %+v, want PreAuthorize/ScopeMethod/DeclaresRoles=true", want.method, want.path, g)
+		}
+		refs := roleRefsByGuardApp[g.ID]
+		if len(refs) != len(want.roles) {
+			t.Errorf("%s %s: got %d role refs, want %d: %+v", want.method, want.path, len(refs), len(want.roles), refs)
+			continue
+		}
+		for i, r := range refs {
+			if r.RawLiteral != want.roles[i] {
+				t.Errorf("%s %s: role[%d] = %q, want %q", want.method, want.path, i, r.RawLiteral, want.roles[i])
+			}
+			if r.RoleDeclarationID == nil || *r.RoleDeclarationID != roleDeclByName[r.RawLiteral] {
+				t.Errorf("%s %s: role %q did not resolve to its Role.java declaration", want.method, want.path, r.RawLiteral)
+			}
+		}
+	}
+
+	// AuthController.login: no @PreAuthorize, no guard at all — real,
+	// by-design unguarded (verified against SecurityConfig.java's
+	// permitAll() on /auth/** too, though that's PR 3's URL-layer territory).
+	login, ok := findEndpoint(m.Endpoints, model.MethodPost, "/auth/login")
+	if !ok {
+		t.Fatal("missing endpoint POST /auth/login")
+	}
+	if apps := guardAppsByEndpoint[login.ID]; len(apps) != 0 {
+		t.Errorf("POST /auth/login: got %d GuardApplications, want 0: %+v", len(apps), apps)
+	}
+
+	// No real isAuthenticated() usage anywhere in Pharmacy's vendored
+	// @PreAuthorize calls — zero AuthenticationRequirements.
+	if len(m.AuthenticationRequirements) != 0 {
+		t.Errorf("expected no AuthenticationRequirements, got %+v", m.AuthenticationRequirements)
+	}
+
+	// SecurityConfig.java carries a bare @EnableMethodSecurity: prePost
+	// defaults true, secured/jsr250 default false — Spring's own
+	// documented defaults (docs/decisions/0015-inert-method-security-guard.md),
+	// not this project's assumption.
+	want := model.MethodSecurityStatus{Found: true, PrePostEnabled: true, SecuredEnabled: false, Jsr250Enabled: false}
+	if m.MethodSecurity != want {
+		t.Errorf("MethodSecurity = %+v, want %+v", m.MethodSecurity, want)
 	}
 }
 
@@ -150,6 +269,26 @@ func TestExtract_BlogAPI(t *testing.T) {
 	}
 	if _, ok := findEndpoint(m.Endpoints, model.MethodPost, "/tenants/{tenantId}/admin/import"); !ok {
 		t.Error("missing endpoint POST /tenants/{tenantId}/admin/import")
+	}
+
+	// blog-api's SecurityConfig.java carries @EnableMethodSecurity(prePostEnabled = false)
+	// explicitly — a real, positive parse of a non-default attribute
+	// value, not just the bare-annotation default case Pharmacy already
+	// covers. secured/jsr250 stay at their own defaults (false), since
+	// neither is set here either. Zero @PreAuthorize/@Secured/@RolesAllowed
+	// exist anywhere in the vendored blog-api controllers to be
+	// downstream-affected by this (confirmed by grep against the real
+	// source, not assumed) — the confirmed-inert consequence itself
+	// (internal/lint/mutating_endpoint.go) is exercised by a synthetic
+	// test instead, per docs/testing.md: this MethodSecurityStatus value
+	// is what real extraction produces from real annotation syntax, and
+	// isConfirmedInert is a pure function of that value once produced.
+	wantStatus := model.MethodSecurityStatus{Found: true, PrePostEnabled: false, SecuredEnabled: false, Jsr250Enabled: false}
+	if m.MethodSecurity != wantStatus {
+		t.Errorf("MethodSecurity = %+v, want %+v", m.MethodSecurity, wantStatus)
+	}
+	if len(m.GuardApplications) != 0 {
+		t.Errorf("expected no GuardApplications in vendored blog-api controllers, got %+v", m.GuardApplications)
 	}
 }
 
