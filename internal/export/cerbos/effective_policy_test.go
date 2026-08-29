@@ -63,7 +63,7 @@ func TestTranslate_CustomerControllerShape(t *testing.T) {
 		Controllers: []model.Controller{{ID: "c1", Name: "CustomerController"}},
 		Endpoints:   []model.Endpoint{{ID: "e1", HTTPMethod: model.MethodGet, Path: "/api/customers", ControllerID: "c1"}},
 		AuthenticationRequirements: []model.AuthenticationRequirement{
-			{ID: "a1", EndpointID: "e1", Scope: model.ScopeRequestMatcher},
+			{ID: "a1", EndpointID: "e1", AppliedAt: model.ScopeRequestMatcher},
 		},
 	}
 
@@ -163,7 +163,7 @@ func TestTranslate_UniversalGrantIsIdentityForIntersection(t *testing.T) {
 			{ID: "r1", GuardApplicationID: "g-url", RawLiteral: "MANAGER"},
 		},
 		AuthenticationRequirements: []model.AuthenticationRequirement{
-			{ID: "a1", EndpointID: "e1", Scope: model.ScopeMethod},
+			{ID: "a1", EndpointID: "e1", AppliedAt: model.ScopeMethod},
 		},
 	}
 

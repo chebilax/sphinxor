@@ -204,17 +204,19 @@ type AuthenticationRequirement struct {
 	EndpointID ID
 	File       string
 	Line       int
-	// Scope records which layer established this requirement — the same
-	// GuardScope vocabulary GuardApplication.AppliedAt already uses, for
-	// exactly the same reason: a framework where authorization can be
-	// declared apart from any annotated method (docs/decisions/0012-securityfilterchain-effective-policy.md)
-	// can independently produce an AuthenticationRequirement from more
-	// than one layer for the same Endpoint, and the method×URL
-	// effective-policy reduction (internal/export/cerbos) needs to tell
-	// them apart to reconcile them correctly — it cannot assume every
+	// AppliedAt records which layer established this requirement — the
+	// same field name and GuardScope vocabulary GuardApplication.AppliedAt
+	// already uses, for exactly the same reason: a framework where
+	// authorization can be declared apart from any annotated method
+	// (docs/decisions/0012-securityfilterchain-effective-policy.md,
+	// docs/decisions/0013-authentication-requirement-scope-field.md) can
+	// independently produce an AuthenticationRequirement from more than
+	// one layer for the same Endpoint, and the method×URL effective-policy
+	// reduction (internal/export/cerbos) needs to tell them apart to
+	// reconcile them correctly — it cannot assume every
 	// AuthenticationRequirement on an endpoint came from the same place
 	// the way a single-layer framework like NestJS always does.
-	Scope GuardScope
+	AppliedAt GuardScope
 }
 
 // Confidence is the confidence grade attached to a Finding. Sphinxor never

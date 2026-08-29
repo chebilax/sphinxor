@@ -208,7 +208,7 @@ func Translate(m *model.Model) Result {
 	// "could not be verified against a known declaration" flagging that
 	// applies to RoleReference has nothing to check here.
 	for _, req := range m.AuthenticationRequirements {
-		l := layerGrants(req.EndpointID, layerOf(req.Scope))
+		l := layerGrants(req.EndpointID, layerOf(req.AppliedAt))
 		*l = appendUniqueGrant(*l, roleGrant{
 			name:     anyAuthenticatedRole,
 			verified: true,
