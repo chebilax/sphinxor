@@ -30,9 +30,10 @@ import (
 
 // Extract walks the Spring project rooted at dir and builds the
 // intermediate model: controllers, endpoints, method-security guard
+// applications, SecurityFilterChain-derived (URL layer) guard
 // applications, role declarations/references, and authentication
-// requirements. SecurityFilterChain-derived facts (the URL layer) are not
-// part of this cut's output yet.
+// requirements — the full method×URL effective-policy surface ADR 0012
+// describes, ready for internal/export/cerbos's Translate to reduce.
 func Extract(dir string) (*model.Model, error) {
 	files, err := parseProject(dir)
 	if err != nil {
@@ -41,15 +42,28 @@ func Extract(dir string) (*model.Model, error) {
 
 	b := newBuilder()
 
+	// SecurityFilterChain rules are found once, up front: Pass 0 needs
+	// their role literals (a role referenced only by a SecurityFilterChain
+	// rule, never by any annotation, must still resolve), and the later
+	// application pass (below) needs the same rules again.
+	chainRules, chainFile, hasChain := findSecurityFilterChainRules(files)
+
 	// Pass 0: role declarations, project-wide, before resolving any
 	// reference to them — mirrors internal/extract/nestjs/extract.go's own
 	// staging (a declaration can live in a different file than every
 	// reference to it), restricted to literals actually referenced
 	// somewhere (roles.go's own doc comment) so an unrelated enum/constant
-	// in the project isn't mistaken for a role registry.
+	// in the project isn't mistaken for a role registry. "Referenced
+	// somewhere" now includes SecurityFilterChain rules, not just
+	// annotations.
 	usedLiterals := make(map[string]bool)
 	for _, f := range files {
 		for lit := range collectUsedRoleLiterals(f.tree.RootNode(), f.src) {
+			usedLiterals[lit] = true
+		}
+	}
+	for _, r := range chainRules {
+		for _, lit := range r.roles {
 			usedLiterals[lit] = true
 		}
 	}
@@ -69,16 +83,27 @@ func Extract(dir string) (*model.Model, error) {
 		scanMethodSecurityStatus(f.tree.RootNode(), f.src, &b.model.MethodSecurity)
 	}
 
-	// Pass 2: controllers, endpoints, and method-security guards.
+	// Pass 2: controllers, endpoints, and method-security (method-layer)
+	// guards.
 	for _, f := range files {
 		extractControllers(f.tree.RootNode(), f.src, f.relPath, b, roleByName)
 	}
 
-	// Pass 3: authentication requirements (ADR 0010) — derived from the
-	// fully-assembled RoleReference collection above (an endpoint's
-	// authCandidate can only be resolved once every guard contributing to
-	// that endpoint, class- or method-level, is known), same ordering
-	// reason as internal/extract/nestjs's own final pass.
+	// Pass 3: SecurityFilterChain (URL-layer) guards, evaluated against
+	// every endpoint discovered in Pass 2 — docs/decisions/0012-securityfilterchain-effective-policy.md,
+	// docs/decisions/0018-unrecognized-rule-stops-evaluation.md. Only when
+	// exactly one SecurityFilterChain bean was found project-wide;
+	// otherwise the URL layer simply contributes nothing, the same as a
+	// project with no SecurityFilterChain support to find.
+	if hasChain {
+		b.applySecurityFilterChain(chainRules, chainFile, roleByName)
+	}
+
+	// Pass 4: authentication requirements (ADR 0010), per layer (ADR 0011
+	// §3) — derived from the fully-assembled RoleReference collection
+	// above (an endpoint-and-layer's authCandidate can only be resolved
+	// once every guard contributing to that same layer is known), same
+	// ordering reason as internal/extract/nestjs's own final pass.
 	b.model.AuthenticationRequirements = computeAuthenticationRequirements(&b.model, b.authCandidates, b.nextID("authreq"))
 
 	return &b.model, nil

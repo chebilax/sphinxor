@@ -72,11 +72,16 @@ func TestExtract_Pharmacy(t *testing.T) {
 	}
 }
 
-// TestExtract_Pharmacy_Guards checks guard/role extraction against
-// Pharmacy's real @PreAuthorize usage — every occurrence in the vendored
-// fixture, hand-verified against the source, per docs/testing.md: real
-// extraction logic (annotation recognition, SpEL parsing, role-declaration
-// resolution) gets real-fixture coverage, not synthetic-only.
+// TestExtract_Pharmacy_Guards checks method-layer guard/role extraction
+// against Pharmacy's real @PreAuthorize usage — every occurrence in the
+// vendored fixture, hand-verified against the source, per docs/testing.md:
+// real extraction logic (annotation recognition, SpEL parsing,
+// role-declaration resolution) gets real-fixture coverage, not
+// synthetic-only. Scoped to ScopeMethod only; the URL layer
+// (SecurityFilterChain) is TestExtract_Pharmacy_SecurityFilterChain below —
+// kept separate because SupplierController's two endpoints now carry both
+// a method-layer and a URL-layer GuardApplication, and conflating them
+// here would obscure which layer each assertion is actually about.
 func TestExtract_Pharmacy_Guards(t *testing.T) {
 	m, err := Extract("testdata/Pharmacy/backend/src/main/java")
 	if err != nil {
@@ -124,13 +129,22 @@ func TestExtract_Pharmacy_Guards(t *testing.T) {
 	for _, r := range m.RoleReferences {
 		roleRefsByGuardApp[r.GuardApplicationID] = append(roleRefsByGuardApp[r.GuardApplicationID], r)
 	}
-	guardAppsByEndpoint := make(map[model.ID][]model.GuardApplication, len(m.GuardApplications))
+	// Method-layer only (AppliedAt == ScopeMethod) — SupplierController's
+	// two endpoints also carry a URL-layer GuardApplication now
+	// (TestExtract_Pharmacy_SecurityFilterChain), which would otherwise
+	// double-count against wantGuards here.
+	methodGuardsByEndpoint := make(map[model.ID][]model.GuardApplication, len(m.GuardApplications))
+	var methodLayerCount int
 	for _, g := range m.GuardApplications {
-		guardAppsByEndpoint[g.EndpointID] = append(guardAppsByEndpoint[g.EndpointID], g)
+		if g.AppliedAt != model.ScopeMethod {
+			continue
+		}
+		methodLayerCount++
+		methodGuardsByEndpoint[g.EndpointID] = append(methodGuardsByEndpoint[g.EndpointID], g)
 	}
 
-	if got := len(m.GuardApplications); got != len(wantGuards) {
-		t.Fatalf("got %d GuardApplications, want %d", got, len(wantGuards))
+	if methodLayerCount != len(wantGuards) {
+		t.Fatalf("got %d method-layer GuardApplications, want %d", methodLayerCount, len(wantGuards))
 	}
 
 	for _, want := range wantGuards {
@@ -139,14 +153,14 @@ func TestExtract_Pharmacy_Guards(t *testing.T) {
 			t.Errorf("missing endpoint %s %s", want.method, want.path)
 			continue
 		}
-		apps := guardAppsByEndpoint[e.ID]
+		apps := methodGuardsByEndpoint[e.ID]
 		if len(apps) != 1 {
-			t.Errorf("%s %s: got %d GuardApplications, want 1: %+v", want.method, want.path, len(apps), apps)
+			t.Errorf("%s %s: got %d method-layer GuardApplications, want 1: %+v", want.method, want.path, len(apps), apps)
 			continue
 		}
 		g := apps[0]
-		if g.GuardName != "PreAuthorize" || g.AppliedAt != model.ScopeMethod || !g.DeclaresRoles {
-			t.Errorf("%s %s: GuardApplication = %+v, want PreAuthorize/ScopeMethod/DeclaresRoles=true", want.method, want.path, g)
+		if g.GuardName != "PreAuthorize" || !g.DeclaresRoles {
+			t.Errorf("%s %s: GuardApplication = %+v, want PreAuthorize/DeclaresRoles=true", want.method, want.path, g)
 		}
 		refs := roleRefsByGuardApp[g.ID]
 		if len(refs) != len(want.roles) {
@@ -163,21 +177,27 @@ func TestExtract_Pharmacy_Guards(t *testing.T) {
 		}
 	}
 
-	// AuthController.login: no @PreAuthorize, no guard at all — real,
-	// by-design unguarded (verified against SecurityConfig.java's
-	// permitAll() on /auth/** too, though that's PR 3's URL-layer territory).
+	// AuthController.login: no @PreAuthorize, no method-layer guard at
+	// all — real, by-design unguarded. Its URL layer (SecurityConfig.java's
+	// permitAll() on /auth/**) is checked in
+	// TestExtract_Pharmacy_SecurityFilterChain.
 	login, ok := findEndpoint(m.Endpoints, model.MethodPost, "/auth/login")
 	if !ok {
 		t.Fatal("missing endpoint POST /auth/login")
 	}
-	if apps := guardAppsByEndpoint[login.ID]; len(apps) != 0 {
-		t.Errorf("POST /auth/login: got %d GuardApplications, want 0: %+v", len(apps), apps)
+	if apps := methodGuardsByEndpoint[login.ID]; len(apps) != 0 {
+		t.Errorf("POST /auth/login: got %d method-layer GuardApplications, want 0: %+v", len(apps), apps)
 	}
 
 	// No real isAuthenticated() usage anywhere in Pharmacy's vendored
-	// @PreAuthorize calls — zero AuthenticationRequirements.
-	if len(m.AuthenticationRequirements) != 0 {
-		t.Errorf("expected no AuthenticationRequirements, got %+v", m.AuthenticationRequirements)
+	// @PreAuthorize calls — zero method-layer AuthenticationRequirements.
+	// (CustomerController's real URL-layer AuthenticationRequirements —
+	// from SecurityConfig.java's anyRequest().authenticated() catch-all —
+	// are checked in TestExtract_Pharmacy_SecurityFilterChain, not here.)
+	for _, a := range m.AuthenticationRequirements {
+		if a.AppliedAt == model.ScopeMethod {
+			t.Errorf("expected no method-layer AuthenticationRequirements, got %+v", a)
+		}
 	}
 
 	// SecurityConfig.java carries a bare @EnableMethodSecurity: prePost
@@ -287,8 +307,16 @@ func TestExtract_BlogAPI(t *testing.T) {
 	if m.MethodSecurity != wantStatus {
 		t.Errorf("MethodSecurity = %+v, want %+v", m.MethodSecurity, wantStatus)
 	}
-	if len(m.GuardApplications) != 0 {
-		t.Errorf("expected no GuardApplications in vendored blog-api controllers, got %+v", m.GuardApplications)
+	// Zero *method-layer* GuardApplications — confirmed above. The URL
+	// layer (SecurityConfig.java's real, mixed hasAuthority/access()
+	// chain) now contributes its own GuardApplications; that's
+	// TestExtract_BlogAPI_SecurityFilterChain's job, not this test's —
+	// kept separate so a URL-layer assertion failure doesn't read as if
+	// method-layer extraction (this test's actual subject) regressed.
+	for _, g := range m.GuardApplications {
+		if g.AppliedAt == model.ScopeMethod {
+			t.Errorf("expected no method-layer GuardApplications in vendored blog-api controllers, got %+v", g)
+		}
 	}
 }
 

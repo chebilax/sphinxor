@@ -20,32 +20,49 @@ type authCandidate struct {
 // computeAuthenticationRequirements mirrors
 // internal/extract/nestjs/authentication.go's function of the same name
 // and purpose (ADR 0010): an AuthenticationRequirement is created only for
-// an endpoint with at least one recognized-authentication candidate AND
-// zero resolved RoleReferences anywhere on that endpoint —
-// isAuthenticated() only wins when nothing stricter was also found on the
-// same endpoint, the same rule NestJS applies, evaluated against Spring's
-// own candidate list instead of a recognized-guard-name lookup.
+// an endpoint-and-layer with at least one recognized-authentication
+// candidate AND zero resolved RoleReferences anywhere *on that same
+// layer* — isAuthenticated() only wins when nothing stricter was also
+// found on the same layer.
 //
-// One candidate per endpoint at most: a class-level and a method-level
-// isAuthenticated() on the same endpoint would otherwise produce two
-// AuthenticationRequirements for one fact.
+// Per-layer, not per-endpoint-globally, per ADR 0011 §3: once an endpoint
+// can have independent method- and URL-layer facts, a global "zero role
+// refs anywhere on this endpoint" check would wrongly suppress a real,
+// independently-true method-layer isAuthenticated() just because the URL
+// layer happened to name a concrete role elsewhere (or vice versa) — the
+// two layers are reconciled later, by internal/export/cerbos's
+// intersection (ADR 0012 §2), not pre-suppressed here. This was
+// equivalent to a global, per-endpoint check in PR 2 (only one layer
+// existed then); now that the URL layer exists (PR 3), it isn't, and this
+// function is corrected accordingly rather than left silently wrong.
+//
+// At most one AuthenticationRequirement per endpoint-and-layer: two
+// isAuthenticated() candidates on the same layer of the same endpoint
+// (e.g. a redundant class- and method-level pair, both layerMethod)
+// would otherwise produce two AuthenticationRequirements for one fact.
 func computeAuthenticationRequirements(m *model.Model, candidates []authCandidate, next func() model.ID) []model.AuthenticationRequirement {
 	roleRefCountByGuard := make(map[model.ID]int, len(m.RoleReferences))
 	for _, r := range m.RoleReferences {
 		roleRefCountByGuard[r.GuardApplicationID]++
 	}
-	roleRefCountByEndpoint := make(map[model.ID]int, len(m.GuardApplications))
+	type endpointLayer struct {
+		endpoint model.ID
+		url      bool
+	}
+	roleRefCountByLayer := make(map[endpointLayer]int, len(m.GuardApplications))
 	for _, g := range m.GuardApplications {
-		roleRefCountByEndpoint[g.EndpointID] += roleRefCountByGuard[g.ID]
+		k := endpointLayer{endpoint: g.EndpointID, url: g.AppliedAt == model.ScopeRequestMatcher}
+		roleRefCountByLayer[k] += roleRefCountByGuard[g.ID]
 	}
 
-	seen := make(map[model.ID]bool, len(candidates))
+	seen := make(map[endpointLayer]bool, len(candidates))
 	var out []model.AuthenticationRequirement
 	for _, c := range candidates {
-		if seen[c.EndpointID] || roleRefCountByEndpoint[c.EndpointID] > 0 {
+		k := endpointLayer{endpoint: c.EndpointID, url: c.AppliedAt == model.ScopeRequestMatcher}
+		if seen[k] || roleRefCountByLayer[k] > 0 {
 			continue
 		}
-		seen[c.EndpointID] = true
+		seen[k] = true
 		out = append(out, model.AuthenticationRequirement{
 			ID:         next(),
 			EndpointID: c.EndpointID,
