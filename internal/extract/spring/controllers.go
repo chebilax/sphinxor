@@ -34,12 +34,15 @@ var httpMappingAnnotations = map[string]model.HTTPMethod{
 }
 
 // extractControllers finds every @RestController/@Controller class at the
-// top level of root, and every recognized HTTP-mapping method within it,
-// populating b.model.Controllers and b.model.Endpoints. No guard, role, or
-// authentication extraction happens here — that's a separate, later pass
-// (docs/decisions/0011-spring-second-framework.md, docs/decisions/0012-securityfilterchain-effective-policy.md),
-// verified independently against the same fixtures once it exists.
-func extractControllers(root *sitter.Node, src []byte, file string, b *builder) {
+// top level of root, every recognized HTTP-mapping method within it, and
+// every method-security guard (class- and method-level) applying to each
+// endpoint — populating b.model.Controllers, b.model.Endpoints,
+// b.model.GuardApplications, and b.model.RoleReferences. Authentication
+// requirements are a separate final pass (authentication.go), since an
+// endpoint's guards can come from both class- and method-level annotations
+// and the "zero resolved roles anywhere on this endpoint" check needs all
+// of them known first.
+func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID) {
 	for _, decl := range namedChildren(root) {
 		if decl.Type() != "class_declaration" {
 			continue
@@ -71,6 +74,8 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder) 
 			Line:     int(decl.StartPoint().Row) + 1,
 		})
 
+		classGuards := pendingGuardsFromAnnotations(classAnns, src, file, roleByName)
+
 		body := decl.ChildByFieldName("body")
 		for _, member := range namedChildren(body) {
 			if member.Type() != "method_declaration" {
@@ -93,28 +98,36 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder) 
 			endpointID := model.NewEndpointID(httpMethod, path)
 
 			// Two real handlers sharing HTTPMethod+Path (differing only in
-			// `produces`) merge into the one already created by whichever
-			// was encountered first — docs/decisions/0014-endpoint-identity-and-content-negotiation.md.
-			// Not an arbitrary "first wins": the URL layer is architecturally
-			// identical for both (Spring's authorizeHttpRequests matches
-			// only method+path, before content negotiation resolves which
-			// handler runs), so which one's Endpoint row survives doesn't
-			// change what the URL layer contributes; only File/Line/HandlerName
-			// display differs.
-			if b.seenEndpoints[endpointID] {
-				continue
+			// `produces`) merge into one Endpoint —
+			// docs/decisions/0014-endpoint-identity-and-content-negotiation.md.
+			// The first encountered wins the Endpoint row itself
+			// (HandlerName/File/Line), but every merged handler's own
+			// guards still get attached below — ADR 0014's Consequences
+			// says so explicitly: "it attaches whatever guards each real
+			// handler carries to the shared Endpoint.ID exactly as
+			// extracted." Skipping guard extraction for a merged-away
+			// handler would silently discard a real annotation.
+			if !b.seenEndpoints[endpointID] {
+				b.seenEndpoints[endpointID] = true
+				b.model.Endpoints = append(b.model.Endpoints, model.Endpoint{
+					ID:           endpointID,
+					HTTPMethod:   httpMethod,
+					Path:         path,
+					HandlerName:  handlerNameNode.Content(src),
+					ControllerID: controllerID,
+					File:         file,
+					Line:         int(member.StartPoint().Row) + 1,
+				})
+				// Class-level guards apply once per endpoint, not once per
+				// merged handler — attaching them again for a second
+				// merged handler would duplicate identical
+				// GuardApplications for no reason (both variants share the
+				// exact same class-level annotations by construction).
+				b.applyGuards(endpointID, classGuards, model.ScopeClass)
 			}
-			b.seenEndpoints[endpointID] = true
 
-			b.model.Endpoints = append(b.model.Endpoints, model.Endpoint{
-				ID:           endpointID,
-				HTTPMethod:   httpMethod,
-				Path:         path,
-				HandlerName:  handlerNameNode.Content(src),
-				ControllerID: controllerID,
-				File:         file,
-				Line:         int(member.StartPoint().Row) + 1,
-			})
+			methodGuards := pendingGuardsFromAnnotations(methodAnns, src, file, roleByName)
+			b.applyGuards(endpointID, methodGuards, model.ScopeMethod)
 		}
 	}
 }

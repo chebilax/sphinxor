@@ -41,6 +41,33 @@ type Model struct {
 	RoleReferences             []RoleReference
 	AuthenticationRequirements []AuthenticationRequirement
 	Findings                   []Finding
+	// MethodSecurity is the project-wide fact of whether, and how,
+	// method-security annotations are actually enforced —
+	// docs/decisions/0015-inert-method-security-guard.md. Its zero value
+	// (Found: false) is correct for a framework with no such concept
+	// (e.g. NestJS): every consumer treats Found == false as "unknown,"
+	// never as "confirmed disabled."
+	MethodSecurity MethodSecurityStatus
+}
+
+// MethodSecurityStatus records whether Spring's @EnableMethodSecurity or
+// the deprecated @EnableGlobalMethodSecurity was found anywhere in the
+// project, and which annotation families it actually enables — each
+// gated by its own independent attribute, with its own real default,
+// docs/decisions/0015-inert-method-security-guard.md.
+type MethodSecurityStatus struct {
+	// Found is true if @EnableMethodSecurity or @EnableGlobalMethodSecurity
+	// was found anywhere in the parsed project. False means "no evidence
+	// either way" — extraction's view of the project is necessarily
+	// partial — never "confirmed disabled project-wide."
+	Found bool
+	// PrePostEnabled/SecuredEnabled/Jsr250Enabled are only meaningful when
+	// Found is true: whether at least one located enabling annotation
+	// activates @PreAuthorize/@PostAuthorize, @Secured, and
+	// @RolesAllowed/@PermitAll/@DenyAll respectively.
+	PrePostEnabled bool
+	SecuredEnabled bool
+	Jsr250Enabled  bool
 }
 
 // Controller is a NestJS @Controller() class. It is not itself part of the

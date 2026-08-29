@@ -1,14 +1,17 @@
 // Package spring extracts Sphinxor's intermediate model (internal/model)
-// from a Spring project, per docs/decisions/0011-spring-second-framework.md
-// and docs/decisions/0012-securityfilterchain-effective-policy.md.
+// from a Spring project, per docs/decisions/0011-spring-second-framework.md,
+// docs/decisions/0012-securityfilterchain-effective-policy.md,
+// docs/decisions/0015-inert-method-security-guard.md,
+// docs/decisions/0016-spel-role-declaration-heuristic-resolution.md, and
+// docs/decisions/0017-declaresroles-excludes-isauthenticated.md.
 //
-// This first cut covers structural discovery only: controllers and
-// endpoints, mirroring how internal/extract/nestjs itself was built up in
-// stages. Guard/role extraction (@PreAuthorize/@Secured/@RolesAllowed,
-// bounded SpEL recognition, the @EnableMethodSecurity check) and
-// SecurityFilterChain parsing are separate, later passes — each verified
-// independently against the same vendored fixtures (testdata/) before
-// building on top of this one, not assumed correct by association.
+// This cut covers structural discovery (controllers, endpoints) plus
+// method-security annotation extraction: @PreAuthorize/@Secured/@RolesAllowed,
+// bounded SpEL recognition, Java role declarations, and the
+// @EnableMethodSecurity project-wide check. SecurityFilterChain parsing —
+// the method×URL effective-policy's URL layer — is a separate, later pass,
+// verified independently against the same vendored fixtures (testdata/)
+// before building on top of this one, not assumed correct by association.
 package spring
 
 import (
@@ -26,10 +29,10 @@ import (
 )
 
 // Extract walks the Spring project rooted at dir and builds the
-// intermediate model's structural facts: controllers and endpoints. Guard
+// intermediate model: controllers, endpoints, method-security guard
 // applications, role declarations/references, and authentication
-// requirements are all empty in this cut's output — populated by later
-// passes, not yet wired in.
+// requirements. SecurityFilterChain-derived facts (the URL layer) are not
+// part of this cut's output yet.
 func Extract(dir string) (*model.Model, error) {
 	files, err := parseProject(dir)
 	if err != nil {
@@ -37,11 +40,68 @@ func Extract(dir string) (*model.Model, error) {
 	}
 
 	b := newBuilder()
+
+	// Pass 0: role declarations, project-wide, before resolving any
+	// reference to them — mirrors internal/extract/nestjs/extract.go's own
+	// staging (a declaration can live in a different file than every
+	// reference to it), restricted to literals actually referenced
+	// somewhere (roles.go's own doc comment) so an unrelated enum/constant
+	// in the project isn't mistaken for a role registry.
+	usedLiterals := make(map[string]bool)
 	for _, f := range files {
-		extractControllers(f.tree.RootNode(), f.src, f.relPath, b)
+		for lit := range collectUsedRoleLiterals(f.tree.RootNode(), f.src) {
+			usedLiterals[lit] = true
+		}
+	}
+	for _, f := range files {
+		decls := extractRoleDeclarations(f.tree.RootNode(), f.src, f.relPath, b.nextID("role"), usedLiterals)
+		b.model.RoleDeclarations = append(b.model.RoleDeclarations, decls...)
+	}
+	roleByName := uniqueRoleDeclarationsByName(b.model.RoleDeclarations)
+
+	// Pass 1: @EnableMethodSecurity/@EnableGlobalMethodSecurity,
+	// project-wide — docs/decisions/0015-inert-method-security-guard.md.
+	// Independent of every other pass; order relative to them doesn't
+	// matter, but it must complete before any consumer reads
+	// b.model.MethodSecurity (none does yet in this package — recorded for
+	// internal/lint's use, per that ADR's Consequences).
+	for _, f := range files {
+		scanMethodSecurityStatus(f.tree.RootNode(), f.src, &b.model.MethodSecurity)
 	}
 
+	// Pass 2: controllers, endpoints, and method-security guards.
+	for _, f := range files {
+		extractControllers(f.tree.RootNode(), f.src, f.relPath, b, roleByName)
+	}
+
+	// Pass 3: authentication requirements (ADR 0010) — derived from the
+	// fully-assembled RoleReference collection above (an endpoint's
+	// authCandidate can only be resolved once every guard contributing to
+	// that endpoint, class- or method-level, is known), same ordering
+	// reason as internal/extract/nestjs's own final pass.
+	b.model.AuthenticationRequirements = computeAuthenticationRequirements(&b.model, b.authCandidates, b.nextID("authreq"))
+
 	return &b.model, nil
+}
+
+// uniqueRoleDeclarationsByName maps a role literal to its RoleDeclaration
+// ID, but only when exactly one declaration in the project carries that
+// name — docs/decisions/0016-spel-role-declaration-heuristic-resolution.md's
+// stated boundary: an ambiguous name (more than one declaration) resolves
+// to nothing, the same "don't guess when a real answer isn't available"
+// default used everywhere else in this project.
+func uniqueRoleDeclarationsByName(decls []model.RoleDeclaration) map[string]model.ID {
+	byName := make(map[string][]model.ID, len(decls))
+	for _, d := range decls {
+		byName[d.Name] = append(byName[d.Name], d.ID)
+	}
+	out := make(map[string]model.ID, len(byName))
+	for name, ids := range byName {
+		if len(ids) == 1 {
+			out[name] = ids[0]
+		}
+	}
+	return out
 }
 
 // builder accumulates model entities and assigns them unique,
@@ -61,6 +121,10 @@ type builder struct {
 	// order (parseProject walks files in deterministic lexical order),
 	// wins as the Endpoint's own HandlerName/File/Line.
 	seenEndpoints map[model.ID]bool
+	// authCandidates accumulates every @PreAuthorize("isAuthenticated()")
+	// occurrence found while applying guards, consumed by the final
+	// computeAuthenticationRequirements pass (authentication.go).
+	authCandidates []authCandidate
 }
 
 func newBuilder() *builder {
@@ -70,6 +134,13 @@ func newBuilder() *builder {
 func (b *builder) nextIDFor(prefix string) model.ID {
 	b.counters[prefix]++
 	return model.ID(fmt.Sprintf("%s-%d", prefix, b.counters[prefix]))
+}
+
+// nextID is bound to a fixed prefix so it can be passed around as a plain
+// func() model.ID where a specific entity kind's IDs are being generated —
+// mirrors internal/extract/nestjs/extract.go's identical helper.
+func (b *builder) nextID(prefix string) func() model.ID {
+	return func() model.ID { return b.nextIDFor(prefix) }
 }
 
 type parsedFile struct {
