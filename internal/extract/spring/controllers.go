@@ -90,9 +90,24 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder) 
 
 			subPath, _ := pathAttributeValue(mapping.Args, src)
 			path := joinPath(basePath, subPath)
+			endpointID := model.NewEndpointID(httpMethod, path)
+
+			// Two real handlers sharing HTTPMethod+Path (differing only in
+			// `produces`) merge into the one already created by whichever
+			// was encountered first — docs/decisions/0014-endpoint-identity-and-content-negotiation.md.
+			// Not an arbitrary "first wins": the URL layer is architecturally
+			// identical for both (Spring's authorizeHttpRequests matches
+			// only method+path, before content negotiation resolves which
+			// handler runs), so which one's Endpoint row survives doesn't
+			// change what the URL layer contributes; only File/Line/HandlerName
+			// display differs.
+			if b.seenEndpoints[endpointID] {
+				continue
+			}
+			b.seenEndpoints[endpointID] = true
 
 			b.model.Endpoints = append(b.model.Endpoints, model.Endpoint{
-				ID:           model.NewEndpointID(httpMethod, path),
+				ID:           endpointID,
 				HTTPMethod:   httpMethod,
 				Path:         path,
 				HandlerName:  handlerNameNode.Content(src),

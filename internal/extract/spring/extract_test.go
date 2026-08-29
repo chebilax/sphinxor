@@ -79,15 +79,15 @@ func TestExtract_Pharmacy(t *testing.T) {
 // (`.access(AuthorizationManager)`) is out of scope for extraction to ever
 // resolve.
 //
-// CategoryRestController surfaces a real discovery this fixture selection
-// wasn't chosen for: `categories()` and `categoriesAsProtobuf()` (also
-// their per-tenant counterparts) are two distinct real Spring handlers
-// mapped to the exact same HTTP method and path, differing only in
-// `produces` — a dimension model.NewEndpointID (docs/decisions/0002) does
-// not capture. Both are still extracted as separate model.Endpoint entries
-// (this package does not invent a dedup policy that wasn't asked for), so
-// they legitimately share one Endpoint.ID — asserted explicitly below
-// rather than treated as an accident of the test data.
+// CategoryRestController surfaces the real shape that drove
+// docs/decisions/0014-endpoint-identity-and-content-negotiation.md:
+// `categories()` and `categoriesAsProtobuf()` (also their per-tenant
+// counterparts) are two distinct real Spring handlers mapped to the exact
+// same HTTP method and path, differing only in `produces`. Per ADR 0014,
+// `produces` does not participate in Endpoint identity, so these merge
+// into one Endpoint each at discovery — asserted explicitly below, along
+// with which handler's name survives (the first encountered in source
+// order, per ADR 0014's Consequences).
 func TestExtract_BlogAPI(t *testing.T) {
 	m, err := Extract("testdata/blog-api/src/main/java")
 	if err != nil {
@@ -110,20 +110,18 @@ func TestExtract_BlogAPI(t *testing.T) {
 		}
 	}
 
-	// 2 (EntryImportController) + 4 (CategoryRestController, including the
-	// two produces-only variants) = 6 real method_declarations, hand-counted
-	// against the vendored source.
-	if len(m.Endpoints) != 6 {
-		t.Fatalf("got %d endpoints, want 6: %+v", len(m.Endpoints), endpointSummaries(m.Endpoints))
+	// 2 (EntryImportController) + 2 (CategoryRestController, with its two
+	// produces-only variant pairs merged per ADR 0014) = 4 distinct
+	// endpoints, hand-counted against the vendored source.
+	if len(m.Endpoints) != 4 {
+		t.Fatalf("got %d endpoints, want 4: %+v", len(m.Endpoints), endpointSummaries(m.Endpoints))
 	}
 
 	wantHandlers := map[string]bool{
-		"importEntries":                 true,
-		"importEntriesForTenant":        true,
-		"categories":                    true,
-		"categoriesForTenant":           true,
-		"categoriesAsProtobuf":          true,
-		"categoriesAsProtobufForTenant": true,
+		"importEntries":          true,
+		"importEntriesForTenant": true,
+		"categories":             true, // wins the merge over categoriesAsProtobuf: encountered first, source order
+		"categoriesForTenant":    true, // wins the merge over categoriesAsProtobufForTenant, same reason
 	}
 	for _, e := range m.Endpoints {
 		if !wantHandlers[e.HandlerName] {
@@ -131,26 +129,20 @@ func TestExtract_BlogAPI(t *testing.T) {
 		}
 	}
 
-	categoriesID := model.NewEndpointID(model.MethodGet, "/categories")
-	var categoriesHandlers []string
-	for _, e := range m.Endpoints {
-		if e.ID == categoriesID {
-			categoriesHandlers = append(categoriesHandlers, e.HandlerName)
-		}
+	categories, ok := findEndpoint(m.Endpoints, model.MethodGet, "/categories")
+	if !ok {
+		t.Fatal("missing endpoint GET /categories")
 	}
-	if len(categoriesHandlers) != 2 {
-		t.Fatalf("GET /categories: got %d entries sharing this Endpoint.ID, want 2 (categories, categoriesAsProtobuf): %v", len(categoriesHandlers), categoriesHandlers)
+	if categories.HandlerName != "categories" {
+		t.Errorf("GET /categories: handler = %q, want %q (the merge winner, per ADR 0014)", categories.HandlerName, "categories")
 	}
 
-	tenantCategoriesID := model.NewEndpointID(model.MethodGet, "/tenants/{tenantId}/categories")
-	var tenantCategoriesHandlers []string
-	for _, e := range m.Endpoints {
-		if e.ID == tenantCategoriesID {
-			tenantCategoriesHandlers = append(tenantCategoriesHandlers, e.HandlerName)
-		}
+	tenantCategories, ok := findEndpoint(m.Endpoints, model.MethodGet, "/tenants/{tenantId}/categories")
+	if !ok {
+		t.Fatal("missing endpoint GET /tenants/{tenantId}/categories")
 	}
-	if len(tenantCategoriesHandlers) != 2 {
-		t.Fatalf("GET /tenants/{tenantId}/categories: got %d entries sharing this Endpoint.ID, want 2 (categoriesForTenant, categoriesAsProtobufForTenant): %v", len(tenantCategoriesHandlers), tenantCategoriesHandlers)
+	if tenantCategories.HandlerName != "categoriesForTenant" {
+		t.Errorf("GET /tenants/{tenantId}/categories: handler = %q, want %q (the merge winner, per ADR 0014)", tenantCategories.HandlerName, "categoriesForTenant")
 	}
 
 	if _, ok := findEndpoint(m.Endpoints, model.MethodPost, "/admin/import"); !ok {

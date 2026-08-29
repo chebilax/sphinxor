@@ -53,10 +53,18 @@ func Extract(dir string) (*model.Model, error) {
 type builder struct {
 	model    model.Model
 	counters map[string]int
+	// seenEndpoints tracks which Endpoint IDs have already been created, so
+	// two real handlers that share HTTPMethod+Path (differing only in
+	// `produces`, per docs/decisions/0014-endpoint-identity-and-content-negotiation.md)
+	// are merged into one Endpoint rather than appended as separate entries
+	// sharing one ID. The first handler encountered, in file-then-source
+	// order (parseProject walks files in deterministic lexical order),
+	// wins as the Endpoint's own HandlerName/File/Line.
+	seenEndpoints map[model.ID]bool
 }
 
 func newBuilder() *builder {
-	return &builder{counters: make(map[string]int)}
+	return &builder{counters: make(map[string]int), seenEndpoints: make(map[model.ID]bool)}
 }
 
 func (b *builder) nextIDFor(prefix string) model.ID {
