@@ -175,3 +175,69 @@ enum RoleB { ADMIN, GUEST }
 		t.Error("GUEST is declared once — should resolve")
 	}
 }
+
+// TestExtractControllers_MergedHandlerRetainsOwnGuard is the regression
+// test for the ADR 0014 merge bug found while wiring guard extraction in:
+// the first version of this fix skipped guard extraction entirely for a
+// handler merged away by docs/decisions/0014-endpoint-identity-and-content-negotiation.md's
+// same-method+path rule, using the same `continue` that correctly skips
+// re-appending the Endpoint row. That's a real security false negative —
+// a merged-away handler's own @PreAuthorize/@Secured/@RolesAllowed would
+// silently vanish from the model, invisible to every downstream consumer
+// (internal/lint, internal/export/cerbos, internal/diff) — not just a
+// missing test.
+//
+// `first` (no guard) is encountered before `second` (guarded); per ADR
+// 0014, `first` wins the Endpoint row's own HandlerName, but `second`'s
+// guard must still attach to the shared Endpoint.ID. This is deliberately
+// not the same claim TestExtract_BlogAPI already covers (that a merge
+// produces exactly one Endpoint) — blog-api's real merged handlers all
+// carry zero guards, so that test cannot catch this bug; this one
+// specifically exercises the merged-away handler's own annotation.
+func TestExtractControllers_MergedHandlerRetainsOwnGuard(t *testing.T) {
+	src := `
+@RestController
+public class ThingController {
+    @GetMapping(path = "/x")
+    public void first() {}
+
+    @GetMapping(path = "/x", produces = "application/xml")
+    @PreAuthorize("hasRole('ADMIN')")
+    public void second() {}
+}
+`
+	root, source := parseJava(t, src)
+	b := newBuilder()
+	extractControllers(root, source, "ThingController.java", b, nil)
+
+	if len(b.model.Endpoints) != 1 {
+		t.Fatalf("got %d endpoints, want 1 (merged per ADR 0014): %+v", len(b.model.Endpoints), b.model.Endpoints)
+	}
+	e := b.model.Endpoints[0]
+	if e.HandlerName != "first" {
+		t.Fatalf("HandlerName = %q, want %q (first-encountered wins the Endpoint row)", e.HandlerName, "first")
+	}
+
+	var guardsOnEndpoint []model.GuardApplication
+	for _, g := range b.model.GuardApplications {
+		if g.EndpointID == e.ID {
+			guardsOnEndpoint = append(guardsOnEndpoint, g)
+		}
+	}
+	if len(guardsOnEndpoint) != 1 {
+		t.Fatalf("got %d GuardApplications on the merged endpoint, want 1 (second's own @PreAuthorize, even though second lost the HandlerName): %+v", len(guardsOnEndpoint), guardsOnEndpoint)
+	}
+	if guardsOnEndpoint[0].GuardName != "PreAuthorize" {
+		t.Errorf("GuardApplication = %+v, want GuardName=PreAuthorize", guardsOnEndpoint[0])
+	}
+
+	var gotRoles []string
+	for _, r := range b.model.RoleReferences {
+		if r.GuardApplicationID == guardsOnEndpoint[0].ID {
+			gotRoles = append(gotRoles, r.RawLiteral)
+		}
+	}
+	if len(gotRoles) != 1 || gotRoles[0] != "ADMIN" {
+		t.Errorf("resolved roles = %v, want [ADMIN] — second's own guard, not silently dropped by the merge", gotRoles)
+	}
+}

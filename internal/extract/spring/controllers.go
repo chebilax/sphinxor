@@ -107,6 +107,19 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			// handler carries to the shared Endpoint.ID exactly as
 			// extracted." Skipping guard extraction for a merged-away
 			// handler would silently discard a real annotation.
+			// Two real handlers sharing HTTPMethod+Path (differing only in
+			// `produces`) merge into one Endpoint —
+			// docs/decisions/0014-endpoint-identity-and-content-negotiation.md.
+			// The first encountered wins the Endpoint row itself
+			// (HandlerName/File/Line), but every merged handler's own
+			// guards still get attached below — ADR 0014's Consequences
+			// says so explicitly: "it attaches whatever guards each real
+			// handler carries to the shared Endpoint.ID exactly as
+			// extracted." Skipping guard extraction for a merged-away
+			// handler would silently discard a real annotation — locked in
+			// as a regression test, TestExtractControllers_MergedHandlerRetainsOwnGuard
+			// (guards_test.go), confirmed to actually fail against the
+			// original buggy shape before being kept.
 			if !b.seenEndpoints[endpointID] {
 				b.seenEndpoints[endpointID] = true
 				b.model.Endpoints = append(b.model.Endpoints, model.Endpoint{
