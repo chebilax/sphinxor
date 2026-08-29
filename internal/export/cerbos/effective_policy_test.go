@@ -1,6 +1,7 @@
 package cerbos
 
 import (
+	"sort"
 	"strings"
 	"testing"
 
@@ -52,16 +53,36 @@ func TestTranslate_SupplierControllerShape(t *testing.T) {
 }
 
 // TestTranslate_CustomerControllerShape mirrors Pharmacy's
-// CustomerController: no method-level annotation at all, so the only
-// requirement comes from the URL layer's generic .anyRequest().authenticated()
-// catch-all -- an AuthenticationRequirement sourced from
-// ScopeRequestMatcher rather than a method guard. Confirms ADR 0010's
-// model concept carries over to a URL-rule source with zero further
-// model change, as ADR 0012 §3 claimed.
+// CustomerController.GET (list) exactly, verified by reading the real
+// file: every endpoint on this controller carries
+// @PreAuthorize("hasAnyRole('ADMIN', 'PHARMACIST')"), and /api/customers/**
+// matches none of SecurityConfig's explicit .requestMatchers(...) rules,
+// so it falls through to the trailing .anyRequest().authenticated().
+// That's the method layer holding the concrete roles and the URL layer
+// being the universal, unconstraining one -- the opposite direction from
+// TestTranslate_UniversalGrantIsIdentityForIntersection below (which is
+// not tied to any real endpoint), and a real, non-hypothetical exercise
+// of intersectGrants' identity-element handling in this direction.
+//
+// An earlier version of this test claimed the reverse -- that
+// CustomerController has no method-level annotation at all, and the only
+// requirement is the URL layer's catch-all. That was never true of the
+// real file (every endpoint here has @PreAuthorize) and was caught only
+// by rereading the real source, not by the test passing -- the same
+// class of stale, unverified real-world claim as the ReasonNoRole detail
+// text going stale after AuthenticationRequirement shipped. Fixed here
+// rather than left to mislead the next reader.
 func TestTranslate_CustomerControllerShape(t *testing.T) {
 	m := &model.Model{
 		Controllers: []model.Controller{{ID: "c1", Name: "CustomerController"}},
 		Endpoints:   []model.Endpoint{{ID: "e1", HTTPMethod: model.MethodGet, Path: "/api/customers", ControllerID: "c1"}},
+		GuardApplications: []model.GuardApplication{
+			{ID: "g-method", EndpointID: "e1", GuardName: "PreAuthorize", AppliedAt: model.ScopeMethod, DeclaresRoles: true},
+		},
+		RoleReferences: []model.RoleReference{
+			{ID: "r1", GuardApplicationID: "g-method", RawLiteral: "ADMIN"},
+			{ID: "r2", GuardApplicationID: "g-method", RawLiteral: "PHARMACIST"},
+		},
 		AuthenticationRequirements: []model.AuthenticationRequirement{
 			{ID: "a1", EndpointID: "e1", AppliedAt: model.ScopeRequestMatcher},
 		},
@@ -72,8 +93,10 @@ func TestTranslate_CustomerControllerShape(t *testing.T) {
 	if len(result.Rules) != 1 {
 		t.Fatalf("got %d rules, want 1: %+v", len(result.Rules), result.Rules)
 	}
-	if got := result.Rules[0].Roles; len(got) != 1 || got[0] != anyAuthenticatedRole {
-		t.Errorf("effective roles = %v, want [%q]", got, anyAuthenticatedRole)
+	got := result.Rules[0].Roles
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != "ADMIN" || got[1] != "PHARMACIST" {
+		t.Errorf("effective roles = %v, want [ADMIN PHARMACIST] (the method layer's concrete roles, unconstrained by the URL layer's authenticated()-only catch-all)", got)
 	}
 }
 
@@ -85,6 +108,16 @@ func TestTranslate_CustomerControllerShape(t *testing.T) {
 // passes both of Spring's independent interceptors. The corrected,
 // intersection-based design must recover this as an exact, zero-guessing
 // answer rather than omit it.
+//
+// Deliberately synthetic, not a real-repo shape, and that's fine here per
+// docs/testing.md's real-fixture-vs-pure-logic principle: Pharmacy's
+// entire role vocabulary is exactly {ADMIN, PHARMACIST} (model/Role.java),
+// so no MANAGER role -- or any genuine non-subset overlap -- exists in
+// either vendored repo to exercise. intersectGrants is a pure function of
+// two role-name sets with no framework-specific logic, so a hand-built
+// pair of sets exercises it identically to one an extractor produced;
+// chasing a third real repo just to hit this branch would test the same
+// code twice for no added confidence, not close a real gap.
 func TestTranslate_PartialOverlapIntersectsToSharedRole(t *testing.T) {
 	m := &model.Model{
 		Controllers: []model.Controller{{ID: "c1", Name: "WidgetController"}},
@@ -120,6 +153,15 @@ func TestTranslate_PartialOverlapIntersectsToSharedRole(t *testing.T) {
 // endpoint is unreachable -- soundness-without-completeness means a
 // principal separately holding both ADMIN and MANAGER could still pass
 // the real app.
+//
+// Deliberately synthetic, same justification as
+// TestTranslate_PartialOverlapIntersectsToSharedRole above: with Pharmacy's
+// two-role vocabulary and every real rule requiring ADMIN alone or
+// ADMIN-or-PHARMACIST, ADMIN is always in both non-universal layers'
+// sets -- an empty intersection is structurally unreachable in either
+// vendored repo, not merely unobserved, and this branch is pure
+// role-name-set logic a real repo can't exercise any more thoroughly
+// than a hand-built pair of sets already does.
 func TestTranslate_DisjointLayersProduceNoCommonRole(t *testing.T) {
 	m := &model.Model{
 		Controllers: []model.Controller{{ID: "c1", Name: "ReportController"}},
