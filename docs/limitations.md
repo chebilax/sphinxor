@@ -28,3 +28,18 @@ A composite outside this bounded shape isn't guessed at — it falls back to exa
 **Consequence for what's still invisible**: same as the global-guard case — a Low-confidence, hedged false positive rather than a confident wrong claim. A connected, secondary consequence: a role enum referenced *only* through a wrapped decorator outside this bounded shape is invisible to the role-declaration usage filter (`internal/extract/nestjs/roles.go`), so `permission-declared-but-unreferenced` and `empty-role` cannot fire on those roles either.
 
 **What to do about it today**: for anything outside the resolved shape, same as above — `sphinxor-allow` on endpoints known to be protected this way. There is no plan to extend beyond one level of indirection or direct pass-through substitution in v0.1; whether it's worth the extraction complexity in a later version is an open question, not a commitment made here.
+
+## Spring: `SecurityFilterChain` beyond simple, single-chain patterns
+
+Not "`SecurityFilterChain` is unsupported" — as of [ADR 0012](decisions/0012-securityfilterchain-effective-policy.md), recognized simple-pattern `authorizeHttpRequests` rules are supported and correctly AND-combined with method-level `@PreAuthorize`/`@Secured`/`@RolesAllowed` (the set intersection described there), verified against the real mismatch that drove that ADR: `Kitty-Hivens/Pharmacy`'s `SupplierController.GET` allows `ADMIN` or `PHARMACIST` at the method layer but only `ADMIN` at the URL layer, and Sphinxor now reports the real, `ADMIN`-only effective policy rather than the method layer's broader claim.
+
+What's still invisible, per that ADR's stated scope and [ADR 0018](decisions/0018-unrecognized-rule-stops-evaluation.md)'s correction to it:
+
+- **A custom `AuthorizationManager`** (`.access(...)`) — executing arbitrary Java to know the real answer is categorically out of scope. Confirmed common in real code, not hypothetical: `categolj/blog-api`'s entire tenant-scoped rule set uses this, alongside a handful of ordinary `.hasAuthority(...)` rules in the *same* chain — extraction recognizes the `.hasAuthority(...)` ones individually and correctly stops evaluating at the first `.access(...)` rule that matches a given endpoint (per ADR 0018), rather than skipping past it to a later, more permissive rule.
+- **More than one `SecurityFilterChain` bean in the same project** (chain selection by `@Order`/`securityMatcher` scoping) — extraction requires finding exactly one `@Bean`-annotated method returning `SecurityFilterChain` project-wide; if it finds zero or more than one, the URL layer contributes nothing at all for that project, the same as if `SecurityFilterChain` support didn't exist, rather than guessing which chain (or ordering) actually applies to a given request.
+- **Non-Ant-pattern matchers**: regex or character-class syntax, a custom `RequestMatcher` bean, `mvc.matcher(...)`, `dispatcherTypeMatchers`. Only literal segments, `*`, `**`, and `{var}`-as-wildcard are matched.
+- **`@PostAuthorize`/`@PreFilter`/`@PostFilter`**, composed/meta-annotations, `RoleHierarchy` resolution, and Kotlin source remain out of scope, per ADR 0011.
+
+**Consequence**: an endpoint whose real access control depends on any of the above is reported using whatever the method layer alone establishes (or as unguarded, if the method layer has nothing either) — under-reporting relative to a rule Sphinxor can't read, never over-reporting a grant that isn't real, consistent with the intersection's own soundness-not-completeness property.
+
+**What to do about it today**: `sphinxor-allow` on endpoints known to be protected by one of the above, same as any other endpoint the tool cannot see into.
