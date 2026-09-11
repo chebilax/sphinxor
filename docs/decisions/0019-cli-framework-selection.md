@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Accepted.
 
 ## Context
 
@@ -155,9 +155,21 @@ success for it was never what that contract meant.
   all. A Spring user meeting a false positive would have no suppression mechanism
   — which is the precise scenario ADR 0003 was written to prevent ("the first
   false positive on a login endpoint gets the tool disabled in CI within a week").
-  This is named here rather than discovered after release; closing it is its own
-  work, and whether it blocks a Spring-carrying release is a judgment to make
-  deliberately, not by omission.
+  **That judgment has been made: it blocks.** Porting the allowlist to
+  `internal/extract/spring` is a prerequisite of any Spring-carrying release, not
+  a follow-up — on the same reasoning that disqualified releasing Spring without
+  CLI wiring. The scenario is not hypothetical: `TestLint_Pharmacy` shows
+  `mutating-endpoint-without-access-control` already firing on `POST /auth/login`,
+  an endpoint Pharmacy makes public deliberately via `permitAll()`, and ADR 0011
+  §2 / ADR 0012 §1 decided *on purpose* that a framework-level `permitAll()` is
+  not treated as Sphinxor's own allowlist (a developer's `permitAll()` may itself
+  be the mistake). So Spring's first real finding on a real app is on an
+  intentionally-public endpoint whose only sanctioned suppression does not exist
+  for Spring. This is a port of ADR 0003's settled design, not a new decision: the
+  marker grammar (`internal/allowlist.ParseMarker`) is already
+  framework-independent — `//` line comments are identical in Java and TypeScript
+  — and `lint.Run` already takes framework-independent endpoint IDs; only the
+  marker-to-endpoint anchor matching needs a Spring counterpart.
 - The output header states which framework was selected and how (detected or
   `--framework`), so a silently wrong analysis becomes a visibly wrong one.
 - `docs/limitations.md` gains the zero-endpoints warning's pointer target: what
