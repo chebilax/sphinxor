@@ -3,6 +3,7 @@ package nestjs
 import (
 	sitter "github.com/smacker/go-tree-sitter"
 
+	"github.com/chebilax/sphinxor/internal/allowlist"
 	"github.com/chebilax/sphinxor/internal/model"
 )
 
@@ -15,15 +16,6 @@ var httpVerbDecorators = map[string]model.HTTPMethod{
 	"Put":    model.MethodPut,
 	"Patch":  model.MethodPatch,
 	"Delete": model.MethodDelete,
-}
-
-// endpointAnchor is an Endpoint's textual starting line — the earliest
-// line among its decorators and its method_definition — used to match a
-// sphinxor-allow marker to "the endpoint below it" (docs/decisions/0003).
-type endpointAnchor struct {
-	EndpointID model.ID
-	File       string
-	Line       int
 }
 
 // pendingGuard is a guard or role decorator found on a controller class or
@@ -49,8 +41,8 @@ type roleArg struct {
 // extractControllers finds every @Controller() class in root, and every
 // route handler method within it, populating b.model and returning the
 // endpoint anchors needed for allowlist matching.
-func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID, composites map[string]compositeDecorator) []endpointAnchor {
-	var anchors []endpointAnchor
+func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID, composites map[string]compositeDecorator) []allowlist.Anchor {
+	var anchors []allowlist.Anchor
 
 	for _, group := range groupDecorators(flattenTopLevel(root)) {
 		if group.decl == nil || group.decl.Type() != "class_declaration" {
@@ -115,7 +107,7 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 				File:         file,
 				Line:         anchorLine,
 			})
-			anchors = append(anchors, endpointAnchor{EndpointID: endpointID, File: file, Line: anchorLine})
+			anchors = append(anchors, allowlist.Anchor{EndpointID: endpointID, File: file, Line: anchorLine})
 
 			methodGuards := pendingGuardsFromDecorators(methodGroup.decorators, src, file, roleByName, composites)
 			b.applyGuards(endpointID, classGuards, model.ScopeClass)

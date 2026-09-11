@@ -13,7 +13,7 @@ import (
 // docs/testing.md. Guard/role assertions are in TestExtract_Pharmacy_Guards
 // below, kept separate for readability.
 func TestExtract_Pharmacy(t *testing.T) {
-	m, err := Extract("testdata/Pharmacy/backend/src/main/java")
+	m, _, err := Extract("testdata/Pharmacy/backend/src/main/java")
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestExtract_Pharmacy(t *testing.T) {
 // a method-layer and a URL-layer GuardApplication, and conflating them
 // here would obscure which layer each assertion is actually about.
 func TestExtract_Pharmacy_Guards(t *testing.T) {
-	m, err := Extract("testdata/Pharmacy/backend/src/main/java")
+	m, _, err := Extract("testdata/Pharmacy/backend/src/main/java")
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestExtract_Pharmacy_Guards(t *testing.T) {
 // with which handler's name survives (the first encountered in source
 // order, per ADR 0014's Consequences).
 func TestExtract_BlogAPI(t *testing.T) {
-	m, err := Extract("testdata/blog-api/src/main/java")
+	m, _, err := Extract("testdata/blog-api/src/main/java")
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}

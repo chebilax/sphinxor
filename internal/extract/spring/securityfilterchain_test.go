@@ -12,7 +12,7 @@ import (
 // (testdata/Pharmacy/NOTICE.md) — every rule, in its real source order,
 // hand-verified against SecurityConfig.java, per docs/testing.md.
 func TestExtract_Pharmacy_SecurityFilterChain(t *testing.T) {
-	m, err := Extract("testdata/Pharmacy/backend/src/main/java")
+	m, _, err := Extract("testdata/Pharmacy/backend/src/main/java")
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestExtract_Pharmacy_SecurityFilterChain(t *testing.T) {
 // explicitly: not just "it compiles," the real effective policy verified
 // against the real fixture.
 func TestTranslate_Pharmacy_SupplierControllerEffectivePolicy(t *testing.T) {
-	m, err := Extract("testdata/Pharmacy/backend/src/main/java")
+	m, _, err := Extract("testdata/Pharmacy/backend/src/main/java")
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestTranslate_Pharmacy_SupplierControllerEffectivePolicy(t *testing.T) {
 // sitting beside unrecognized .access(AuthorizationManager) rules in the
 // same chain, hand-verified against SecurityConfig.java.
 func TestExtract_BlogAPI_SecurityFilterChain(t *testing.T) {
-	m, err := Extract("testdata/blog-api/src/main/java")
+	m, _, err := Extract("testdata/blog-api/src/main/java")
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}

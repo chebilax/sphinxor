@@ -17,7 +17,7 @@ import (
 // GuardApplications/AuthenticationRequirements, which didn't exist in any
 // real model until this PR.
 func TestDiff_Pharmacy_NoChangeAgainstItself(t *testing.T) {
-	m, err := Extract("testdata/Pharmacy/backend/src/main/java")
+	m, _, err := Extract("testdata/Pharmacy/backend/src/main/java")
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
