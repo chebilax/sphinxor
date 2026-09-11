@@ -240,12 +240,23 @@ func TestExtract_BlogAPI_SecurityFilterChain(t *testing.T) {
 // per the same split already used for internal/export/cerbos's
 // partial-overlap/empty-intersection tests (docs/testing.md).
 //
-// Must resolve to unresolved (no guard, no AuthenticationRequirement) —
-// never "public," which is what ADR 0012 §1's original "skip unrecognized,
-// keep scanning" wording would have produced by reaching the trailing
-// permitAll(). Confirmed (like the ADR 0014 merge-bug regression test) to
-// actually fail under that old behavior before being kept — see the
-// commit history for this file.
+// What this actually locks: that the *first source-order matching rule is
+// correctly identified, unrecognized rules included* — the rule-kind
+// assertion below is the one that bites. Confirmed by reintroducing ADR
+// 0012 §1's "skip unrecognized, keep scanning" behavior and re-running:
+// firstMatch then returns chainNoRequirement, having fallen through to the
+// trailing permitAll(), and this test fails.
+//
+// What it deliberately does NOT claim: that the endpoint resolves
+// "unresolved rather than public." Those two outcomes are byte-identical
+// in the model as it stands — applySecurityFilterChain handles
+// chainUnrecognized and chainNoRequirement in the same branch, both
+// contributing nothing — so the two model-state assertions below hold
+// under the old behavior too and cannot tell them apart. They're kept as
+// a guard against a future change that starts contributing something
+// here, not as evidence of that distinction. See ADR 0018's Consequences:
+// the safety value of first-match-wins is latent until the model
+// represents "intentionally public" as a positive fact.
 func TestAppliesSecurityFilterChain_UnrecognizedMatchStopsEvaluation(t *testing.T) {
 	files, err := parseProject("testdata/blog-api/src/main/java")
 	if err != nil {

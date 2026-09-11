@@ -106,3 +106,19 @@ convenience.
   public, and must be confirmed (the same way the ADR 0014 merge-bug
   regression test was) to actually fail under the ADR 0012 §1
   fall-through behavior this ADR corrects.
+- **This correction's safety value is currently latent, not active —
+  recorded here so a future reader doesn't mistake it for redundant.** The
+  model as it stands has no positive "intentionally public" fact:
+  `permitAll()` and an unrecognized-rule match are represented identically
+  (nothing contributed — `applySecurityFilterChain` handles
+  `chainNoRequirement` and `chainUnrecognized` in the same branch). So the
+  false-permissive *outcome* this ADR describes isn't observable in today's
+  model; what the corrected rule actually fixes today is which rule is
+  identified as governing, and it prevents a genuinely wrong grant in the
+  case where a later matching rule is a recognized roles rule (the old
+  behavior would have attached that rule's roles to an endpoint the opaque
+  rule really governs). The permissive-direction danger becomes real the
+  day the model distinguishes "intentionally public" from "could not
+  determine" — which any exporter or rule needing that distinction would
+  introduce. Getting evaluation order right by anticipation is cheaper
+  than retrofitting it under a model that has started to trust it.
