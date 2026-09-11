@@ -170,6 +170,20 @@ success for it was never what that contract meant.
   framework-independent — `//` line comments are identical in Java and TypeScript
   — and `lint.Run` already takes framework-independent endpoint IDs; only the
   marker-to-endpoint anchor matching needs a Spring counterpart.
+- **The decisive reason is product integrity, not parity between frameworks.**
+  `sphinxor diff`'s regression gating has exactly two conditions
+  (`docs/decisions/0007-model-diff-design.md` §3), and one of them is
+  `ReasonAllowlistRemoved` — the silent-de-allowlisting case that ADR 0007 names
+  as the thing a point-in-time `lint` run *cannot* see and that a diff is uniquely
+  positioned to catch. An endpoint that can never enter the allowlisted state can
+  never leave it, so on a Spring project that condition can never fire: **half of
+  the v1 headline differentiator's gating is permanently inert, with nothing in
+  the output saying so.** That is the reassuring-false-negative class applied to
+  the feature this project most puts forward — a CI gate that silently cannot
+  trigger is worse than one that is absent, because the user reasonably believes
+  drift is being gated. Releasing Spring without the allowlist would ship that
+  condition, which is why this is a release prerequisite and not a
+  quality-of-life follow-up.
 - The output header states which framework was selected and how (detected or
   `--framework`), so a silently wrong analysis becomes a visibly wrong one.
 - `docs/limitations.md` gains the zero-endpoints warning's pointer target: what
