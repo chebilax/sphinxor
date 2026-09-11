@@ -25,6 +25,7 @@ import (
 	sitter "github.com/smacker/go-tree-sitter"
 	"github.com/smacker/go-tree-sitter/java"
 
+	"github.com/chebilax/sphinxor/internal/allowlist"
 	"github.com/chebilax/sphinxor/internal/model"
 )
 
@@ -34,10 +35,10 @@ import (
 // applications, role declarations/references, and authentication
 // requirements — the full method×URL effective-policy surface ADR 0012
 // describes, ready for internal/export/cerbos's Translate to reduce.
-func Extract(dir string) (*model.Model, error) {
+func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	files, err := parseProject(dir)
 	if err != nil {
-		return nil, err
+		return nil, allowlist.Outcome{}, err
 	}
 
 	b := newBuilder()
@@ -83,10 +84,24 @@ func Extract(dir string) (*model.Model, error) {
 		scanMethodSecurityStatus(f.tree.RootNode(), f.src, &b.model.MethodSecurity)
 	}
 
-	// Pass 2: controllers, endpoints, and method-security (method-layer)
-	// guards.
+	// Pass 2: controllers, endpoints, method-security (method-layer)
+	// guards, and sphinxor-allow marker matching. Matching is file-scoped
+	// (a marker only ever exempts an endpoint in the same file), so it
+	// happens per file alongside extraction rather than as a separate
+	// project-wide pass — same staging as internal/extract/nestjs, and it
+	// shares the same matcher (internal/allowlist.MatchFile) rather than
+	// reimplementing it: the marker grammar is a `//` line comment in both
+	// languages, and matching operates on line positions and anchors, not
+	// on either language's syntax tree.
+	outcome := allowlist.Outcome{AllowlistedEndpoints: make(map[model.ID]bool)}
 	for _, f := range files {
-		extractControllers(f.tree.RootNode(), f.src, f.relPath, b, roleByName)
+		anchors := extractControllers(f.tree.RootNode(), f.src, f.relPath, b, roleByName)
+
+		allowlisted, stale := allowlist.MatchFile(f.src, f.relPath, anchors, b.nextID("finding"))
+		for _, id := range allowlisted {
+			outcome.AllowlistedEndpoints[id] = true
+		}
+		outcome.StaleMarkers = append(outcome.StaleMarkers, stale...)
 	}
 
 	// Pass 3: SecurityFilterChain (URL-layer) guards, evaluated against
@@ -106,7 +121,7 @@ func Extract(dir string) (*model.Model, error) {
 	// ordering reason as internal/extract/nestjs's own final pass.
 	b.model.AuthenticationRequirements = computeAuthenticationRequirements(&b.model, b.authCandidates, b.nextID("authreq"))
 
-	return &b.model, nil
+	return &b.model, outcome, nil
 }
 
 // uniqueRoleDeclarationsByName maps a role literal to its RoleDeclaration

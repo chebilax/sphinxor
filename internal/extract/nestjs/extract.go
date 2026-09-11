@@ -14,24 +14,17 @@ import (
 	sitter "github.com/smacker/go-tree-sitter"
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
 
+	"github.com/chebilax/sphinxor/internal/allowlist"
 	"github.com/chebilax/sphinxor/internal/model"
 )
-
-// AllowlistOutcome is what extraction learned about sphinxor-allow
-// markers, per docs/decisions/0003-allowlist-format.md: which endpoints
-// they successfully exempt, and which ones didn't match anything.
-type AllowlistOutcome struct {
-	AllowlistedEndpoints map[model.ID]bool
-	StaleMarkers         []model.Finding
-}
 
 // Extract walks the NestJS project rooted at dir and builds the
 // intermediate model: controllers, endpoints, guard applications, role
 // declarations, and role references, plus the allowlist marker outcome.
-func Extract(dir string) (*model.Model, AllowlistOutcome, error) {
+func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	files, err := parseProject(dir)
 	if err != nil {
-		return nil, AllowlistOutcome{}, err
+		return nil, allowlist.Outcome{}, err
 	}
 
 	b := newBuilder()
@@ -74,11 +67,11 @@ func Extract(dir string) (*model.Model, AllowlistOutcome, error) {
 	// allowlist marker matching — matching is file-scoped (a marker only
 	// ever exempts an endpoint in the same file), so it happens per file
 	// alongside extraction rather than as a separate project-wide pass.
-	outcome := AllowlistOutcome{AllowlistedEndpoints: make(map[model.ID]bool)}
+	outcome := allowlist.Outcome{AllowlistedEndpoints: make(map[model.ID]bool)}
 	for _, f := range files {
 		fileAnchors := extractControllers(f.tree.RootNode(), f.src, f.relPath, b, roleByName, composites)
 
-		allowlisted, stale := matchFileAllowlist(f.src, f.relPath, fileAnchors, b.nextID("finding"))
+		allowlisted, stale := allowlist.MatchFile(f.src, f.relPath, fileAnchors, b.nextID("finding"))
 		for _, id := range allowlisted {
 			outcome.AllowlistedEndpoints[id] = true
 		}

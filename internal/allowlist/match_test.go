@@ -1,4 +1,4 @@
-package nestjs
+package allowlist
 
 import (
 	"testing"
@@ -21,7 +21,7 @@ line8
 @Get('ready')
 ready() {}
 `
-	anchors := []endpointAnchor{
+	anchors := []Anchor{
 		{EndpointID: "ep-health", File: "f.ts", Line: 3},
 		{EndpointID: "ep-ready", File: "f.ts", Line: 12},
 	}
@@ -32,7 +32,7 @@ ready() {}
 		return model.ID("finding-x")
 	}
 
-	allowlisted, stale := matchFileAllowlist([]byte(src), "f.ts", anchors, next)
+	allowlisted, stale := MatchFile([]byte(src), "f.ts", anchors, next)
 
 	if len(allowlisted) != 2 {
 		t.Fatalf("got %d allowlisted endpoints, want 2: %v", len(allowlisted), allowlisted)
@@ -65,12 +65,12 @@ private helper() {}
 @Get('health')
 health() {}
 `
-	anchors := []endpointAnchor{
+	anchors := []Anchor{
 		{EndpointID: "ep-health", File: "f.ts", Line: 4},
 	}
 	next := func() model.ID { return "finding-x" }
 
-	allowlisted, stale := matchFileAllowlist([]byte(src), "f.ts", anchors, next)
+	allowlisted, stale := MatchFile([]byte(src), "f.ts", anchors, next)
 
 	if len(allowlisted) != 0 {
 		t.Errorf("expected no allowlisted endpoints, got %v", allowlisted)

@@ -3,6 +3,7 @@ package spring
 import (
 	sitter "github.com/smacker/go-tree-sitter"
 
+	"github.com/chebilax/sphinxor/internal/allowlist"
 	"github.com/chebilax/sphinxor/internal/model"
 )
 
@@ -42,7 +43,16 @@ var httpMappingAnnotations = map[string]model.HTTPMethod{
 // endpoint's guards can come from both class- and method-level annotations
 // and the "zero resolved roles anywhere on this endpoint" check needs all
 // of them known first.
-func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID) {
+//
+// It returns one allowlist.Anchor per handler it recognized — the input
+// docs/decisions/0003-allowlist-format.md's marker matching needs.
+//
+// One anchor per *handler*, not per Endpoint: two handlers that merge into
+// a single Endpoint under ADR 0014 (same method+path, differing only in
+// `produces`) are two real places in the source a developer could put a
+// marker above, and either should exempt the endpoint they share.
+func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID) []allowlist.Anchor {
+	var anchors []allowlist.Anchor
 	for _, decl := range namedChildren(root) {
 		if decl.Type() != "class_declaration" {
 			continue
@@ -97,6 +107,18 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			path := joinPath(basePath, subPath)
 			endpointID := model.NewEndpointID(httpMethod, path)
 
+			// The handler's own starting line. In Java, annotations are
+			// part of method_declaration's modifiers, so the node already
+			// starts at the first annotation (@PostMapping, not the
+			// signature) — verified against real Pharmacy source rather
+			// than assumed from the grammar, and the same line the
+			// Endpoint row records below.
+			anchors = append(anchors, allowlist.Anchor{
+				EndpointID: endpointID,
+				File:       file,
+				Line:       int(member.StartPoint().Row) + 1,
+			})
+
 			// Two real handlers sharing HTTPMethod+Path (differing only in
 			// `produces`) merge into one Endpoint —
 			// docs/decisions/0014-endpoint-identity-and-content-negotiation.md.
@@ -143,6 +165,7 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			b.applyGuards(endpointID, methodGuards, model.ScopeMethod)
 		}
 	}
+	return anchors
 }
 
 func hasAny(anns []annotationCall, names map[string]bool) bool {
