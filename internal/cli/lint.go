@@ -11,29 +11,31 @@ import (
 
 func newLintCmd() *cobra.Command {
 	var format string
+	var framework string
 
 	cmd := &cobra.Command{
 		Use:   "lint [path]",
-		Short: "Analyze a NestJS project's authorization model and report findings",
+		Short: "Analyze a project's authorization model and report findings",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."
 			if len(args) == 1 {
 				dir = args[0]
 			}
-			return runLint(cmd, dir, report.Format(format))
+			return runLint(cmd, dir, framework, report.Format(format))
 		},
 	}
 
 	cmd.Flags().StringVar(&format, "format", string(report.FormatMarkdown), "output format: markdown or json")
+	cmd.Flags().StringVar(&framework, "framework", "", "force a framework (nestjs, spring) instead of detecting it")
 
 	return cmd
 }
 
 // runLint wires extraction, allowlist matching, rule evaluation, and
 // reporting together, then decides the process exit code.
-func runLint(cmd *cobra.Command, dir string, format report.Format) error {
-	m, findings, err := analyzeDirectory(dir)
+func runLint(cmd *cobra.Command, dir, framework string, format report.Format) error {
+	m, findings, err := analyzeDirectory(cmd.ErrOrStderr(), dir, framework)
 	if err != nil {
 		return err
 	}

@@ -27,6 +27,14 @@ func newRootCmd() *cobra.Command {
 		Long: "Sphinxor reconstructs, audits, and documents the authorization model\n" +
 			"that actually exists in your code, rather than the one declared\n" +
 			"elsewhere. See docs/vision.md.",
+
+		// Runtime failures (framework not detected, ambiguous, nothing to
+		// analyze — docs/decisions/0019-cli-framework-selection.md) are a
+		// designed part of this CLI's behavior, not misuse, so they print
+		// the error alone: no usage dump, which buries the actual message,
+		// and no duplicate print (cmd/sphinxor writes it to stderr once).
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
 
 	cmd.AddCommand(newLintCmd())
