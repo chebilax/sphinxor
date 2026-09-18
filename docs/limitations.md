@@ -43,3 +43,16 @@ What's still invisible, per that ADR's stated scope and [ADR 0018](decisions/001
 **Consequence**: an endpoint whose real access control depends on any of the above is reported using whatever the method layer alone establishes (or as unguarded, if the method layer has nothing either) — under-reporting relative to a rule Sphinxor can't read, never over-reporting a grant that isn't real, consistent with the intersection's own soundness-not-completeness property.
 
 **What to do about it today**: `sphinxor-allow` on endpoints known to be protected by one of the above, same as any other endpoint the tool cannot see into.
+
+## A `sphinxor-allow` marker separated from its endpoint by a block comment
+
+The allowlist matcher (`internal/allowlist`, shared by both extractors since the Spring port) skips blank lines and `//` line comments between a marker and the endpoint it exempts, but not `/* */` blocks. So a marker placed above a Javadoc/JSDoc block, rather than directly above the endpoint's first decorator/annotation, exempts nothing.
+
+This is recorded as benign, deferred debt rather than a latent false negative, on two grounds — both checked rather than assumed:
+
+- **The dominant Spring idiom is immune by construction, not by luck.** Java annotations are part of tree-sitter's `method_declaration` node, so the endpoint's anchor line is its *first annotation*. A handler documented with OpenAPI annotations (`@Operation(summary = ...)`, the pattern in `Kitty-Hivens/Pharmacy`) therefore has its documentation *inside* the anchor, never between the marker and it. Across the whole vendored Java corpus — both `SecurityConfig`s, all five controllers, the role enum — there is not one block comment; handlers are either bare (`categolj/blog-api`) or annotation-documented (Pharmacy). Javadoc above handlers is common in Java generally, but not in the Spring REST controllers this targets.
+- **When it does occur, it fails loudly, not silently.** A marker that matches nothing produces the `stale-allow-marker` finding ([ADR 0003](decisions/0003-allowlist-format.md)) at `High` confidence, naming the marker's file and line and stating that it does not sit directly above a recognized endpoint — and `High` findings gate CI. Verified directly against the real Pharmacy fixture with a Javadoc inserted between marker and handler. A developer never silently believes an exemption applied; their build fails telling them it didn't. That is the self-announcing refusal the stale-marker finding exists to produce, the inverse of this project's reassuring-false-negative failure class.
+
+**What to do about it today**: put the marker directly above the endpoint's first decorator or annotation, above any Javadoc/JSDoc block. The stale-marker finding will tell you if you haven't.
+
+**Why it isn't fixed yet**: the matcher is now shared by both extractors, so widening it to skip block comments is a two-framework behavior change affecting existing NestJS results, and it deserves its own tests rather than being folded into an unrelated change. Deferred deliberately, not overlooked.

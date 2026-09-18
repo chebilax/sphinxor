@@ -258,3 +258,9 @@ func isExtractableSourceFile(path string) bool {
 	}
 	return true
 }
+
+// IsSourceFile reports whether path is a file this extractor would parse.
+// Exported so framework detection and the "did we look at anything?" count
+// (docs/decisions/0019-cli-framework-selection.md §2) use this extractor's
+// own rule rather than a second, drifting copy of it.
+func IsSourceFile(path string) bool { return isExtractableSourceFile(path) }

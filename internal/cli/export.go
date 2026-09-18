@@ -26,6 +26,7 @@ func newExportCmd() *cobra.Command {
 func newExportCerbosCmd() *cobra.Command {
 	var out string
 	var format string
+	var framework string
 
 	cmd := &cobra.Command{
 		Use:   "cerbos [path]",
@@ -42,12 +43,13 @@ func newExportCerbosCmd() *cobra.Command {
 			if len(args) == 1 {
 				dir = args[0]
 			}
-			return runExportCerbos(cmd, dir, out, report.Format(format))
+			return runExportCerbos(cmd, dir, out, framework, report.Format(format))
 		},
 	}
 
 	cmd.Flags().StringVar(&out, "out", "cerbos-policies", "output directory for generated Cerbos policy files")
 	cmd.Flags().StringVar(&format, "format", string(report.FormatMarkdown), "companion report format: markdown or json")
+	cmd.Flags().StringVar(&framework, "framework", "", "force a framework (nestjs, spring) instead of detecting it")
 
 	return cmd
 }
@@ -57,8 +59,8 @@ func newExportCerbosCmd() *cobra.Command {
 // that a Finding documents Sphinxor's own uncertainty, not a fact to
 // translate) to the Cerbos translator, then writes both the policy files
 // and the companion report to disk.
-func runExportCerbos(cmd *cobra.Command, dir, out string, format report.Format) error {
-	m, _, err := analyzeDirectory(dir)
+func runExportCerbos(cmd *cobra.Command, dir, out, framework string, format report.Format) error {
+	m, _, err := analyzeDirectory(cmd.ErrOrStderr(), dir, framework)
 	if err != nil {
 		return err
 	}
