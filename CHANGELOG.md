@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-18
+
+### Added
+
+- **Spring is now an analyzable framework.** `sphinxor lint`, `sphinxor diff`, and
+  `sphinxor export cerbos` all work on Spring projects, not just NestJS:
+  - Endpoints from `@RestController`/`@Controller` classes and
+    `@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`
+    handlers.
+  - Method-security guards — `@PreAuthorize`, `@Secured`, `@RolesAllowed` —
+    including a bounded set of SpEL shapes (`hasRole`, `hasAnyRole`,
+    `hasAuthority`, `isAuthenticated`) and roles resolved against Java enum
+    constants.
+  - `SecurityFilterChain` URL-layer rules (`authorizeHttpRequests`), evaluated in
+    real Spring first-match-wins order.
+  - **The two layers are combined into the real effective policy**, not reported
+    separately: an endpoint allowing `ADMIN` or `PHARMACIST` at the method layer
+    but restricted to `ADMIN` by a URL rule is reported as `ADMIN`-only. What each
+    layer can and cannot be read from is bounded in
+    [ADR 0012](docs/decisions/0012-securityfilterchain-effective-policy.md) and
+    [ADR 0018](docs/decisions/0018-unrecognized-rule-stops-evaluation.md), with the
+    current blind spots listed in [`docs/limitations.md`](docs/limitations.md).
+  - `// sphinxor-allow:` markers work in Java source exactly as in TypeScript,
+    including the stale-marker finding when one doesn't sit above a recognized
+    endpoint.
+- **Framework auto-detection, with `--framework` to override.** Sphinxor picks the
+  extractor by looking at your source, and reports which one it chose and why. It
+  refuses rather than guesses: if it detects nothing, or detects more than one (a
+  monorepo with a Java backend and a Nest BFF), it stops and asks for
+  `--framework` instead of silently analyzing half your project
+  ([ADR 0019](docs/decisions/0019-cli-framework-selection.md)).
+
+### Changed
+
+These affect existing NestJS users too, including ones with no interest in Spring.
+
+- **A run that couldn't examine anything is now an error instead of an empty,
+  clean report.** Pointing `sphinxor lint` at a path with no recognizable source
+  previously printed `0 endpoint(s), 0 finding(s)` and exited `0` — indistinguishable
+  from "your authorization model is fine." It now exits non-zero with
+  `no supported framework detected in <path>`. **This can turn a currently-green CI
+  job red if it was pointing somewhere unintended** — which is the point, but here
+  is the recourse:
+  - *Wrong path* (the usual cause): correct the path.
+  - *Right path, but the directory legitimately has no framework import* — a
+    DTO-only or service-only sub-path, for instance: pass `--framework nestjs`
+    (or `spring`). The run then proceeds and exits `0`, warning that it parsed
+    files but recognized no endpoints.
+  - *Framework misidentified*: pass `--framework` with the one you want.
+
+  A run that *does* parse source but recognizes no endpoints still exits `0`, with
+  a warning — a library package legitimately has no routes.
+- **A one-line notice on stderr** reports the framework, how it was chosen, and the
+  source-file count. `stdout` is unchanged, so `--format json` output still parses
+  exactly as before and existing consumers are unaffected.
+- **Errors print once, without a usage dump.** A failed run shows the reason, not
+  the command's full flag list.
+
 ## [0.5.0] - 2026-08-28
 
 ### Added
