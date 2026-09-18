@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `sphinxor version` no longer reports `dev` for a binary installed with
+  `go install <pkg>@<version>`. `go install` doesn't apply the release
+  workflow's `-ldflags`, so a freshly installed tagged release misreported
+  itself on the user's first command. The version now falls back to the module
+  version Go records in the build info when no `-ldflags` stamp is present —
+  release binaries are unaffected, since the stamp still takes precedence. A
+  local `go build` inside the repo now reports the VCS pseudo-version (with
+  `+dirty` on an uncommitted tree) instead of `dev`, identifying the exact
+  commit; `dev` remains for builds with no VCS information at all.
+
 ## [0.6.0] - 2026-09-18
 
 ### Added
