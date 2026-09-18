@@ -1,14 +1,121 @@
 # sphinxor
 
-Static analysis for your authorization model (RBAC/ABAC/IAM).
+**Static analysis for your app's authorization model — audit RBAC/ABAC across frameworks, and catch permission drift before it ships.**
 
-Sphinxor reconstructs the authorization model that actually exists in your code —
-endpoints, guards, roles, permissions — instead of the one declared somewhere else
-that may have drifted. It analyzes, detects, and explains, at an honestly stated
-confidence level; it never makes an authorization decision itself. See
-[`docs/vision.md`](docs/vision.md) for the full positioning.
+*The drift detector for your authorization model: design, audit and document what your code actually enforces.*
 
-Currently targets **NestJS** ([`docs/decisions/0001-target-framework-choice.md`](docs/decisions/0001-target-framework-choice.md)).
+<!-- GIF demo goes here -->
+
+```console
+$ sphinxor lint ./pharmacy-backend
+Analyzing ./pharmacy-backend as spring (detected), 5 source file(s).
+# RBAC Matrix
+
+8 endpoint(s), 1 finding(s): 0 blocking, 1 warning, 0 allowlisted.
+
+## Endpoints
+
+| Method | Path | Handler | Controller | Guards | Roles | Findings |
+|---|---|---|---|---|---|---|
+| GET | /api/customers | getAll | CustomerController | - | ADMIN, PHARMACIST | - |
+| POST | /api/customers | create | CustomerController | - | ADMIN, PHARMACIST | - |
+| DELETE | /api/customers/{id} | delete | CustomerController | - | ADMIN | - |
+| GET | /api/customers/{id} | get | CustomerController | - | ADMIN, PHARMACIST | - |
+| PUT | /api/customers/{id} | update | CustomerController | - | ADMIN, PHARMACIST | - |
+| GET | /api/suppliers | getAll | SupplierController | - | ADMIN, PHARMACIST | - |
+| POST | /api/suppliers | create | SupplierController | - | ADMIN | - |
+| POST | /auth/login | login | AuthController | - | - | mutating-endpoint-without-access-control |
+
+## Findings
+
+- [LOW/warning] `mutating-endpoint-without-access-control`: POST /auth/login has no detected guard or role decorator
+```
+
+**Sphinxor's output is Markdown — it drops straight into your docs or PR.** That same run renders as:
+
+### RBAC Matrix
+
+8 endpoint(s), 1 finding(s): 0 blocking, 1 warning, 0 allowlisted.
+
+| Method | Path | Handler | Controller | Guards | Roles | Findings |
+|---|---|---|---|---|---|---|
+| GET | /api/customers | getAll | CustomerController | - | ADMIN, PHARMACIST | - |
+| POST | /api/customers | create | CustomerController | - | ADMIN, PHARMACIST | - |
+| DELETE | /api/customers/{id} | delete | CustomerController | - | ADMIN | - |
+| GET | /api/customers/{id} | get | CustomerController | - | ADMIN, PHARMACIST | - |
+| PUT | /api/customers/{id} | update | CustomerController | - | ADMIN, PHARMACIST | - |
+| GET | /api/suppliers | getAll | SupplierController | - | ADMIN, PHARMACIST | - |
+| POST | /api/suppliers | create | SupplierController | - | ADMIN | - |
+| POST | /auth/login | login | AuthController | - | - | `mutating-endpoint-without-access-control` |
+
+*(Real output, from a real open-source Spring project.)*
+
+The matrix is the inventory: every role referenced at each endpoint. Where two authorization layers disagree, Sphinxor computes the **effective** policy — `GET /api/suppliers` lists `ADMIN, PHARMACIST` from its `@PreAuthorize`, but a `SecurityFilterChain` rule narrows the URL to `ADMIN`, so the exported policy grants `ADMIN` alone:
+
+```yaml
+# cerbos-policies/supplier.yaml — method {ADMIN, PHARMACIST} ∩ URL {ADMIN}
+    - actions: ["get"]
+      roles:
+        - "ADMIN"
+      effect: EFFECT_ALLOW
+```
+
+`--format json` gives you the same model for tooling.
+
+## The problem
+
+Teams build roles and permissions incrementally — a guard here, a decorator there, a filter chain somewhere else. Over time nobody can answer "who can actually call this endpoint?" without reading the code, and the answer drifts from whatever the spec said six months ago. The authorization model exists, but only implicitly, scattered across annotations and config.
+
+Generic SAST tools don't close this gap. Semgrep, CodeQL, and SonarQube pattern-match for known-bad shapes; they never build an explicit model of *who may do what*, so they can't tell you a role is unused, that an endpoint lost its guard in last week's refactor, or that two authorization layers combine to something narrower than either one suggests. Sphinxor inverts that: it reconstructs the authorization model first, then reasons over it. **The model is the product; finding problems is a consequence of having one.**
+
+## Architecture
+
+Every framework extractor produces the *same* framework-independent model. Everything downstream — lint rules, drift detection, policy export — consumes only that model and never touches framework-specific code.
+
+```mermaid
+flowchart LR
+    subgraph EX["Framework extractors"]
+        direction TB
+        NEST["NestJS / TypeScript<br/>decorators, guards,<br/>composite @Auth()"]
+        SPRING["Spring / Java<br/>@PreAuthorize, SpEL,<br/>SecurityFilterChain"]
+    end
+
+    MODEL["Framework-independent model<br/>endpoints · guards · roles<br/>permissions · auth requirements"]
+
+    subgraph OUT["Consumers — framework-agnostic"]
+        direction TB
+        LINT["Lint rules<br/>unguarded mutations,<br/>unused + empty roles"]
+        DIFF["Drift diff<br/>regressions between<br/>two commits"]
+        EXPORT["Cerbos export<br/>review-before-deploy<br/>policy set"]
+    end
+
+    NEST --> MODEL
+    SPRING --> MODEL
+    MODEL --> LINT
+    MODEL --> DIFF
+    MODEL --> EXPORT
+
+    FUTURE["Next framework"] -.-> MODEL
+
+    style MODEL fill:#1f2937,stroke:#60a5fa,stroke-width:3px,color:#f9fafb
+    style FUTURE stroke-dasharray: 4 4
+```
+
+That convergence is a design claim, so adding the second framework was treated as its test rather than an assumption — and the honest result is recorded, not rounded up. Absorbing Spring took four **additive** model changes (nothing reshaped or removed). The drift-diff engine then ran on Spring output with **zero** changes. The lint rules and the Cerbos exporter needed targeted corrections — each one its own ADR ([0015](docs/decisions/0015-inert-method-security-guard.md), [0017](docs/decisions/0017-declaresroles-excludes-isauthenticated.md), and the two-layer intersection in [0012](docs/decisions/0012-securityfilterchain-effective-policy.md)) — not redesign.
+
+A new framework means a new extractor plus whatever the model genuinely lacks, found by building it rather than predicted in advance.
+
+## What it does
+
+- **Analyzes NestJS (TypeScript) and Spring (Java)** — endpoints, guards, roles, and permissions, with the framework auto-detected from your source (`--framework` to override).
+- **Drift detection in CI — the differentiator.** `sphinxor diff <base> <head>` compares two checkouts and fails the build on a *regression*: an endpoint that newly lost its protection, or one whose explicit exemption was quietly removed. Point-in-time scanning can't see either. Pre-existing findings don't re-fail every subsequent PR.
+- **Three lint rules**: mutating endpoint with no detected access control, permission declared but never referenced, empty role.
+- **Cerbos policy export** — generates a Cerbos resource policy set from the extracted model, validated against the real `cerbos compile`. Explicitly marked review-before-deploying.
+- **Combines authorization layers.** For Spring, the exported policy intersects method-level annotations with `SecurityFilterChain` URL rules, so it reflects the effective permission rather than either layer alone.
+- **`// sphinxor-allow:` suppression** for endpoints that are public on purpose — with a finding when a marker no longer matches anything, so exemptions can't rot silently.
+- **Confidence-graded findings.** `High` fails CI; `Low` is a warning. Nothing is reported as a certainty that isn't one.
+
+Current scope, stated plainly: **two frameworks, one export target.** Known blind spots are documented in [`docs/limitations.md`](docs/limitations.md) rather than left for you to discover.
 
 ## Install
 
@@ -16,142 +123,47 @@ Currently targets **NestJS** ([`docs/decisions/0001-target-framework-choice.md`]
 go install github.com/chebilax/sphinxor/cmd/sphinxor@latest
 ```
 
-`@latest` tracks the newest tagged release once one exists; pin to a specific
-version instead (e.g. `@v0.3.0`) for reproducible builds. `sphinxor version`
-reports what you have installed.
-
-## Usage
-
-### `sphinxor lint` — audit one checkout
+Or download a prebuilt binary:
 
 ```sh
-sphinxor lint .
+# macOS (Apple Silicon)
+curl -sSL https://github.com/chebilax/sphinxor/releases/download/v0.6.0/sphinxor_v0.6.0_darwin_arm64.tar.gz | tar -xz sphinxor
+
+# Linux (x86-64)
+curl -sSL https://github.com/chebilax/sphinxor/releases/download/v0.6.0/sphinxor_v0.6.0_linux_amd64.tar.gz | tar -xz sphinxor
 ```
 
-Extracts the authorization model at the given path (defaults to `.`) and reports
-findings from the v0.1 rule set:
+Windows builds are on the [releases page](https://github.com/chebilax/sphinxor/releases).
 
-- a mutating endpoint (`POST`/`PUT`/`PATCH`/`DELETE`) with no detected access control;
-- a role/permission declared but never referenced by any guard;
-- an empty role.
-
-Every finding carries a confidence grade — `High` or `Low`
-([`docs/decisions/0004-confidence-level-granularity.md`](docs/decisions/0004-confidence-level-granularity.md)) —
-never a bare "vulnerable/not vulnerable" verdict. `High`-confidence, non-allowlisted
-findings exit non-zero, so `lint` is usable as a CI gate as-is. `Low` findings are
-reported but never fail the build — they mark cases the static analysis can't
-resolve with certainty (see **Known blind spots** below), not cases you should ignore.
-
-If a route is intentionally unprotected (a health check, a login endpoint), mark it
-in place rather than accepting a false positive on every run:
-
-```ts
-// sphinxor-allow: public health check, no auth by design
-@Get('health')
-check() { ... }
-```
-
-See [`docs/decisions/0003-allowlist-format.md`](docs/decisions/0003-allowlist-format.md)
-for the marker grammar and why it's a comment rather than a decorator or a
-hand-maintained config file.
-
-### `sphinxor diff` — catch regressions between two versions
+## Quickstart
 
 ```sh
-sphinxor diff <base-dir> <head-dir>
-```
+# Audit a project (framework auto-detected)
+sphinxor lint ./my-app
 
-This is v1's headline feature: not just a point-in-time audit, but drift detection
-between two versions of the same project's authorization model — a PR against its
-target branch, or any two commits.
+# Machine-readable output
+sphinxor lint ./my-app --format json
 
-**The two-directory contract.** `diff` takes two paths on disk and never shells out
-to `git` itself — no assumption about which `git` version or ref syntax is
-available, no credential surface for fetching refs, no shallow-clone surprises in
-CI. Producing the two directories is the caller's job, and it's a two-line pattern
-in any CI script:
-
-```sh
-git worktree add ../base <base-ref>
+# Fail CI on an authorization regression vs. the base branch
+git worktree add ../base origin/main
 sphinxor diff ../base .
+
+# Export a Cerbos policy set (review before deploying)
+sphinxor export cerbos ./my-app --out cerbos-policies
 ```
 
-`<base-ref>` is typically the PR's target branch (e.g. `origin/main`). Both sides
-are extracted and linted independently, in-process — see
-[`docs/decisions/0007-model-diff-design.md`](docs/decisions/0007-model-diff-design.md)
-§1 for why this beats Sphinxor having its own opinion about git.
+## Engineering approach
 
-**What gates CI, and what doesn't.** `diff` exits non-zero only on a *regression*:
+The decisions behind this project are written down, in [`docs/decisions/`](docs/decisions/) — **19 ADRs**, each recording the alternatives considered and why they were rejected, written *before* the implementing code rather than reconstructed after it.
 
-- a `High`-confidence finding in `head` with no matching finding in `base`'s
-  `High`-confidence set (something newly wrong), **or**
-- a `High`-confidence finding in `head` that matched a `base` finding which *was*
-  allowlisted and no longer is (someone removed a `sphinxor-allow` marker —
-  structurally the same code, but the human acknowledgment protecting it is gone).
+Three things that shaped the codebase more than any feature did:
 
-It does **not** gate on:
+- **Validated against real repositories, not fixtures.** Extraction, linting and export are tested against vendored open-source NestJS and Spring projects, and generated Cerbos policies are checked with the real `cerbos compile` binary in CI. Several bugs surfaced only that way — including one where a generated policy rule would have silently governed an endpoint it was never meant to cover.
+- **Safety-first by default: omit and flag, never guess.** When the analysis can't establish something with certainty, it says so instead of assuming. The exporter omits a rule rather than emit one that might over-grant; an unreadable Spring filter-chain rule stops evaluation instead of falling through to a more permissive one; a run that couldn't examine anything is an error, not an empty clean report. **A tool that reassures you incorrectly is worse than one that admits a gap.**
+- **Honest about what it can't see.** [`docs/limitations.md`](docs/limitations.md) is a first-class document listing real, measured blind spots — global guards, unresolved composite decorators, custom `AuthorizationManager`s — with what each one costs you.
 
-- any `Low`-confidence finding, new or otherwise;
-- a `High`-confidence finding that already existed, unchanged, in `base` (it already
-  gated whichever PR introduced it — re-failing every subsequent PR on the same
-  pre-existing finding would be pure noise).
+Further reading: [`docs/vision.md`](docs/vision.md) for scope and positioning, [`docs/testing.md`](docs/testing.md) for what "validated" means here, [`CONTRIBUTING.md`](CONTRIBUTING.md) for the process.
 
-Everything else `diff` reports — added/removed endpoints, added/removed role
-declarations, added/removed/changed guard applications and role references,
-endpoints that became public — is structural, informational output: always shown,
-never itself a reason the run fails. Full rule in
-[`docs/decisions/0007-model-diff-design.md`](docs/decisions/0007-model-diff-design.md) §3.
+## License
 
-**Known blind spots carry over.** `diff` compares whatever the extractor could see
-in each snapshot, so anything the extractor can't see, it can't diff either — a
-regression hidden behind a global guard (`APP_GUARD`, `app.useGlobalGuards()`) or an
-unresolved composite decorator (see
-[`docs/limitations.md`](docs/limitations.md)) is invisible to `diff` the same way it
-would be to a single `lint` run on either side, not something `diff` closes by
-comparing two points in time. If you're gating CI on `diff`, read
-[`docs/limitations.md`](docs/limitations.md) first.
-
-Both commands accept `--format markdown` (default) or `--format json`.
-
-### `sphinxor export cerbos` — translate to a real authorization engine
-
-```sh
-sphinxor export cerbos . --out cerbos-policies
-```
-
-The first authorization-engine exporter
-([ADR 0009](docs/decisions/0009-cerbos-exporter.md)): translates the extracted
-model into a [Cerbos](https://cerbos.dev) resource policy set. It's downstream of
-extraction — it never touches NestJS-specific logic — so it works for any future
-framework's extractor automatically.
-
-**The output is explicitly not deploy-ready.** Every generated policy file starts
-with a header saying so. A rule is only generated when a real guard and role were
-actually found in the code; whenever the model can't establish a grant with
-certainty — no guard at all, a guard with no specific role (commonly "authenticated,
-any role," which Cerbos has no way to express without a role name), or two endpoints
-that share a Cerbos action (the exporter maps one Cerbos resource per controller and
-one action per HTTP method, which has no path component — see the ADR) but disagree
-on their confirmed roles — that endpoint is **omitted, never guessed**. Cerbos denies
-by default for any action with no matching rule, so omission is the safe state, not
-a workaround.
-
-Everything omitted is flagged twice: as an inline YAML comment at the point of
-omission, and in a companion report written as `<out>.report.md` (or `.json` with
-`--format json`) — a sibling of `--out`, not nested inside it, so it's never
-mistaken for a policy file by `cerbos compile` itself, which scans the whole
-directory it's pointed at. Read the report before deploying anything — a sparse
-export usually means the source code's access control genuinely doesn't carry
-enough information to translate, not that the exporter missed something.
-
-## Documentation
-
-Start at [`docs/README.md`](docs/README.md). In particular:
-[`docs/vision.md`](docs/vision.md) for scope and philosophy,
-[`docs/decisions/`](docs/decisions/) for why each design choice was made,
-[`docs/limitations.md`](docs/limitations.md) for what the current analysis honestly
-cannot see, [`docs/testing.md`](docs/testing.md) for how correctness is validated.
-
-## Contributing
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+[MIT](LICENSE)
