@@ -16,7 +16,7 @@ import (
 // findings that do fire are the ones hand-verified expected, not
 // leftover NestJS assumptions leaking through.
 func TestLint_Pharmacy(t *testing.T) {
-	m, err := Extract("testdata/Pharmacy/backend/src/main/java")
+	m, _, err := Extract("testdata/Pharmacy/backend/src/main/java")
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
