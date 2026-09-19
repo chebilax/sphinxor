@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/chebilax/sphinxor/internal/model"
 )
 
 const (
@@ -200,5 +202,128 @@ func copyTree(t *testing.T, src, dst string) {
 	})
 	if err != nil {
 		t.Fatalf("copying %s: %v", src, err)
+	}
+}
+
+// TestProjectWarnings covers the three project-level caveats of ADR 0020
+// §2 and §4. Each one exists because the report is otherwise correct as
+// far as it goes and silently misleading about how far that is; the
+// quiet case is tested alongside them because a caveat that fires on
+// every project is a caveat nobody reads.
+func TestProjectWarnings(t *testing.T) {
+	// A method-layer guard that resolves a role: the subject of §4's
+	// method-security caveat, and enough to make a report look confident.
+	guardedEndpoint := func(m *model.Model) {
+		m.Endpoints = append(m.Endpoints, model.Endpoint{ID: "e1", HTTPMethod: model.MethodGet, Path: "/x"})
+		m.GuardApplications = append(m.GuardApplications, model.GuardApplication{
+			ID: "g1", EndpointID: "e1", GuardName: "PreAuthorize",
+			AppliedAt: model.ScopeMethod, DeclaresRoles: true,
+		})
+		m.RoleReferences = append(m.RoleReferences, model.RoleReference{
+			ID: "r1", GuardApplicationID: "g1", RawLiteral: "ADMIN",
+		})
+	}
+
+	cases := []struct {
+		name  string
+		build func(*model.Model)
+		want  string // substring, or "" for no warning at all
+	}{
+		{
+			// The baseline that keeps the other three honest: everything
+			// was analyzed, so nothing is said.
+			name: "fully analyzed project is quiet",
+			build: func(m *model.Model) {
+				guardedEndpoint(m)
+				m.URLLayer = model.URLLayerStatus{Present: true, Analyzed: true}
+				m.MethodSecurity = model.MethodSecurityStatus{Found: true}
+			},
+			want: "",
+		},
+		{
+			name: "unknown URL layer",
+			build: func(m *model.Model) {
+				guardedEndpoint(m)
+				m.MethodSecurity = model.MethodSecurityStatus{Found: true}
+				m.URLLayer = model.URLLayerStatus{
+					Present: true, Analyzed: false, Reason: "2 SecurityFilterChain beans were found",
+				}
+			},
+			want: "may be BROADER",
+		},
+		{
+			// §4/finding D: @PreAuthorize with no @EnableMethodSecurity in
+			// sight. The roles are still reported (ADR 0015), so the only
+			// thing standing between the reader and a wide-open endpoint
+			// presented as ADMIN-only is this line.
+			name: "method security never located",
+			build: func(m *model.Model) {
+				guardedEndpoint(m)
+				m.MethodSecurity = model.MethodSecurityStatus{Found: false}
+			},
+			want: "are NOT protected",
+		},
+		{
+			// The same caveat must not fire on NestJS, where
+			// MethodSecurity.Found is false only because the concept does
+			// not exist. Before this case it did, on every project using
+			// @Roles(), naming a Spring annotation that isn't there.
+			name: "nestjs role guard does not trigger the spring caveat",
+			build: func(m *model.Model) {
+				m.Endpoints = append(m.Endpoints, model.Endpoint{ID: "e1", HTTPMethod: model.MethodGet, Path: "/x"})
+				m.GuardApplications = append(m.GuardApplications, model.GuardApplication{
+					ID: "g1", EndpointID: "e1", GuardName: "RolesGuard",
+					AppliedAt: model.ScopeMethod, DeclaresRoles: true,
+				})
+			},
+			want: "",
+		},
+		{
+			// §4/finding E: the inverted default. Here the error runs the
+			// safe way — protection is understated — but an unexplained
+			// wall of unguarded endpoints is its own kind of wrong answer.
+			name: "global guard registered",
+			build: func(m *model.Model) {
+				m.Endpoints = append(m.Endpoints, model.Endpoint{ID: "e1", HTTPMethod: model.MethodGet, Path: "/x"})
+				m.MethodSecurity = model.MethodSecurityStatus{Found: true}
+				m.GlobalGuards = model.GlobalGuardStatus{Registered: true, Mechanism: "an APP_GUARD provider"}
+			},
+			want: "UNDERSTATE protection",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &model.Model{}
+			tc.build(m)
+			got := projectWarnings(m)
+
+			if tc.want == "" {
+				if len(got) != 0 {
+					t.Fatalf("want no warnings on a fully-analyzed project, got %q", got)
+				}
+				return
+			}
+			if len(got) != 1 {
+				t.Fatalf("want exactly 1 warning, got %d: %q", len(got), got)
+			}
+			if !strings.Contains(got[0], tc.want) {
+				t.Errorf("warning = %q, want it to contain %q", got[0], tc.want)
+			}
+		})
+	}
+}
+
+// TestAnalyzeDirectory_RealProjectStaysQuiet pins the noise floor against
+// the real Pharmacy project: single servlet chain, method security
+// enabled, no global guard. If ADR 0020's caveats start firing here they
+// have stopped meaning anything.
+func TestAnalyzeDirectory_RealProjectStaysQuiet(t *testing.T) {
+	var notices bytes.Buffer
+	if _, _, err := analyzeDirectory(&notices, pharmacyFixture, ""); err != nil {
+		t.Fatalf("analyzeDirectory: %v", err)
+	}
+	if strings.Contains(notices.String(), "warning:") {
+		t.Errorf("a fully-analyzed real project must produce no caveats, got:\n%s", notices.String())
 	}
 }

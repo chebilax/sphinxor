@@ -101,8 +101,88 @@ func analyzeDirectory(w io.Writer, dir, override string) (*model.Model, []model.
 			sourceFiles, framework)
 	}
 
+	// Project-level caveats (ADR 0020 §2/§4). These don't change a finding
+	// or a grant; they change what the reader should believe the output
+	// means. They go to w (stderr) for the same reason the framework
+	// notice does: stdout stays clean for --format json.
+	for _, warning := range projectWarnings(m) {
+		fmt.Fprintf(w, "warning: %s\n", warning)
+	}
+
 	findings := lint.Run(m, lint.DefaultRules(), allow.AllowlistedEndpoints)
 	findings = append(findings, allow.StaleMarkers...)
 
 	return m, findings, nil
+}
+
+// projectWarnings returns the project-level caveats that change how the
+// whole report should be read, per docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
+// §2 and §4.
+//
+// None of these changes a finding or a grant. They exist because a result
+// can be correct as far as it goes and still be presented with more
+// confidence than the analysis earned — and an audit tool that does that
+// is the failure this project is built to avoid.
+func projectWarnings(m *model.Model) []string {
+	var out []string
+
+	// §2: a URL layer exists and could not be read, so the method layer
+	// is not the whole story for any endpoint in this project.
+	if m.URLLayer.Unknown() {
+		out = append(out, "this project's URL-layer authorization could not be analyzed ("+m.URLLayer.Reason+").\n"+
+			"         Roles shown below come from the method layer alone and may be BROADER than what the\n"+
+			"         application actually enforces. `sphinxor export cerbos` omits these endpoints entirely.")
+	}
+
+	// §4: method-security annotations that may never be switched on. The
+	// analysis deliberately does not downgrade them (ADR 0015: absence of
+	// the enabling annotation is no evidence either way, since it can live
+	// in a parent module or unparsed Kotlin) — but silence here reads as
+	// confirmation, and the consequence if they really are inert is that
+	// every role shown for them is imaginary.
+	if !m.MethodSecurity.Found && hasMethodSecurityAnnotations(m) {
+		out = append(out, "method-security annotations were found, but no @EnableMethodSecurity /\n"+
+			"         @EnableGlobalMethodSecurity was located in the analyzed source. If it isn't enabled\n"+
+			"         elsewhere (a parent module, Kotlin config), those annotations are inert at runtime and\n"+
+			"         the endpoints they appear to protect are NOT protected.")
+	}
+
+	// §4: the inverted default. Verified against nestjs/nest's own
+	// 19-auth-jwt sample, where every endpoint shows no guard because the
+	// guard is registered globally and @Public() opts out.
+	if m.GlobalGuards.Registered {
+		out = append(out, "a global guard is registered via "+m.GlobalGuards.Mechanism+", which protects every route\n"+
+			"         by default. Endpoint-level results below UNDERSTATE protection: an endpoint showing no\n"+
+			"         guard may still be protected globally.")
+	}
+
+	return out
+}
+
+// springMethodSecurityAnnotations are exactly the annotations that
+// @EnableMethodSecurity switches on — and so exactly the ones the §4
+// caveat is about.
+var springMethodSecurityAnnotations = map[string]bool{
+	"PreAuthorize": true,
+	"Secured":      true,
+	"RolesAllowed": true,
+}
+
+// hasMethodSecurityAnnotations reports whether the project declares roles
+// through one of those annotations.
+//
+// The check is by annotation name rather than by layer on purpose.
+// MethodSecurity.Found is false for any framework without the concept
+// (model.Model documents that zero value as "unknown", never "disabled"),
+// so a layer-shaped check fires this Spring-specific caveat — naming an
+// annotation that does not exist there — on every NestJS project that
+// uses @Roles(). A caveat that is both wrong and unmissable on half the
+// supported frameworks trains people to ignore the ones that are right.
+func hasMethodSecurityAnnotations(m *model.Model) bool {
+	for _, g := range m.GuardApplications {
+		if g.DeclaresRoles && springMethodSecurityAnnotations[g.GuardName] {
+			return true
+		}
+	}
+	return false
 }

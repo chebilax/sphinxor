@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+Four blind spots found by an audit of Spring and NestJS extraction against
+real projects, all of the same kind: a construct Sphinxor could not analyze
+was recorded as *absent* rather than *unknown*, and the report presented the
+result with confidence it hadn't earned. See
+[ADR 0020](docs/decisions/0020-unanalyzable-is-unknown-not-absent.md).
+
+- **A `SecurityFilterChain` matcher whose pattern couldn't be read no longer
+  matches every request.** `requestMatchers(antMatcher("/admin/**"))` — the
+  idiomatic Spring Security 6 form — collapsed into the same internal state as
+  `.anyRequest()`, so its `hasRole("ADMIN")` was applied to the whole
+  application. On the audit's reproduction, a `DELETE /public/wipe` endpoint
+  that really falls through to `permitAll()` was reported as ADMIN-protected
+  with zero findings: a false assurance on a destructive endpoint, which also
+  suppressed the `mutating-endpoint-without-access-control` safety net that
+  would otherwise have caught it. Such a matcher now makes its rule *unknown* —
+  it grants its roles to no endpoint and stops evaluation for the ones it might
+  cover. `antMatcher(...)` wrappers carrying a readable pattern are now read
+  properly rather than being lost this way.
+- **A URL layer that exists but couldn't be analyzed is no longer treated as
+  no URL layer.** A project with more than one `SecurityFilterChain` bean had
+  the layer silently skipped, leaving the method layer to stand as the complete
+  picture. `sphinxor export cerbos` turned that into a deployable policy
+  granting `[ADMIN, ANALYST]` on an endpoint the running application restricted
+  to `ADMIN`. Such a project is now reported as having an unanalyzed URL layer:
+  `lint` warns that its roles may be broader than reality, and `export` omits
+  every endpoint and says why rather than exporting a grant the application
+  denies.
+- **Reactive Spring Security (`SecurityWebFilterChain` / WebFlux) is now
+  detected.** Its rules are still not parsed — that remains out of scope — but
+  a reactive project no longer looks like one with no URL-layer authorization
+  at all. It gets the same warning and the same export omission as the
+  multi-chain case.
+- **Two systematic distortions are now stated instead of implied.** A Spring
+  project whose method-security annotations were found with no
+  `@EnableMethodSecurity` anywhere in the analyzed source now warns that those
+  annotations may be inert at runtime, in which case the roles shown for them
+  are imaginary. A NestJS project registering a global guard (`APP_GUARD`
+  provider or `app.useGlobalGuards()`) now warns that endpoint-level results
+  understate protection, since every route is protected by default. Neither
+  changes a finding; both change what the output means.
+
 ### Fixed
 
 - `sphinxor version` no longer reports `dev` for a binary installed with
