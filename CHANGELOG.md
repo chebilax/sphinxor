@@ -9,11 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-Four blind spots found by an audit of Spring and NestJS extraction against
-real projects, all of the same kind: a construct Sphinxor could not analyze
-was recorded as *absent* rather than *unknown*, and the report presented the
-result with confidence it hadn't earned. See
-[ADR 0020](docs/decisions/0020-unanalyzable-is-unknown-not-absent.md).
+Six blind spots, found by an audit of Spring and NestJS extraction against
+real projects and by the NestJS hunt that followed it across six more
+repositories (including immich and ToolJet). All of the same kind: a
+construct Sphinxor could not analyze was recorded as *absent* rather than
+*unknown*, and the report presented the result with confidence it hadn't
+earned. See [ADR 0020](docs/decisions/0020-unanalyzable-is-unknown-not-absent.md)
+and its Amendment 1.
+
+- **A comment between a decorator and what it decorates no longer deletes
+  endpoints.** In tree-sitter-typescript a comment is a named sibling, so for
+  shapes as ordinary as `@Post('x') // note` the decorators were attached to
+  the comment instead of the handler. The handler then had no route decorator
+  and stopped being an endpoint at all — no row in the matrix, and so no lint
+  rule to fire on it. On a `@Controller` line it cost every route in the class
+  at once. On `CatsMiaow/nestjs-project-structure` this hid an entire
+  controller whose `POST`, `PUT` and `DELETE` are unguarded, reported as zero
+  findings because there was nothing left to report on; that project goes from
+  9 endpoints and 0 findings to 23 and 3.
+- **An endpoint whose route path cannot be read no longer collides with
+  another endpoint's identity.** Endpoint identity is derived from
+  `(method, path)`, and extraction reads only string literals — so
+  `@Controller(RouteKey.Asset)`, a route constant, an array form, a template
+  literal, and Spring's `@RequestMapping(Routes.ADMIN)` all silently produced
+  an empty prefix. Unrelated endpoints then shared one identity. NestJS merged
+  them, reporting one endpoint's guards and roles against another: a wide-open
+  `DELETE` shown as `ADMIN`-protected with the
+  `mutating-endpoint-without-access-control` finding suppressed — the same
+  false assurance as the `antMatcher` defect below, reached a different way.
+  Spring instead dropped one of the pair, so the unguarded endpoint vanished
+  from the report entirely. Such endpoints now keep an identity synthesized
+  from their controller and handler, are marked in the matrix with a leading
+  `…`, are named in a project-level warning, and are omitted by
+  `sphinxor export cerbos`, which cannot name a policy after a fragment of a
+  route. They remain fully analyzed and linted.
 
 - **A `SecurityFilterChain` matcher whose pattern couldn't be read no longer
   matches every request.** `requestMatchers(antMatcher("/admin/**"))` — the

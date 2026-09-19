@@ -31,12 +31,17 @@ type Row struct {
 	Controller string           `json:"controller"`
 	Method     model.HTTPMethod `json:"method"`
 	Path       string           `json:"path"`
-	Handler    string           `json:"handler"`
-	File       string           `json:"file"`
-	Line       int              `json:"line"`
-	Guards     []string         `json:"guards"`
-	Roles      []string         `json:"roles"`
-	Findings   []model.Finding  `json:"findings,omitempty"`
+	// PathUnresolved marks Path as a fragment of the real route rather
+	// than the whole of it, because the declared path could not be read
+	// (ADR 0020 Amendment 1 §5). Markdown renders such a path with a
+	// leading ellipsis; JSON consumers get the flag.
+	PathUnresolved bool            `json:"pathUnresolved,omitempty"`
+	Handler        string          `json:"handler"`
+	File           string          `json:"file"`
+	Line           int             `json:"line"`
+	Guards         []string        `json:"guards"`
+	Roles          []string        `json:"roles"`
+	Findings       []model.Finding `json:"findings,omitempty"`
 }
 
 // Matrix is the full RBAC matrix: one row per endpoint, plus every
@@ -85,15 +90,16 @@ func BuildMatrix(m *model.Model, findings []model.Finding) Matrix {
 	rows := make([]Row, 0, len(m.Endpoints))
 	for _, e := range m.Endpoints {
 		rows = append(rows, Row{
-			Controller: controllerName[e.ControllerID],
-			Method:     e.HTTPMethod,
-			Path:       e.Path,
-			Handler:    e.HandlerName,
-			File:       e.File,
-			Line:       e.Line,
-			Guards:     guardsByEndpoint[e.ID],
-			Roles:      rolesByEndpoint[e.ID],
-			Findings:   findingsByEndpoint[e.ID],
+			Controller:     controllerName[e.ControllerID],
+			Method:         e.HTTPMethod,
+			Path:           e.Path,
+			PathUnresolved: e.PathUnresolved,
+			Handler:        e.HandlerName,
+			File:           e.File,
+			Line:           e.Line,
+			Guards:         guardsByEndpoint[e.ID],
+			Roles:          rolesByEndpoint[e.ID],
+			Findings:       findingsByEndpoint[e.ID],
 		})
 	}
 

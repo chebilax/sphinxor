@@ -3,6 +3,9 @@ package cli
 import (
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/chebilax/sphinxor/internal/extract"
 	"github.com/chebilax/sphinxor/internal/lint"
@@ -147,6 +150,19 @@ func projectWarnings(m *model.Model) []string {
 			"         the endpoints they appear to protect are NOT protected.")
 	}
 
+	// Amendment 1 §5: routes whose declared path could not be read. The
+	// matrix marks each one with a leading ellipsis; this says what the
+	// mark means and which controllers to look at, because a fragment
+	// printed bare reads as a route that exists.
+	if u := unresolvedPaths(m); u.endpoints > 0 {
+		out = append(out, "the route path could not be read for "+strconv.Itoa(u.endpoints)+" endpoint(s) in: "+
+			strings.Join(u.controllers, ", ")+".\n"+
+			"         Their @Controller/@RequestMapping argument is not a string literal (a route constant or enum),\n"+
+			"         so the paths shown for them are marked \u2026 and are only the part that resolved. They are still\n"+
+			"         analyzed and still linted; `sphinxor export cerbos` omits them, since a policy cannot be named\n"+
+			"         after a fragment of a route.")
+	}
+
 	// §4: the inverted default. Verified against nestjs/nest's own
 	// 19-auth-jwt sample, where every endpoint shows no guard because the
 	// guard is registered globally and @Public() opts out.
@@ -185,4 +201,34 @@ func hasMethodSecurityAnnotations(m *model.Model) bool {
 		}
 	}
 	return false
+}
+
+// unresolvedPathCount is which controllers hold endpoints whose route
+// path could not be read, and how many such endpoints there are.
+type unresolvedPathCount struct {
+	controllers []string
+	endpoints   int
+}
+
+// unresolvedPaths gathers those controllers, sorted, for the §5 warning.
+func unresolvedPaths(m *model.Model) unresolvedPathCount {
+	var result unresolvedPathCount
+	name := make(map[model.ID]string, len(m.Controllers))
+	for _, c := range m.Controllers {
+		name[c.ID] = c.Name
+	}
+	seen := map[string]bool{}
+	for _, e := range m.Endpoints {
+		if !e.PathUnresolved {
+			continue
+		}
+		result.endpoints++
+		n := name[e.ControllerID]
+		if n != "" && !seen[n] {
+			seen[n] = true
+			result.controllers = append(result.controllers, n)
+		}
+	}
+	sort.Strings(result.controllers)
+	return result
 }

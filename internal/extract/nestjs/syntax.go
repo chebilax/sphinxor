@@ -46,13 +46,25 @@ type declGroup struct {
 }
 
 // groupDecorators walks siblings in source order, attaching each run of
-// consecutive `decorator` nodes to the next non-decorator node.
+// consecutive `decorator` nodes to the next declaration.
+//
+// Comments are skipped rather than treated as that declaration. In
+// tree-sitter-typescript a `comment` is a *named* sibling, so it lands
+// between a decorator and what it decorates for shapes as ordinary as
+// `@Post('x') // note` or a TODO between two decorators. Attaching the
+// run to the comment didn't degrade the endpoint — it removed the
+// endpoint from the model, and on a `@Controller` line it removed every
+// route in the class, leaving no row for a lint rule to fire on
+// (docs/decisions/0020-unanalyzable-is-unknown-not-absent.md, Amendment 1 §6).
 func groupDecorators(siblings []*sitter.Node) []declGroup {
 	var groups []declGroup
 	var pending []*sitter.Node
 	for _, n := range siblings {
-		if n.Type() == "decorator" {
+		switch n.Type() {
+		case "decorator":
 			pending = append(pending, n)
+			continue
+		case "comment":
 			continue
 		}
 		groups = append(groups, declGroup{decorators: pending, decl: n})
@@ -147,14 +159,21 @@ func memberExpressionName(n *sitter.Node, src []byte) (name string, ok bool) {
 // an object literal with a `path` property
 // (`@Controller({ path: 'users', version: '1' })`), the latter being
 // common alongside API versioning.
-func controllerBasePath(args *sitter.Node, src []byte) string {
+// controllerBasePath reads a @Controller(...) prefix. resolved is false
+// when an argument is present that no path could be read out of — a
+// route constant, enum member, array form or template literal. Those are
+// ordinary good practice, not anti-patterns, and reporting them as "no
+// prefix" collapsed endpoint identity (ADR 0020 Amendment 1 §5).
+//
+// A bare @Controller() genuinely has no prefix, and is resolved.
+func controllerBasePath(args *sitter.Node, src []byte) (path string, resolved bool) {
 	argNodes := argumentNodes(args)
 	if len(argNodes) == 0 {
-		return ""
+		return "", true
 	}
 	first := argNodes[0]
 	if v, ok := stringLiteralValue(first, src); ok {
-		return v
+		return v, true
 	}
 	if first.Type() == "object" {
 		for _, pair := range namedChildren(first) {
@@ -166,11 +185,11 @@ func controllerBasePath(args *sitter.Node, src []byte) string {
 				continue
 			}
 			if v, ok := stringLiteralValue(pair.ChildByFieldName("value"), src); ok {
-				return v
+				return v, true
 			}
 		}
 	}
-	return ""
+	return "", false
 }
 
 // joinPath combines a controller's base path with a route's own path into
