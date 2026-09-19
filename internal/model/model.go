@@ -48,7 +48,41 @@ type Model struct {
 	// (e.g. NestJS): every consumer treats Found == false as "unknown,"
 	// never as "confirmed disabled."
 	MethodSecurity MethodSecurityStatus
+	URLLayer       URLLayerStatus
 }
+
+// URLLayerStatus records what extraction was able to learn about a
+// project's URL-layer authorization (Spring's SecurityFilterChain /
+// SecurityWebFilterChain), per
+// docs/decisions/0020-unanalyzable-is-unknown-not-absent.md §2.
+//
+// The distinction this type exists to make, which the model previously
+// could not express: a layer that is *absent* and a layer that is
+// *present but unanalyzable* are different facts. A method-security-only
+// project genuinely has no URL layer, and its method layer really is the
+// complete picture. A project whose chain could not be read has an
+// incomplete picture, and any effective policy derived from the method
+// layer alone is unearned.
+type URLLayerStatus struct {
+	// Present is true if a URL-layer construct was detected at all,
+	// whether or not it could be parsed. Detection is deliberately
+	// separable from parsing: it is what turns a silent gap into a loud
+	// one, and it costs only the token.
+	Present bool
+	// Analyzed is true if the detected layer was actually parsed into
+	// rules. Present && !Analyzed is the unknown state: more than one
+	// SecurityFilterChain bean, none parseable, or a reactive
+	// SecurityWebFilterChain (whose parsing is out of scope per ADR 0020
+	// §3 — detected so it cannot be mistaken for absence).
+	Analyzed bool
+	// Reason explains Present && !Analyzed in one human-readable clause,
+	// for the warning shown to the user and the exporter's omission.
+	Reason string
+}
+
+// Unknown reports whether a URL layer exists but could not be analyzed —
+// the state in which no consumer may treat the method layer as complete.
+func (s URLLayerStatus) Unknown() bool { return s.Present && !s.Analyzed }
 
 // MethodSecurityStatus records whether Spring's @EnableMethodSecurity or
 // the deprecated @EnableGlobalMethodSecurity was found anywhere in the

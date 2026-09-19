@@ -59,6 +59,19 @@ const (
 	// too much to the endpoint with fewer roles, or too little to the one
 	// with more), so none of the colliding endpoints become a Rule.
 	ReasonActionCollision OmissionReason = "action-collision"
+	// ReasonURLLayerUnknown: a URL-layer authorization config exists in
+	// this project but could not be analyzed (docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
+	// §2), so no endpoint's effective policy is known — the URL layer may
+	// restrict any of them further than the method layer shows.
+	//
+	// Nothing is exported in that state. A Cerbos policy is a grant, not
+	// an inventory: exporting the method layer alone would guess in the
+	// permissive direction, which ADR 0009 §3 forbids, and a caveat in
+	// the companion report does not make a deployed policy less
+	// permissive. This is the state that previously let a two-chain
+	// project export `roles: [ADMIN, ANALYST]` for an endpoint the
+	// running application restricted to ADMIN.
+	ReasonURLLayerUnknown OmissionReason = "url-layer-unknown"
 	// ReasonNoCommonRole: a single endpoint has role-bearing evidence in
 	// more than one independent layer (e.g. a method annotation and a
 	// URL-pattern rule — docs/decisions/0012-securityfilterchain-effective-policy.md),
@@ -162,6 +175,30 @@ func Translate(m *model.Model) Result {
 	controllerByID := make(map[model.ID]model.Controller, len(m.Controllers))
 	for _, c := range m.Controllers {
 		controllerByID[c.ID] = c
+	}
+
+	// A URL layer that exists but could not be read makes every
+	// endpoint's effective policy unknown, not just the ones it happens
+	// to mention: any of them could be restricted further than the
+	// method layer shows. Nothing can be granted from an incomplete
+	// picture (ADR 0020 §2), so everything is omitted and flagged.
+	if m.URLLayer.Unknown() {
+		result := Result{}
+		for _, e := range m.Endpoints {
+			resource := ""
+			if c, ok := controllerByID[e.ControllerID]; ok {
+				resource = ResourceKind(c.Name)
+			}
+			result.Omissions = append(result.Omissions, Omission{
+				Endpoint: e,
+				Resource: resource,
+				Reason:   ReasonURLLayerUnknown,
+				Detail: "the project's URL-layer authorization could not be analyzed (" + m.URLLayer.Reason +
+					"), so the effective policy for this endpoint is unknown — the method layer alone may be broader than what the application really enforces",
+			})
+		}
+		sortOmissions(result.Omissions)
+		return result
 	}
 
 	guardAppByID := make(map[model.ID]model.GuardApplication, len(m.GuardApplications))
@@ -364,12 +401,7 @@ func Translate(m *model.Model) Result {
 		}
 		return rules[i].Action < rules[j].Action
 	})
-	sort.Slice(omissions, func(i, j int) bool {
-		if omissions[i].Endpoint.Path != omissions[j].Endpoint.Path {
-			return omissions[i].Endpoint.Path < omissions[j].Endpoint.Path
-		}
-		return omissions[i].Endpoint.HTTPMethod < omissions[j].Endpoint.HTTPMethod
-	})
+	sortOmissions(omissions)
 	sort.Slice(unverified, func(i, j int) bool {
 		if unverified[i].Resource != unverified[j].Resource {
 			return unverified[i].Resource < unverified[j].Resource
@@ -554,5 +586,15 @@ func sortEndpoints(endpoints []model.Endpoint) {
 			return endpoints[i].Path < endpoints[j].Path
 		}
 		return endpoints[i].HTTPMethod < endpoints[j].HTTPMethod
+	})
+}
+
+// sortOmissions orders omissions deterministically by endpoint.
+func sortOmissions(omissions []Omission) {
+	sort.Slice(omissions, func(i, j int) bool {
+		if omissions[i].Endpoint.Path != omissions[j].Endpoint.Path {
+			return omissions[i].Endpoint.Path < omissions[j].Endpoint.Path
+		}
+		return omissions[i].Endpoint.HTTPMethod < omissions[j].Endpoint.HTTPMethod
 	})
 }

@@ -135,12 +135,51 @@ func securityFilterChainLambdas(root *sitter.Node, src []byte) []*sitter.Node {
 }
 
 func isSecurityFilterChainBean(methodDecl *sitter.Node, src []byte) bool {
+	return isChainBeanOfType(methodDecl, src, "SecurityFilterChain")
+}
+
+// isReactiveChainBean matches WebFlux's SecurityWebFilterChain. Its rules
+// (ServerHttpSecurity / pathMatchers) are deliberately NOT parsed — that
+// is new framework coverage and belongs in its own decision
+// (docs/decisions/0020-unanalyzable-is-unknown-not-absent.md §3). This
+// exists only so a reactive URL layer is detected as *present*, and
+// therefore recorded as unknown rather than mistaken for absent, which
+// is what stops a reactive project from being told a method-layer-only
+// answer is the complete picture.
+func isReactiveChainBean(methodDecl *sitter.Node, src []byte) bool {
+	return isChainBeanOfType(methodDecl, src, "SecurityWebFilterChain")
+}
+
+func isChainBeanOfType(methodDecl *sitter.Node, src []byte, typeName string) bool {
 	anns := annotationsOf(methodDecl, src)
 	if _, ok := findAnnotation(anns, "Bean"); !ok {
 		return false
 	}
 	typeNode := methodDecl.ChildByFieldName("type")
-	return typeNode != nil && typeNode.Type() == "type_identifier" && typeNode.Content(src) == "SecurityFilterChain"
+	return typeNode != nil && typeNode.Type() == "type_identifier" && typeNode.Content(src) == typeName
+}
+
+// countChainBeans reports how many servlet and reactive chain beans exist
+// project-wide, regardless of whether their rules can be parsed. Presence
+// and parseability are separate questions (ADR 0020 §2).
+func countChainBeans(files []parsedFile) (servlet, reactive int) {
+	for _, f := range files {
+		var walk func(n *sitter.Node)
+		walk = func(n *sitter.Node) {
+			if n.Type() == "method_declaration" {
+				if isSecurityFilterChainBean(n, f.src) {
+					servlet++
+				} else if isReactiveChainBean(n, f.src) {
+					reactive++
+				}
+			}
+			for _, c := range namedChildren(n) {
+				walk(c)
+			}
+		}
+		walk(f.tree.RootNode())
+	}
+	return servlet, reactive
 }
 
 func soleLambdaArg(args *sitter.Node) *sitter.Node {

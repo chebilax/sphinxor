@@ -114,6 +114,27 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 		b.applySecurityFilterChain(chainRules, chainFile, roleByName)
 	}
 
+	// Record what became of the URL layer, per ADR 0020 §2. Presence is
+	// counted independently of parseability: without that, "no URL layer"
+	// and "a URL layer nobody could read" are indistinguishable, and the
+	// second silently gets treated as the first — which let a two-chain
+	// project export a Cerbos grant the running application denies.
+	servletBeans, reactiveBeans := countChainBeans(files)
+	b.model.URLLayer = model.URLLayerStatus{
+		Present:  servletBeans > 0 || reactiveBeans > 0,
+		Analyzed: hasChain,
+	}
+	if b.model.URLLayer.Unknown() {
+		switch {
+		case reactiveBeans > 0 && servletBeans == 0:
+			b.model.URLLayer.Reason = "a reactive SecurityWebFilterChain was found; reactive chain rules are not parsed yet"
+		case servletBeans > 1:
+			b.model.URLLayer.Reason = fmt.Sprintf("%d SecurityFilterChain beans were found; which one governs a given request depends on @Order/securityMatcher, which is not resolved", servletBeans)
+		default:
+			b.model.URLLayer.Reason = "a SecurityFilterChain bean was found but its authorizeHttpRequests rules could not be parsed"
+		}
+	}
+
 	// Pass 4: authentication requirements (ADR 0010), per layer (ADR 0011
 	// §3) — derived from the fully-assembled RoleReference collection
 	// above (an endpoint-and-layer's authCandidate can only be resolved

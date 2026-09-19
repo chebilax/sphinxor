@@ -200,3 +200,106 @@ public class SecurityConfig {
 		}
 	}
 }
+
+// TestURLLayerStatus_DistinguishesAbsentFromUnknown is ADR 0020 §2/§3's
+// regression test. The distinction it checks is the whole point of the
+// ADR: before it, "no URL layer" and "a URL layer nobody could read"
+// were the same state, and the second was silently treated as the first.
+func TestURLLayerStatus_DistinguishesAbsentFromUnknown(t *testing.T) {
+	const controller = `package app;
+import org.springframework.web.bind.annotation.*;
+@RestController
+class C {
+    @DeleteMapping("/x")
+    public void x() { }
+}
+`
+	cases := []struct {
+		name         string
+		config       string
+		wantPresent  bool
+		wantAnalyzed bool
+	}{
+		{
+			// A method-security-only project genuinely has no URL layer.
+			// Its method layer really is the complete picture, and it must
+			// not start reporting uncertainty it doesn't have.
+			name:        "absent",
+			config:      "package app;\npublic class NoConfig { }\n",
+			wantPresent: false,
+		},
+		{
+			name: "analyzed",
+			config: `package app;
+import org.springframework.context.annotation.Bean;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.web.SecurityFilterChain;
+public class SecurityConfig {
+    @Bean
+    public SecurityFilterChain chain(HttpSecurity http) throws Exception {
+        return http.authorizeHttpRequests(a -> a.anyRequest().authenticated()).build();
+    }
+}
+`,
+			wantPresent: true, wantAnalyzed: true,
+		},
+		{
+			// Two beans: which one governs a request depends on @Order and
+			// securityMatcher, which extraction does not resolve.
+			name: "unknown-multichain",
+			config: `package app;
+import org.springframework.context.annotation.Bean;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.web.SecurityFilterChain;
+public class SecurityConfig {
+    @Bean
+    public SecurityFilterChain a(HttpSecurity http) throws Exception {
+        return http.authorizeHttpRequests(x -> x.anyRequest().authenticated()).build();
+    }
+    @Bean
+    public SecurityFilterChain b(HttpSecurity http) throws Exception {
+        return http.authorizeHttpRequests(x -> x.anyRequest().permitAll()).build();
+    }
+}
+`,
+			wantPresent: true, wantAnalyzed: false,
+		},
+		{
+			// Reactive: detected so it cannot be mistaken for absence,
+			// deliberately not parsed (ADR 0020 §3).
+			name: "unknown-reactive",
+			config: `package app;
+import org.springframework.context.annotation.Bean;
+import org.springframework.security.config.web.server.ServerHttpSecurity;
+import org.springframework.security.web.server.SecurityWebFilterChain;
+public class SecurityConfig {
+    @Bean
+    public SecurityWebFilterChain chain(ServerHttpSecurity http) {
+        return http.authorizeExchange(a -> a.anyExchange().authenticated()).build();
+    }
+}
+`,
+			wantPresent: true, wantAnalyzed: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeJavaProject(t, map[string]string{
+				"C.java":              controller,
+				"SecurityConfig.java": tc.config,
+			})
+			m, _, err := Extract(dir)
+			if err != nil {
+				t.Fatalf("Extract: %v", err)
+			}
+			if m.URLLayer.Present != tc.wantPresent || m.URLLayer.Analyzed != tc.wantAnalyzed {
+				t.Fatalf("URLLayer = {Present:%v Analyzed:%v}, want {Present:%v Analyzed:%v}",
+					m.URLLayer.Present, m.URLLayer.Analyzed, tc.wantPresent, tc.wantAnalyzed)
+			}
+			if m.URLLayer.Unknown() && m.URLLayer.Reason == "" {
+				t.Error("an unknown URL layer must carry a reason the user can act on")
+			}
+		})
+	}
+}
