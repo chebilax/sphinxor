@@ -23,7 +23,7 @@ func writeMarkdown(w io.Writer, matrix Matrix) error {
 	for _, row := range matrix.Rows {
 		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n",
 			row.Method,
-			row.Path,
+			renderPath(row),
 			row.Handler,
 			row.Controller,
 			joinOrDash(row.Guards),
@@ -86,4 +86,15 @@ func findingSummaries(findings []model.Finding) string {
 		parts[i] = fmt.Sprintf("%s%s", f.RuleID, marker)
 	}
 	return strings.Join(parts, "; ")
+}
+
+// renderPath marks a path that is only a fragment of the real route,
+// because the declared path could not be read (ADR 0020 Amendment 1 §5).
+// The leading ellipsis is explained by the run's project-level warning;
+// printing the fragment bare would present it as a route that exists.
+func renderPath(row Row) string {
+	if row.PathUnresolved {
+		return "\u2026" + row.Path
+	}
+	return row.Path
 }

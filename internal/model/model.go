@@ -136,13 +136,21 @@ type Controller struct {
 // Endpoint is one route: an HTTP method bound to a path, on a specific
 // controller handler method.
 type Endpoint struct {
-	ID           ID
-	HTTPMethod   HTTPMethod
-	Path         string // full path: controller base path + method path
-	HandlerName  string
-	ControllerID ID
-	File         string
-	Line         int
+	ID          ID
+	HTTPMethod  HTTPMethod
+	Path        string // full path: controller base path + method path
+	HandlerName string
+	// PathUnresolved marks a route whose declared path could not be read
+	// — a route constant, enum member, array or template literal in
+	// @Controller(...)/@RequestMapping(...) — per
+	// docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
+	// Amendment 1 §5. Path then holds only the part that could be
+	// resolved, which is a fragment of the real route and must never be
+	// presented as the whole of it.
+	PathUnresolved bool
+	ControllerID   ID
+	File           string
+	Line           int
 }
 
 // NewEndpointID derives an Endpoint's stable ID from its method and path,
@@ -153,6 +161,36 @@ type Endpoint struct {
 // runs — an accepted, documented limitation (ADR 0002), not an oversight.
 func NewEndpointID(method HTTPMethod, path string) ID {
 	return ID(string(method) + " " + path)
+}
+
+// NewUnresolvedPathEndpointID derives an Endpoint's ID from its
+// controller and handler instead of its path, for the case where the
+// declared path could not be read — per
+// docs/decisions/0020-unanalyzable-is-unknown-not-absent.md Amendment 1 §5.
+//
+// It is used only where NewEndpointID cannot form a real identity.
+// Endpoints with a readable path keep the path-derived ID, so existing
+// allowlist anchors and stored diff baselines are untouched.
+//
+// Deriving identity from structure is a deliberate, narrow departure
+// from ADR 0002's preference for structure-independent keys: where the
+// structure-independent key cannot be formed at all, the alternative is
+// not a better key but a collision, which silently merges or deletes
+// endpoints. Stability across runs — the diff's actual requirement
+// (ADR 0007) — holds as long as the class and method names do, which is
+// at least as stable as a path, since renaming a route is routine and
+// renaming a handler is not.
+//
+// If the path later becomes readable the ID changes, and `sphinxor diff`
+// reports the endpoint as one removed and one added. That is accepted:
+// it is rare, it is visible rather than silent, and it fails toward a
+// spurious gate that asks a human rather than toward waving something
+// through.
+//
+// The "?" prefix cannot collide with a path-derived ID, since a resolved
+// path is always normalized to a leading "/".
+func NewUnresolvedPathEndpointID(method HTTPMethod, controllerName, handlerName string) ID {
+	return ID(string(method) + " ?unresolved-path " + controllerName + "." + handlerName)
 }
 
 // GuardScope records where a GuardApplication's evidence was found in

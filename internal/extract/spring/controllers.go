@@ -68,10 +68,18 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			continue
 		}
 
+		// A @RequestMapping whose path is a constant reference reads as
+		// no path at all. Left that way it collapsed endpoint identity,
+		// and in Java the colliding endpoint was dropped outright rather
+		// than merged (ADR 0020 Amendment 1 §5). A controller with no
+		// @RequestMapping genuinely has no prefix and stays resolved.
 		basePath := ""
+		basePathResolved := true
 		if reqMapping, ok := findAnnotation(classAnns, "RequestMapping"); ok {
 			if p, ok := pathAttributeValue(reqMapping.Args, src); ok {
 				basePath = p
+			} else if reqMapping.Args != nil {
+				basePathResolved = false
 			}
 		}
 
@@ -103,9 +111,16 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 				continue
 			}
 
-			subPath, _ := pathAttributeValue(mapping.Args, src)
+			subPath, subPathRead := pathAttributeValue(mapping.Args, src)
+			subPathResolved := subPathRead || mapping.Args == nil
+			handlerName := handlerNameNode.Content(src)
 			path := joinPath(basePath, subPath)
+			pathUnresolved := !basePathResolved || !subPathResolved
+
 			endpointID := model.NewEndpointID(httpMethod, path)
+			if pathUnresolved {
+				endpointID = model.NewUnresolvedPathEndpointID(httpMethod, nameNode.Content(src), handlerName)
+			}
 
 			// The handler's own starting line. In Java, annotations are
 			// part of method_declaration's modifiers, so the node already
@@ -145,13 +160,14 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			if !b.seenEndpoints[endpointID] {
 				b.seenEndpoints[endpointID] = true
 				b.model.Endpoints = append(b.model.Endpoints, model.Endpoint{
-					ID:           endpointID,
-					HTTPMethod:   httpMethod,
-					Path:         path,
-					HandlerName:  handlerNameNode.Content(src),
-					ControllerID: controllerID,
-					File:         file,
-					Line:         int(member.StartPoint().Row) + 1,
+					ID:             endpointID,
+					HTTPMethod:     httpMethod,
+					Path:           path,
+					HandlerName:    handlerName,
+					PathUnresolved: pathUnresolved,
+					ControllerID:   controllerID,
+					File:           file,
+					Line:           int(member.StartPoint().Row) + 1,
 				})
 				// Class-level guards apply once per endpoint, not once per
 				// merged handler — attaching them again for a second

@@ -159,14 +159,21 @@ func memberExpressionName(n *sitter.Node, src []byte) (name string, ok bool) {
 // an object literal with a `path` property
 // (`@Controller({ path: 'users', version: '1' })`), the latter being
 // common alongside API versioning.
-func controllerBasePath(args *sitter.Node, src []byte) string {
+// controllerBasePath reads a @Controller(...) prefix. resolved is false
+// when an argument is present that no path could be read out of — a
+// route constant, enum member, array form or template literal. Those are
+// ordinary good practice, not anti-patterns, and reporting them as "no
+// prefix" collapsed endpoint identity (ADR 0020 Amendment 1 §5).
+//
+// A bare @Controller() genuinely has no prefix, and is resolved.
+func controllerBasePath(args *sitter.Node, src []byte) (path string, resolved bool) {
 	argNodes := argumentNodes(args)
 	if len(argNodes) == 0 {
-		return ""
+		return "", true
 	}
 	first := argNodes[0]
 	if v, ok := stringLiteralValue(first, src); ok {
-		return v
+		return v, true
 	}
 	if first.Type() == "object" {
 		for _, pair := range namedChildren(first) {
@@ -178,11 +185,11 @@ func controllerBasePath(args *sitter.Node, src []byte) string {
 				continue
 			}
 			if v, ok := stringLiteralValue(pair.ChildByFieldName("value"), src); ok {
-				return v
+				return v, true
 			}
 		}
 	}
-	return ""
+	return "", false
 }
 
 // joinPath combines a controller's base path with a route's own path into

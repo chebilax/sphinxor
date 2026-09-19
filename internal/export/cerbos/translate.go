@@ -72,6 +72,17 @@ const (
 	// project export `roles: [ADMIN, ANALYST]` for an endpoint the
 	// running application restricted to ADMIN.
 	ReasonURLLayerUnknown OmissionReason = "url-layer-unknown"
+	// ReasonPathUnresolved: this endpoint's declared route path could not
+	// be read — a route constant, enum member, array or template literal
+	// (docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
+	// Amendment 1 §5).
+	//
+	// The endpoint is still analyzed and still linted; what cannot be
+	// done is name it in a policy. A Cerbos rule's action is derived from
+	// the route, and deriving it from a fragment would produce a rule
+	// that reads as though it governs a route which does not exist, while
+	// the real one stays ungoverned.
+	ReasonPathUnresolved OmissionReason = "path-unresolved"
 	// ReasonNoCommonRole: a single endpoint has role-bearing evidence in
 	// more than one independent layer (e.g. a method annotation and a
 	// URL-pattern rule — docs/decisions/0012-securityfilterchain-effective-policy.md),
@@ -290,10 +301,24 @@ func Translate(m *model.Model) Result {
 	groups := make(map[groupKey][]endpointEntry)
 	var order []groupKey
 
+	var pathOmissions []Omission
 	for _, e := range m.Endpoints {
 		resource := ""
 		if c, ok := controllerByID[e.ControllerID]; ok {
 			resource = ResourceKind(c.Name)
+		}
+		// An endpoint whose route could not be read is omitted rather
+		// than exported under the fragment that was readable.
+		if e.PathUnresolved {
+			pathOmissions = append(pathOmissions, Omission{
+				Endpoint: e,
+				Resource: resource,
+				Reason:   ReasonPathUnresolved,
+				Detail: "this endpoint's declared route path could not be read (its @Controller/@RequestMapping " +
+					"argument is not a string literal), so \"" + e.Path + "\" is only the part of the route that " +
+					"resolved — the real route is longer, and no policy can be named after a fragment of it",
+			})
+			continue
 		}
 		key := groupKey{resource, strings.ToLower(string(e.HTTPMethod))}
 		if _, ok := groups[key]; !ok {
@@ -303,7 +328,7 @@ func Translate(m *model.Model) Result {
 	}
 
 	var rules []Rule
-	var omissions []Omission
+	omissions := pathOmissions
 	var unverified []UnverifiedRole
 
 	for _, key := range order {

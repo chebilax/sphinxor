@@ -60,7 +60,7 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 		}
 
 		controllerID := b.nextIDFor("controller")
-		basePath := controllerBasePath(controllerCall.Args, src)
+		basePath, basePathResolved := controllerBasePath(controllerCall.Args, src)
 		b.model.Controllers = append(b.model.Controllers, model.Controller{
 			ID:       controllerID,
 			Name:     nameNode.Content(src),
@@ -88,24 +88,38 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			}
 
 			subPath := ""
+			subPathResolved := true
 			if args := argumentNodes(httpCall.Args); len(args) > 0 {
 				if v, ok := stringLiteralValue(args[0], src); ok {
 					subPath = v
+				} else {
+					subPathResolved = false
 				}
 			}
 
+			handlerName := handlerNameNode.Content(src)
 			path := joinPath(basePath, subPath)
+			pathUnresolved := !basePathResolved || !subPathResolved
+
+			// An unreadable path cannot key an identity: two endpoints
+			// whose prefixes both went missing would otherwise collide on
+			// one ID and be merged, reporting one's guards against the
+			// other (ADR 0020 Amendment 1 §5).
 			endpointID := model.NewEndpointID(httpMethod, path)
+			if pathUnresolved {
+				endpointID = model.NewUnresolvedPathEndpointID(httpMethod, nameNode.Content(src), handlerName)
+			}
 			anchorLine := anchorLineOf(methodGroup)
 
 			b.model.Endpoints = append(b.model.Endpoints, model.Endpoint{
-				ID:           endpointID,
-				HTTPMethod:   httpMethod,
-				Path:         path,
-				HandlerName:  handlerNameNode.Content(src),
-				ControllerID: controllerID,
-				File:         file,
-				Line:         anchorLine,
+				ID:             endpointID,
+				HTTPMethod:     httpMethod,
+				Path:           path,
+				HandlerName:    handlerName,
+				PathUnresolved: pathUnresolved,
+				ControllerID:   controllerID,
+				File:           file,
+				Line:           anchorLine,
 			})
 			anchors = append(anchors, allowlist.Anchor{EndpointID: endpointID, File: file, Line: anchorLine})
 

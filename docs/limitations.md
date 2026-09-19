@@ -21,6 +21,7 @@ Confirmed common in real code, not a hypothetical edge case: a project can defin
 As of [ADR 0006](decisions/0006-composite-decorator-resolution.md), extraction follows **one level** of this indirection: a composite matching a specific, bounded shape (a single, unconditional return path calling `applyDecorators(...)`, plain identifier parameters, direct pass-through argument substitution) is resolved, and `POST /posts` above no longer produces a false positive. What's still invisible, deliberately, per that ADR's stated non-goals:
 
 - **Multi-level composite chains** — a composite calling another composite that calls `applyDecorators(...)`.
+- **Composites built by assembling an array imperatively**, rather than by a single flat `applyDecorators(...)` call. Confirmed on [`immich-app/immich`](https://github.com/immich-app/immich), which authorizes with `@Authenticated({ permission: Permission.AssetUpdate })`: the decorator pushes onto a `MethodDecorator[]` through a series of `if` branches, and enforcement happens in a global guard reading the metadata it sets. Extraction recognizes none of it, so a 302-endpoint production application reports 170 findings, every one a Low-confidence false positive in the safe direction, with no permission extracted. The [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) §4 global-guard warning does fire on it, so the run says endpoint-level results understate protection.
 - **Conditional or branching decorator construction** — a composite with more than one `return` path (e.g. `if (...) return SkipAuth(); return applyDecorators(...)`).
 - **Destructured parameters** — `function Auth({ roles }: { roles: RoleType[] })` rather than a plain `roles` parameter.
 - **Non-trivial dataflow** — a parameter transformed before being passed to the inner `Roles`/`UseGuards` call (e.g. `Roles(roles.map(...))`), or passed via spread (`Roles(...roles)`).
@@ -58,6 +59,18 @@ What changed with ADR 0020 §4 is that it is now made out loud. When method-secu
 **Consequence**: unchanged in the model and the findings; the roles are still reported. The difference is that a report which is confidently wrong in this specific way now carries the one sentence that lets a reader check.
 
 **What to do about it today**: confirm where method security is enabled for the application. If it's outside the analyzed source, nothing is wrong with the report; if it's nowhere, the finding is that the annotations are decorative.
+
+## A route path declared with a constant rather than a string literal
+
+`@Controller(RouteKey.Asset)`, `@Controller(BASE)`, `@Controller(['cats', 'kittens'])`, a template literal, and Spring's `@RequestMapping(Routes.ADMIN)` all declare a real path that extraction cannot read: it collects string literals, and does not resolve a constant to its declaration. Route constants and route enums are ordinary good practice, not an anti-pattern — immich uses `@Controller(RouteKey.X)` in 4 of its 47 controllers, and ToolJet in 4 of its own.
+
+Since [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) Amendment 1 §5 this is loud, and — more importantly — no longer dangerous. Before it, the unreadable prefix silently became the empty string, and since endpoint identity is derived from `(method, path)`, unrelated endpoints collided on one identity. NestJS merged them, reporting one endpoint's guards and roles against another: a wide-open `DELETE` was shown as `ADMIN`-protected with the `mutating-endpoint-without-access-control` finding suppressed. Spring dropped one of the pair outright, so the unguarded endpoint vanished from the report.
+
+Those endpoints now keep an identity synthesized from their controller and handler, so nothing merges or disappears; the path shown for them is marked with a leading `…`, the run warns and names the affected controllers, and `sphinxor export cerbos` omits them, since a policy cannot be named after a fragment of a route.
+
+**Consequence**: the affected endpoints are analyzed and linted normally, and their findings are real. What is not available is their full path — so they cannot be exported, and if such a path later becomes readable, `sphinxor diff` reports the endpoint once as removed and once as added, because its identity changed.
+
+**What to do about it today**: nothing is required — the analysis is sound. If you want these endpoints exportable, use a string literal in the decorator. Resolving constants to their declarations is a possible future improvement, recorded as the rejected-for-now alternative in that ADR.
 
 ## A `sphinxor-allow` marker separated from its endpoint by a block comment
 
