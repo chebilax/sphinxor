@@ -46,13 +46,25 @@ type declGroup struct {
 }
 
 // groupDecorators walks siblings in source order, attaching each run of
-// consecutive `decorator` nodes to the next non-decorator node.
+// consecutive `decorator` nodes to the next declaration.
+//
+// Comments are skipped rather than treated as that declaration. In
+// tree-sitter-typescript a `comment` is a *named* sibling, so it lands
+// between a decorator and what it decorates for shapes as ordinary as
+// `@Post('x') // note` or a TODO between two decorators. Attaching the
+// run to the comment didn't degrade the endpoint — it removed the
+// endpoint from the model, and on a `@Controller` line it removed every
+// route in the class, leaving no row for a lint rule to fire on
+// (docs/decisions/0020-unanalyzable-is-unknown-not-absent.md, Amendment 1 §6).
 func groupDecorators(siblings []*sitter.Node) []declGroup {
 	var groups []declGroup
 	var pending []*sitter.Node
 	for _, n := range siblings {
-		if n.Type() == "decorator" {
+		switch n.Type() {
+		case "decorator":
 			pending = append(pending, n)
+			continue
+		case "comment":
 			continue
 		}
 		groups = append(groups, declGroup{decorators: pending, decl: n})
