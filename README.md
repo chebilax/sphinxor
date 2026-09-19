@@ -4,7 +4,7 @@
 
 *The drift detector for your authorization model: design, audit and document what your code actually enforces.*
 
-<!-- GIF demo goes here -->
+![sphinxor lint auto-detecting a Spring project and printing its RBAC matrix, with one finding on an unguarded login endpoint](assets/sphinxor-demo.gif)
 
 ```console
 $ sphinxor lint ./pharmacy-backend
