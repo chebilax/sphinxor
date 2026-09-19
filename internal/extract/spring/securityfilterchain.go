@@ -55,11 +55,25 @@ var chainHTTPMethodNames = map[string]model.HTTPMethod{
 // source order.
 type filterChainRule struct {
 	method   *model.HTTPMethod // nil = not method-scoped, applies to every HTTP method
-	patterns []string          // nil = .anyRequest(), matches every path
+	patterns []string          // non-empty unless anyRequest or matcherUnreadable
 	kind     chainTerminalKind
 	roles    []string // populated only for chainRoles
 	file     string
 	line     int
+
+	// anyRequest marks an explicit .anyRequest() rule: it genuinely
+	// matches every path. Before docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
+	// this was encoded as `patterns == nil`, which a requestMatchers(...)
+	// call with no extractable pattern produced too — so a matcher that
+	// couldn't be read silently became one that matched everything.
+	anyRequest bool
+
+	// matcherUnreadable marks a requestMatchers(...) whose arguments
+	// yielded no pattern (a regex matcher, a custom RequestMatcher bean).
+	// ADR 0020 §1: unreadable is *unknown*, never universal and never
+	// absent — the rule may match any path, so it stops evaluation like
+	// any other opaque rule (ADR 0018) and contributes nothing.
+	matcherUnreadable bool
 }
 
 // findSecurityFilterChainRules locates the project's SecurityFilterChain
@@ -197,11 +211,15 @@ func chainRuleFromTerminal(terminal *sitter.Node, src []byte) (filterChainRule, 
 
 	var method *model.HTTPMethod
 	var patterns []string
+	var anyRequest, matcherUnreadable bool
 	switch matcherName.Content(src) {
 	case "anyRequest":
-		// patterns stays nil: matches every path.
+		anyRequest = true
 	case "requestMatchers":
 		method, patterns = requestMatchersArgs(object.ChildByFieldName("arguments"), src)
+		// No pattern could be read out of a matcher that is definitely
+		// present. ADR 0020 §1: record that as unknown, not as universal.
+		matcherUnreadable = len(patterns) == 0
 	default:
 		return filterChainRule{}, false
 	}
@@ -214,23 +232,45 @@ func chainRuleFromTerminal(terminal *sitter.Node, src []byte) (filterChainRule, 
 	// confirmed against real Pharmacy source (every rule reported the same
 	// line using terminal.StartPoint() before this fix).
 	line := int(name.StartPoint().Row) + 1
+
+	// An unreadable matcher makes the whole rule opaque regardless of how
+	// recognizable its terminal is: knowing it grants ADMIN is useless
+	// when we can't tell which paths it grants ADMIN *on*. Reading the
+	// terminal anyway and attaching those roles is exactly the defect ADR
+	// 0020 §1 corrects. chainUnrecognized already carries the right
+	// semantics from ADR 0018 — opaque, still governs evaluation order.
+	base := filterChainRule{
+		method:            method,
+		patterns:          patterns,
+		anyRequest:        anyRequest,
+		matcherUnreadable: matcherUnreadable,
+		line:              line,
+	}
+	if matcherUnreadable {
+		base.kind = chainUnrecognized
+		return base, true
+	}
+
 	switch tname := name.Content(src); {
 	case chainRoleFuncs[tname]:
 		roles := stringArgValues(terminal.ChildByFieldName("arguments"), src)
 		if len(roles) == 0 {
 			return filterChainRule{}, false
 		}
-		return filterChainRule{method: method, patterns: patterns, kind: chainRoles, roles: roles, line: line}, true
+		base.kind, base.roles = chainRoles, roles
+		return base, true
 	case tname == "authenticated" && argCount(terminal) == 0:
-		return filterChainRule{method: method, patterns: patterns, kind: chainAuthenticated, line: line}, true
+		base.kind = chainAuthenticated
+		return base, true
 	case tname == "permitAll" && argCount(terminal) == 0, tname == "denyAll" && argCount(terminal) == 0:
-		return filterChainRule{method: method, patterns: patterns, kind: chainNoRequirement, line: line}, true
+		base.kind = chainNoRequirement
+		return base, true
 	default:
-		// Recognized matcher (requestMatchers/anyRequest), unrecognized
+		// Readable matcher (requestMatchers/anyRequest), unrecognized
 		// terminal (.access(...), or anything else) — still a real rule
 		// that governs evaluation order, per ADR 0018. kind stays its
 		// zero value, chainUnrecognized.
-		return filterChainRule{method: method, patterns: patterns, line: line}, true
+		return base, true
 	}
 }
 
@@ -258,9 +298,51 @@ func requestMatchersArgs(args *sitter.Node, src []byte) (*model.HTTPMethod, []st
 	for _, n := range nodes[start:] {
 		if v, ok := stringLiteralValue(n, src); ok {
 			patterns = append(patterns, v)
+			continue
+		}
+		// A matcher-wrapper call carrying the pattern one level deeper.
+		if m, ps, ok := matcherWrapperArgs(n, src); ok {
+			if m != nil && method == nil {
+				method = m
+			}
+			patterns = append(patterns, ps...)
 		}
 	}
 	return method, patterns
+}
+
+// antPatternWrappers are the explicit matcher constructors whose first
+// string argument is an ordinary Ant pattern. Recognizing them is the
+// other half of ADR 0020 §1: `requestMatchers(antMatcher("/admin/**"))`
+// is idiomatic Spring Security 6 — the form its own docs recommend when
+// mixing matcher types — so without this, the corrected "unreadable is
+// unknown" rule would turn a very common configuration into a
+// project-wide unknown for no reason. The pattern is right there and
+// perfectly readable; it just sits one call deeper.
+//
+// Deliberately excludes regexMatcher and any custom RequestMatcher bean:
+// those are genuinely unreadable and must stay unknown.
+var antPatternWrappers = map[string]bool{
+	"antMatcher": true,
+}
+
+// matcherWrapperArgs reads a recognized matcher-wrapper invocation,
+// e.g. antMatcher("/admin/**") or antMatcher(HttpMethod.GET, "/admin/**"),
+// whether called bare (static import) or qualified
+// (AntPathRequestMatcher.antMatcher(...)).
+func matcherWrapperArgs(n *sitter.Node, src []byte) (*model.HTTPMethod, []string, bool) {
+	if n.Type() != "method_invocation" {
+		return nil, nil, false
+	}
+	name := n.ChildByFieldName("name")
+	if name == nil || !antPatternWrappers[name.Content(src)] {
+		return nil, nil, false
+	}
+	method, patterns := requestMatchersArgs(n.ChildByFieldName("arguments"), src)
+	if len(patterns) == 0 {
+		return nil, nil, false
+	}
+	return method, patterns, true
 }
 
 func httpMethodOf(n *sitter.Node, src []byte) (model.HTTPMethod, bool) {
@@ -306,7 +388,15 @@ func matchesRule(rule filterChainRule, e model.Endpoint) bool {
 	if rule.method != nil && *rule.method != e.HTTPMethod {
 		return false
 	}
-	if rule.patterns == nil {
+	if rule.anyRequest {
+		return true
+	}
+	// An unreadable matcher might match any path, so it is treated as
+	// matching: evaluation stops here and this endpoint's URL layer is
+	// unresolved (ADR 0020 §1). Treating it as *not* matching would let
+	// evaluation continue to a later, possibly more permissive rule —
+	// re-entering ADR 0012 §1's original error by a different door.
+	if rule.matcherUnreadable {
 		return true
 	}
 	for _, p := range rule.patterns {
