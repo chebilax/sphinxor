@@ -2,7 +2,11 @@
 
 ## Status
 
-Proposed.
+Accepted (§1–§4, implemented).
+
+**Amendment 1 (§5–§6): Accepted.** See *Amendment 1* below. The accepted decision
+is unchanged; the amendment extends its reach to two mechanisms the original text
+did not examine.
 
 ## Context
 
@@ -228,3 +232,248 @@ output means, which is the whole point.
 - A dedicated NestJS blind-spot hunt across several real repositories remains
   outstanding. The audit behind this ADR probed Spring considerably harder, and
   given the hit rate there, parity should not be assumed.
+
+---
+
+# Amendment 1 — an unreadable **path**, and an unanalyzable **decorator target**
+
+## Status
+
+Accepted.
+
+## Context
+
+The NestJS hunt this ADR's Consequences left outstanding has been carried out:
+six real repositories, including two production applications (immich, 302
+endpoints; ToolJet, 397), plus every sample in `nestjs/nest`. It found two more
+silent failures.
+
+They are not new bugs in the sense of being unrelated to what is above. They are
+the same conceptual error — *unanalyzable recorded as absent* — reached through a
+fourth and fifth mechanism. The accepted text covers a rule's **shape** (ADR 0018),
+a matcher's **readability** (§1), and a layer's **availability** (§2/§3). It does
+not cover a route's **path**, or the **target** a decorator attaches to. Recording
+these here rather than in a new ADR is deliberate: the principle's reach is the
+finding, and a fresh number would present the fourth instance of one error as a
+separate bug for the fourth time.
+
+### E. An unreadable route path becomes the empty string, and endpoint identity collapses
+
+`model.NewEndpointID(method, path)` derives an endpoint's identity **from its
+path**. Extraction reads only string-literal arguments out of `@Controller(...)`,
+so any other form silently yields an empty prefix:
+
+```ts
+@Controller(RouteKey.Asset)      // enum member   -> ""
+@Controller(BASE)                // const ref     -> ""
+@Controller(['cats','kittens'])  // array form    -> ""
+@Controller(`${base}/v2`)        // template lit  -> ""
+@Get(P)                          // method level  -> segment dropped
+```
+
+Spring has the identical defect: `@RequestMapping(Routes.ADMIN)` resolves to `""`.
+
+Two endpoints whose prefixes both vanish then collide on one ID, and the two
+frameworks fail in opposite directions — both wrong, both silent:
+
+**NestJS merges them.** Reduced from the immich shape:
+
+```
+@Controller(RouteKey.Admin)  @Roles('ADMIN') @UseGuards(...) DELETE /wipe
+@Controller(RouteKey.Public)                                 DELETE /wipe   <- no guard at all
+
+| DELETE | /wipe | AdminController  | AuthGuard, RolesGuard | ADMIN |  -  |
+| DELETE | /wipe | PublicController | AuthGuard, RolesGuard | ADMIN |  -  |
+0 finding(s)
+```
+
+The wide-open `DELETE /public/wipe` is reported as ADMIN-protected, and
+`mutating-endpoint-without-access-control` — the rule written to catch exactly an
+unguarded `DELETE` — does not fire. `sphinxor export cerbos` then writes a
+`public.yaml` granting `delete` to `ADMIN`.
+
+That is, line for line, §1's failure: a false security assurance on a destructive
+endpoint with the safety net suppressed at the same moment. §1 reached it by
+widening a matcher; this reaches it by collapsing an identity. The recurrence of
+the *same* output from a different cause is the argument for treating the
+principle, not the instance, as the thing being decided.
+
+**Spring drops one.** The same construction in Java reports **one** endpoint where
+there are two, and the one that disappears is the unguarded one.
+
+The trigger is not an anti-pattern. Route constants and route enums are ordinary
+good practice; immich uses `@Controller(RouteKey.X)` in 4 of its 47 controllers.
+Its report contains 13 colliding `(method, path)` pairs covering 26 endpoints; two
+of those collisions are traced to this cause specifically — `GET /assets/:id`
+reported as `GET /:id` and colliding with `UserController`, and `POST /assets/jobs`
+colliding with `JobController`. The remaining pairs were not attributed and may
+have other causes. immich shows no bleed today only because none of its guards
+are recognized at all, so the precondition is proven in production code while the
+damage there is latent.
+
+### F. A comment makes a decorator's target unanalyzable, and the endpoint vanishes
+
+`groupDecorators` (`internal/extract/nestjs/syntax.go`) walks siblings and attaches
+each run of `decorator` nodes to "the next non-decorator node." In
+tree-sitter-typescript a `comment` **is a named sibling**, so it occupies that slot.
+Confirmed against the AST:
+
+```
+export_statement
+  decorator
+  comment            <- the decorators attach here
+  class_declaration
+    class_body
+      decorator
+      comment        <- and here
+      method_definition
+```
+
+Three consequences, one cause:
+
+| shape | result |
+|---|---|
+| `@Post('x') // note` | that endpoint vanishes from the matrix |
+| `@Controller('a') // note` | the **entire controller** vanishes |
+| a comment between `@UseGuards(G)` and `@Post('x')` | the guards are dropped; the endpoint is reported unguarded |
+
+The first two are silent false negatives of the worst kind: there is no endpoint
+left for a lint rule to fire on, so an unguarded `POST`/`PUT`/`DELETE` produces
+neither a row nor a finding. Hit on `CatsMiaow/nestjs-project-structure` — 14
+affected decorators across 4 files, `CrudController` (unguarded `POST`, `PUT`,
+`DELETE`) absent from the report entirely, and `SampleController`'s only
+role-bearing route, `@Roles('admin') @Get('admin')`, absent with it.
+
+This belongs in the same family: a comment renders the decorator's target
+unanalyzable, and the endpoint is recorded as *absent* rather than as anything at
+all. It differs from E only in that here the correct answer is not "unknown" but
+"analyzable after all" — the information was never missing, only mis-attached.
+
+## Decision
+
+### §5 An endpoint whose path cannot be read keeps its identity and is marked unknown
+
+The endpoint is **still extracted and still analyzed**. Its identity falls back to
+being synthesized from its controller and handler, and it carries an explicit mark
+that its path was not readable.
+
+**Identity.** When the path is readable, `NewEndpointID(method, path)` is unchanged
+— existing IDs, existing allowlist anchors, and existing diff history all keep
+working exactly as they do today. The synthesized key is used *only* where the
+current one cannot be formed, which bounds the change to the endpoints that are
+broken now.
+
+**Stability across runs**, which is the diff's actual requirement (ADR 0007): the
+synthesized key is stable for as long as the controller class name and handler
+method name are stable. That is at least as stable as a path — renaming a route is
+routine, renaming a handler is not — and it is the same property ADR 0007 already
+relies on for `GuardApplication` and `RoleReference`, neither of which has a
+path-shaped identity either. This is a deliberate, narrow departure from ADR 0002's
+preference for structure-*independent* keys: where the structure-independent key
+cannot be formed at all, a structure-dependent one that exists beats an identity
+collision that silently merges or deletes endpoints.
+
+**Re-identification when a path later becomes readable.** If someone replaces
+`@Controller(RouteKey.Asset)` with `@Controller('assets')`, or extraction later
+learns to resolve the constant, the endpoint's ID changes and `sphinxor diff` will
+report it as one endpoint removed and one added. **This is accepted.** It is rare,
+it is visible rather than silent, and the failure mode is a spurious `ReasonNew`
+gate — which fails toward asking a human, not toward waving something through. The
+alternative, keeping a path-derived identity so the ID stays stable, is precisely
+the collision being fixed.
+
+**Marking.** The endpoint records that its path is unresolved, so consumers can say
+so rather than presenting a partial path as a real route:
+
+- `sphinxor lint`'s matrix shows the path it could resolve, marked as incomplete,
+  and the run carries a project-level warning naming the affected controllers.
+- `sphinxor export cerbos` must not emit a rule whose resource or action is derived
+  from a path it could not read: those endpoints are omitted and flagged, matching
+  §2's treatment and ADR 0009 §3.
+
+Lint rules continue to run against these endpoints. Restoring that is half the
+point of choosing this option: it is what makes
+`mutating-endpoint-without-access-control` fire again on the wide-open `DELETE`.
+
+### §6 A comment never absorbs a decorator
+
+`groupDecorators` skips `comment` nodes when looking for the declaration a run of
+decorators belongs to. A comment is not a declaration; treating it as one is a
+plain defect with no design tension in it, and the fix carries no interpretive
+choice worth deciding in an ADR beyond recording that it happened and why the class
+of bug is the one above.
+
+All three shapes in the table must be covered, not only the one that was found
+first.
+
+## Alternatives considered
+
+- **Refuse to emit an endpoint whose path can't be read, and warn** — rejected,
+  and this is the substantive choice here. It trades a silent false negative for a
+  loud coverage hole on a legitimate idiom: immich would lose 4 of 47 controllers
+  from analysis entirely. Loud beats silent, so this would be an improvement — but
+  it only *signals* the problem, where §5 both removes the cause and puts the
+  endpoints back under the lint rules that protect them. Signalling is the right
+  answer when analysis is genuinely impossible (§2, §3); it is the wrong answer
+  when the endpoint is perfectly analyzable and only its name is uncertain.
+- **Resolve the constants — follow `RouteKey.Asset` to its enum declaration** —
+  rejected *for this ADR*, though it is the eventual right answer for the common
+  cases, and extraction already does exactly this for role enums. It is coverage
+  work with its own failure modes (imports, re-exports, computed members) and its
+  own fixtures. §5 is what makes the tool safe while the path is unread; resolution
+  makes "unread" rarer. They are independent, and bundling them would let the
+  safety fix wait on the coverage feature.
+- **Key endpoint identity on controller + handler everywhere**, not just as a
+  fallback — rejected. It would silently invalidate every existing allowlist anchor
+  and every stored baseline, which is a large, breaking change to buy consistency
+  in a case that is currently rare.
+- **Treat a comment-interrupted decorator run as unknown** (§6) — rejected as
+  nonsense dressed as principle. The decorators are right there and fully readable;
+  the only thing wrong is which node they were attached to.
+- **Fold the GraphQL finding in** — rejected; see below.
+
+## Out of scope, deliberately
+
+The hunt's third silent finding is that a GraphQL-first project reports a clean
+bill of health: `nestjs-prisma-starter`'s entire API is 4 `@Resolver` classes and
+15 `@Query`/`@Mutation` operations behind `@UseGuards(GqlAuthGuard)`, and Sphinxor
+reports the 2 hello-world REST endpoints with 0 findings **and no warning** — ADR
+0019 §2's "recognized no endpoints" notice cannot fire, because 2 is not 0.
+
+That is unacceptable and it is not a bug: it is a scope question. GraphQL stays out
+of scope, and the tool must say so when it detects resolvers. Detection plus a
+project-level warning, not a GraphQL parser. It gets its own small ADR once §5 and
+§6 have landed, so that a scope decision is not settled inside a defect fix.
+
+## Consequences
+
+- `model.Endpoint` gains a mark for an unresolved path, and `internal/model` gains
+  the synthesized-identity constructor. `internal/export/cerbos` gains the matching
+  omission reason. All additive, in the shape §2 already established.
+- **Both fixes increase reported endpoint counts**, unlike §1–§4, which reduced
+  confident coverage. §6 restores endpoints that were being dropped; §5 stops
+  endpoints from overwriting each other. Any project whose count rises was being
+  under-reported, silently, before.
+- Regression tests, at the bar set above and in ADR 0014 — each confirmed to fail
+  against current behavior before being kept:
+  - §5, NestJS: the merge case. `DELETE /public/wipe` must come back as its own
+    endpoint with no roles, and `mutating-endpoint-without-access-control` must
+    fire on it. Today it reports `ADMIN` with zero findings.
+  - §5, Spring: the drop case. Two colliding endpoints must both survive; today
+    one is silently replaced.
+  - §5: the export must omit an endpoint whose path is unresolved rather than
+    naming a resource after a path it could not read.
+  - §6: all three shapes — trailing comment on a route decorator, trailing comment
+    on `@Controller`, and a comment between `@UseGuards` and the route decorator.
+    The vanishing-controller case specifically.
+- `docs/limitations.md` gains an entry for unresolved route paths (loud after §5),
+  and a new recognized shape under the existing composite-decorator entry:
+  immich's `@Authenticated({ permission })`, built by pushing onto a
+  `MethodDecorator[]` array rather than the flat `applyDecorators()` call ADR 0006
+  handles. That one stays loud and documented, not fixed here — 170 Low-confidence
+  false positives on 302 endpoints, in the safe direction, with §4's global-guard
+  warning already firing on it.
+- The NestJS hunt this ADR called for is now done and no longer outstanding. Its
+  result argues against assuming the frameworks are equally well covered: the
+  official `nestjs/nest` samples surfaced nothing, and all three silent findings
+  came from real third-party and production code.
