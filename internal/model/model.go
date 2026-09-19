@@ -49,6 +49,23 @@ type Model struct {
 	// never as "confirmed disabled."
 	MethodSecurity MethodSecurityStatus
 	URLLayer       URLLayerStatus
+	GlobalGuards   GlobalGuardStatus
+}
+
+// GlobalGuardStatus records a framework-level guard registered away from
+// any endpoint — NestJS's APP_GUARD provider or app.useGlobalGuards(),
+// per docs/decisions/0020-unanalyzable-is-unknown-not-absent.md §4.
+//
+// This does not change any finding. It exists because the pattern
+// NestJS's own documentation recommends — a global guard protecting
+// everything, with @Public() opting out — inverts the default this
+// extractor assumes, so endpoint-level results systematically understate
+// protection. The direction is safe; the distortion being unsignalled is
+// not.
+type GlobalGuardStatus struct {
+	Registered bool
+	// Mechanism names how it was registered, for the warning text.
+	Mechanism string
 }
 
 // URLLayerStatus records what extraction was able to learn about a

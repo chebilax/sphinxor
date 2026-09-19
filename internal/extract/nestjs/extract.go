@@ -84,6 +84,8 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	// endpoint's guards can come from both class- and method-level
 	// decorators, and the "zero resolved roles anywhere on this endpoint"
 	// check needs all of them known first.
+	b.model.GlobalGuards = detectGlobalGuards(files)
+
 	b.model.AuthenticationRequirements = computeAuthenticationRequirements(&b.model, b.nextID("authreq"))
 
 	return &b.model, outcome, nil
@@ -182,3 +184,55 @@ func isExtractableSourceFile(path string) bool {
 // (docs/decisions/0019-cli-framework-selection.md §2) use this extractor's
 // own rule rather than a second, drifting copy of it.
 func IsSourceFile(path string) bool { return isExtractableSourceFile(path) }
+
+// The two ways a NestJS application registers a guard that applies to
+// every route without any decorator appearing at the endpoint: an
+// APP_GUARD-token provider in a module, and app.useGlobalGuards() at
+// bootstrap.
+//
+// Detecting them is ADR 0020 §4. On these patterns — the first is what
+// NestJS's own docs recommend, with @Public() opting out — every
+// endpoint is protected by default, so endpoint-level results understate
+// protection across the board. Extraction still can't see what the guard
+// requires, and this does not try to: it only establishes that the
+// picture is inverted, which is the difference between a safe-direction
+// gap and a silent one.
+const (
+	appGuardToken       = "APP_GUARD"
+	useGlobalGuardsCall = "useGlobalGuards"
+)
+
+// detectGlobalGuards reports whether either global-registration form
+// appears anywhere in the parsed project.
+func detectGlobalGuards(files []parsedFile) model.GlobalGuardStatus {
+	for _, f := range files {
+		var mechanism string
+		var walk func(n *sitter.Node)
+		walk = func(n *sitter.Node) {
+			if mechanism != "" {
+				return
+			}
+			switch n.Type() {
+			case "identifier":
+				if n.Content(f.src) == appGuardToken {
+					mechanism = "an APP_GUARD provider"
+					return
+				}
+			case "member_expression":
+				if prop := n.ChildByFieldName("property"); prop != nil &&
+					prop.Content(f.src) == useGlobalGuardsCall {
+					mechanism = "an app.useGlobalGuards() call"
+					return
+				}
+			}
+			for _, c := range namedChildren(n) {
+				walk(c)
+			}
+		}
+		walk(f.tree.RootNode())
+		if mechanism != "" {
+			return model.GlobalGuardStatus{Registered: true, Mechanism: mechanism}
+		}
+	}
+	return model.GlobalGuardStatus{}
+}
