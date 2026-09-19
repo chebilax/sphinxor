@@ -2,13 +2,15 @@
 
 `vision.md` commits Sphinxor to heuristic, confidence-graded analysis, not formal verification — and to owning that openly rather than promising completeness general-purpose SAST tools already failed to deliver. This file is where that commitment gets kept concretely: real gaps in what the current static analysis can see, found empirically against real code, not hypothesized in advance.
 
-This is not the roadmap. `roadmap-long-term.md` is about what's planned; this is about what v0.1 honestly cannot see today, whether or not fixing it is ever planned. An entry here can outlive several roadmap cycles without becoming wrong.
+This is not the roadmap. `roadmap-long-term.md` is about what's planned; this is about what the current release honestly cannot see, whether or not fixing it is ever planned. An entry here can outlive several roadmap cycles without becoming wrong.
 
 ## Global guards (`APP_GUARD` providers, `app.useGlobalGuards()`)
 
-Sphinxor does not parse NestJS module provider wiring. A guard registered globally — via an `APP_GUARD`-token provider in a module, or via `app.useGlobalGuards()` in `main.ts` — protects every endpoint in the application without any decorator appearing at the endpoint or its controller. This extractor only sees decorators, so it cannot see this form of protection at all.
+Sphinxor does not parse NestJS module provider wiring. A guard registered globally — via an `APP_GUARD`-token provider in a module, or via `app.useGlobalGuards()` in `main.ts` — protects every endpoint in the application without any decorator appearing at the endpoint or its controller. This extractor only sees decorators, so it cannot see *what* that guard requires.
 
-**Consequence**: an endpoint protected exclusively by a global guard will be flagged by `mutating-endpoint-without-access-control`, at Low confidence — the rule's Low grade exists specifically because of this gap (see `internal/lint/mutating_endpoint.go`).
+Since [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) §4 it does see *that* one is registered, and says so. Both forms are detected, and a run on such a project opens with a warning that endpoint-level results understate protection across the board. Verified against `nestjs/nest`'s own `19-auth-jwt` sample, where the recommended pattern — a global guard with `@Public()` opting out — inverts the default this extractor assumes and made every endpoint report as unguarded.
+
+**Consequence**: an endpoint protected exclusively by a global guard is still flagged by `mutating-endpoint-without-access-control`, at Low confidence — the rule's Low grade exists specifically because of this gap (see `internal/lint/mutating_endpoint.go`) — but the report no longer presents that flag without saying the whole project's results lean that way. The error direction was always the safe one; it being unsignalled was not.
 
 **What to do about it today**: mark the affected endpoint(s) with a `// sphinxor-allow: <reason>` comment (`docs/decisions/0003-allowlist-format.md`), same as any other endpoint the tool gets wrong for a reason a human can verify.
 
@@ -36,13 +38,26 @@ Not "`SecurityFilterChain` is unsupported" — as of [ADR 0012](decisions/0012-s
 What's still invisible, per that ADR's stated scope and [ADR 0018](decisions/0018-unrecognized-rule-stops-evaluation.md)'s correction to it:
 
 - **A custom `AuthorizationManager`** (`.access(...)`) — executing arbitrary Java to know the real answer is categorically out of scope. Confirmed common in real code, not hypothetical: `categolj/blog-api`'s entire tenant-scoped rule set uses this, alongside a handful of ordinary `.hasAuthority(...)` rules in the *same* chain — extraction recognizes the `.hasAuthority(...)` ones individually and correctly stops evaluating at the first `.access(...)` rule that matches a given endpoint (per ADR 0018), rather than skipping past it to a later, more permissive rule.
-- **More than one `SecurityFilterChain` bean in the same project** (chain selection by `@Order`/`securityMatcher` scoping) — extraction requires finding exactly one `@Bean`-annotated method returning `SecurityFilterChain` project-wide; if it finds zero or more than one, the URL layer contributes nothing at all for that project, the same as if `SecurityFilterChain` support didn't exist, rather than guessing which chain (or ordering) actually applies to a given request.
-- **Non-Ant-pattern matchers**: regex or character-class syntax, a custom `RequestMatcher` bean, `mvc.matcher(...)`, `dispatcherTypeMatchers`. Only literal segments, `*`, `**`, and `{var}`-as-wildcard are matched.
+- **More than one `SecurityFilterChain` bean in the same project** (chain selection by `@Order`/`securityMatcher` scoping) — extraction requires finding exactly one `@Bean`-annotated method returning `SecurityFilterChain` project-wide, rather than guessing which chain (or ordering) actually applies to a given request. Per ADR 0020 §2 this is now *announced*, not silently skipped: the project's URL layer is recorded as present-but-unknown, `sphinxor lint` warns that the roles it shows may be broader than what the application enforces, and `sphinxor export cerbos` omits every endpoint rather than exporting a method-layer-only policy. Previously the layer just vanished, and the audit's two-chain reproduction exported `roles: [ADMIN, ANALYST]` for an endpoint the running application restricted to `ADMIN` — a grant the application itself denies.
+- **Reactive `SecurityWebFilterChain` / `ServerHttpSecurity`** (Spring WebFlux) — not parsed. Its rules use a different builder API (`authorizeExchange`, `pathMatchers`) that extraction does not read at all. Like the multi-chain case, and for the same reason, it is detected so it cannot be mistaken for "this project has no URL layer", and produces the same warning and the same export omission.
+- **Non-Ant-pattern matchers**: regex or character-class syntax, a custom `RequestMatcher` bean, `mvc.matcher(...)`, `dispatcherTypeMatchers`. Only literal segments, `*`, `**`, and `{var}`-as-wildcard are matched. A matcher whose pattern cannot be read makes that *rule* unknown (ADR 0020 §1) — it stops evaluation for endpoints it might cover and grants its roles to none of them. The wrapper forms that carry an ordinary readable pattern one call deeper, `requestMatchers(antMatcher("/admin/**"))`, are read normally.
 - **`@PostAuthorize`/`@PreFilter`/`@PostFilter`**, composed/meta-annotations, `RoleHierarchy` resolution, and Kotlin source remain out of scope, per ADR 0011.
 
-**Consequence**: an endpoint whose real access control depends on any of the above is reported using whatever the method layer alone establishes (or as unguarded, if the method layer has nothing either) — under-reporting relative to a rule Sphinxor can't read, never over-reporting a grant that isn't real, consistent with the intersection's own soundness-not-completeness property.
+**Consequence**: an endpoint whose real access control depends on any of the above is reported using whatever the method layer alone establishes (or as unguarded, if the method layer has nothing either) — under-reporting relative to a rule Sphinxor can't read, never over-reporting a grant that isn't real, consistent with the intersection's own soundness-not-completeness property. Where the gap is project-wide rather than rule-local — the multi-chain and reactive cases — the run says so explicitly instead of leaving the reader to infer it from this file.
 
 **What to do about it today**: `sphinxor-allow` on endpoints known to be protected by one of the above, same as any other endpoint the tool cannot see into.
+
+## Spring: method-security annotations that may never be switched on
+
+`@PreAuthorize`, `@Secured` and `@RolesAllowed` do nothing at runtime unless `@EnableMethodSecurity` (or the older `@EnableGlobalMethodSecurity`) is present. An application can carry a full set of annotations and enforce none of them.
+
+Sphinxor deliberately does not downgrade those annotations when it can't find the enabling one, per [ADR 0015](decisions/0015-inert-method-security-guard.md): absence is not evidence, since the configuration can live in a parent module, an imported starter, or Kotlin source this extractor doesn't parse. Guessing "disabled" would invent findings; guessing "enabled" is what it does, and that is the safer of the two guesses to make out loud.
+
+What changed with ADR 0020 §4 is that it is now made out loud. When method-security annotations are found and no enabling annotation is located anywhere in the analyzed source, the run warns that those annotations may be inert — in which case every role shown for the endpoints they appear to protect is imaginary, and the endpoints are not protected at all.
+
+**Consequence**: unchanged in the model and the findings; the roles are still reported. The difference is that a report which is confidently wrong in this specific way now carries the one sentence that lets a reader check.
+
+**What to do about it today**: confirm where method security is enabled for the application. If it's outside the analyzed source, nothing is wrong with the report; if it's nowhere, the finding is that the annotations are decorative.
 
 ## A `sphinxor-allow` marker separated from its endpoint by a block comment
 
