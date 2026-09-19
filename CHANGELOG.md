@@ -26,7 +26,10 @@ and its Amendment 1.
   at once. On `CatsMiaow/nestjs-project-structure` this hid an entire
   controller whose `POST`, `PUT` and `DELETE` are unguarded, reported as zero
   findings because there was nothing left to report on; that project goes from
-  9 endpoints and 0 findings to 23 and 3.
+  9 endpoints and 0 findings to 23 and 3. A comment was the whole
+  difference between a false "all clear" and three real findings on a fully
+  unguarded controller, out of a two-line defect — the clearest example in
+  this project so far that the dangerous bugs are not the complicated ones.
 - **An endpoint whose route path cannot be read no longer collides with
   another endpoint's identity.** Endpoint identity is derived from
   `(method, path)`, and extraction reads only string literals — so
