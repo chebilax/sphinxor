@@ -17,6 +17,43 @@ construct Sphinxor could not analyze was recorded as *absent* rather than
 earned. See [ADR 0020](docs/decisions/0020-unanalyzable-is-unknown-not-absent.md)
 and its Amendment 1.
 
+- **A route's declared API version is now part of its identity.** NestJS's
+  `@Controller({ path, version })` and `@Version()`, and Spring's `version`
+  attribute on a mapping annotation, are route discriminators: two handlers
+  sharing a path and differing only in version are two endpoints the running
+  application routes separately. Extraction read the `path` key and stepped
+  over `version`, so they collapsed onto one identity — NestJS merging them,
+  so each was reported carrying the other's guards, and Spring dropping one
+  outright. Found by measuring `docs/limitations.md`'s duplicate-route gap
+  across 17 real repositories; hand-verified on cal.com, where one
+  `GET /v2/event-types` requires authentication (`ApiAuthGuard`) and the other
+  makes it optional (`OptionalApiAuthGuard`), and the merge misreported both.
+  A version that cannot be read — a constant reference, or an array of them,
+  which is the majority shape in real code — is treated as *unknown* rather
+  than assumed equal to another unknown. An endpoint declaring no version
+  keeps exactly the identity it had before, so existing allowlist anchors and
+  diff baselines are untouched. See ADR 0020 Amendment 2 §7.
+
+- **One route declared by two controllers no longer merges or disappears.** Endpoint
+  identity was `(method, path)`, so two controllers declaring the same absolute route
+  shared one: NestJS merged them, and an unguarded endpoint was reported carrying the
+  other's guards with `mutating-endpoint-without-access-control` suppressed; Spring
+  dropped one of the pair outright. Both endpoints are now kept, each with its own
+  guards, and `sphinxor export cerbos` omits them, since a policy written for one
+  might govern the other's traffic. Verified on `YunaiV/ruoyi-vue-pro`, where a
+  runtime path prefix keyed on the Java package separates an admin API from an app
+  API: `PUT /member/user/update` exists twice, one side carrying `@PreAuthorize` and
+  the other no access control at all, and the unguarded side was absent from the
+  report entirely. It is now reported and flagged.
+
+  The run warns about such a collision only when the two sides' guards actually
+  differ. Warning on every collision would have fired 324 times across the 17-repo
+  survey behind this work, almost entirely on cases it proved harmless — a monorepo's
+  per-service health check, a worker deliberately re-declaring a route. Measured
+  against the implementation, the criterion fires 47 times in `ruoyi-vue-pro`, 13 in
+  `eugenp/tutorials`, and not at all in immich, `shenyu`, cal.com, novu or
+  `amplication`. See ADR 0020 Amendment 2 §8.
+
 - **A project exposing a GraphQL API is now told that it was not analyzed.**
   GraphQL stays out of scope
   ([ADR 0021](docs/decisions/0021-graphql-out-of-scope-but-detected.md)), but a

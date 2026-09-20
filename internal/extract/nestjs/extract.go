@@ -15,6 +15,7 @@ import (
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
 
 	"github.com/chebilax/sphinxor/internal/allowlist"
+	"github.com/chebilax/sphinxor/internal/extract/collide"
 	"github.com/chebilax/sphinxor/internal/model"
 )
 
@@ -67,10 +68,29 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	// allowlist marker matching — matching is file-scoped (a marker only
 	// ever exempts an endpoint in the same file), so it happens per file
 	// alongside extraction rather than as a separate project-wide pass.
+	for _, f := range files {
+		extractControllers(f.tree.RootNode(), f.src, f.relPath, b, roleByName, composites)
+	}
+
+	// Two controllers declaring one route are two endpoints until proven
+	// otherwise (ADR 0020 Amendment 2 §8). This runs after every file has
+	// been walked — a collision is not visible from one file — and before
+	// allowlist matching below, so markers anchor to final IDs.
+	collide.Resolve(collide.Input{
+		Model:       &b.model,
+		GuardOwner:  b.guardOwner,
+		Anchors:     b.anchors,
+		AnchorOwner: b.anchorOwner,
+	})
+
 	outcome := allowlist.Outcome{AllowlistedEndpoints: make(map[model.ID]bool)}
 	for _, f := range files {
-		fileAnchors := extractControllers(f.tree.RootNode(), f.src, f.relPath, b, roleByName, composites)
-
+		var fileAnchors []allowlist.Anchor
+		for _, a := range b.anchors {
+			if a.File == f.relPath {
+				fileAnchors = append(fileAnchors, a)
+			}
+		}
 		allowlisted, stale := allowlist.MatchFile(f.src, f.relPath, fileAnchors, b.nextID("finding"))
 		for _, id := range allowlisted {
 			outcome.AllowlistedEndpoints[id] = true
@@ -97,6 +117,15 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 type builder struct {
 	model    model.Model
 	counters map[string]int
+	// Ownership bookkeeping for ADR 0020 Amendment 2 §8. A route
+	// collision is only recognizable once every file has been walked, by
+	// which point guards and allowlist anchors already reference the
+	// provisional endpoint ID, so each entry records which endpoint it
+	// was created for. See internal/extract/collide.
+	guardOwner  []int
+	anchors     []allowlist.Anchor
+	anchorOwner []int
+	curEndpoint int
 }
 
 func newBuilder() *builder {

@@ -83,6 +83,43 @@ const (
 	// that reads as though it governs a route which does not exist, while
 	// the real one stays ungoverned.
 	ReasonPathUnresolved OmissionReason = "path-unresolved"
+	// ReasonVersionUnresolved: this endpoint declares an API version whose
+	// value could not be read — a constant reference, or an array of them
+	// (docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
+	// Amendment 2 §7).
+	//
+	// The version is what tells this route apart from another declaring
+	// the same path, so an unreadable one leaves Sphinxor unable to say
+	// which route a policy would govern. Omission is the safe state, per
+	// ADR 0009 §3: Cerbos denies by default, and the matrix still shows
+	// the endpoint.
+	//
+	// Only the *unreadable* case lands here. An endpoint with a readable
+	// version exports normally: the resource kind comes from the
+	// controller class name and the action from the HTTP method, so two
+	// versions in different controllers never collide, and two in the
+	// same controller and method are already handled by
+	// ReasonActionCollision below. That correction, and the measurement
+	// behind it, are recorded in the ADR.
+	ReasonVersionUnresolved OmissionReason = "version-unresolved"
+	// ReasonRouteCollision: another controller in the analyzed tree
+	// declares this endpoint's route too
+	// (docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
+	// Amendment 2 §8).
+	//
+	// Both paths read perfectly; what is unknown is whether the two are
+	// the same route. A runtime path prefix, a conditional controller
+	// registration, or a second application mounted from the same tree
+	// would separate them, and none is visible to this extractor. A policy
+	// written for either one might therefore govern the other's traffic,
+	// so neither is exported.
+	//
+	// Unlike the warning in `sphinxor lint`, this omission is not
+	// conditioned on the two sides' guards differing: identical guards say
+	// nothing about whether the route is the same, and the exported policy
+	// is a deployable artifact rather than an inventory (ADR 0009 §3,
+	// ADR 0012).
+	ReasonRouteCollision OmissionReason = "route-collision"
 	// ReasonNoCommonRole: a single endpoint has role-bearing evidence in
 	// more than one independent layer (e.g. a method annotation and a
 	// URL-pattern rule — docs/decisions/0012-securityfilterchain-effective-policy.md),
@@ -317,6 +354,35 @@ func Translate(m *model.Model) Result {
 				Detail: "this endpoint's declared route path could not be read (its @Controller/@RequestMapping " +
 					"argument is not a string literal), so \"" + e.Path + "\" is only the part of the route that " +
 					"resolved — the real route is longer, and no policy can be named after a fragment of it",
+			})
+			continue
+		}
+		// A route another controller also declares cannot be named in a
+		// policy either — see ReasonRouteCollision.
+		if e.RouteCollision {
+			pathOmissions = append(pathOmissions, Omission{
+				Endpoint: e,
+				Resource: resource,
+				Reason:   ReasonRouteCollision,
+				Detail: "another controller in this tree also declares \"" + e.Path + "\", and Sphinxor cannot tell " +
+					"whether they are one route or two — a runtime path prefix, a conditional controller " +
+					"registration, or a second application in the same tree would separate them, so a policy " +
+					"written here might govern the other endpoint's traffic",
+			})
+			continue
+		}
+		// A declared-but-unreadable version leaves the endpoint's identity
+		// synthesized rather than derived from the route, so it cannot be
+		// named in a policy either — see ReasonVersionUnresolved.
+		if e.VersionUnresolved {
+			pathOmissions = append(pathOmissions, Omission{
+				Endpoint: e,
+				Resource: resource,
+				Reason:   ReasonVersionUnresolved,
+				Detail: "this endpoint declares an API version whose value could not be read (it is a constant " +
+					"reference rather than a string literal), and that version is what distinguishes it from " +
+					"another route declaring the same path \"" + e.Path + "\" — so a policy here could not say " +
+					"which of them it governs",
 			})
 			continue
 		}

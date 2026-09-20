@@ -51,6 +51,37 @@ type Model struct {
 	URLLayer       URLLayerStatus
 	GlobalGuards   GlobalGuardStatus
 	GraphQL        GraphQLStatus
+	// RouteCollisions records every route declared by more than one
+	// controller in the analyzed tree — ADR 0020 Amendment 2 §8.
+	RouteCollisions []RouteCollision
+}
+
+// RouteCollision is one route declared by two or more different
+// controllers in the same analyzed tree, per
+// docs/decisions/0020-unanalyzable-is-unknown-not-absent.md Amendment 2 §8.
+//
+// It is recorded for every collision, but only reported to the user when
+// GuardsDiffer. A collision whose sides carry identical guards has nothing
+// to bleed, and the measurement behind that amendment found those to be
+// the overwhelming majority — warning on all of them would fire 324 times
+// across the survey corpus, almost entirely where nothing is wrong, and
+// cost the caveat mechanism its meaning.
+type RouteCollision struct {
+	HTTPMethod HTTPMethod
+	Path       string
+	// Controllers names every controller declaring this route, sorted.
+	Controllers []string
+	// GuardsDiffer is true when the colliding endpoints do not all carry
+	// the same guards and roles — the case where merging them would have
+	// reported one endpoint's protection against another.
+	//
+	// It reflects what extraction can *see*. Where guards are invisible to
+	// it (an unrecognized composite decorator, say), two endpoints look
+	// identical and this stays false. That is deliberate: the criterion
+	// tracks what the tool actually knows, and if guard coverage later
+	// improves and a real difference surfaces, the warning starts firing
+	// on its own.
+	GuardsDiffer bool
 }
 
 // GlobalGuardStatus records a framework-level guard registered away from
@@ -169,9 +200,42 @@ type Endpoint struct {
 	// resolved, which is a fragment of the real route and must never be
 	// presented as the whole of it.
 	PathUnresolved bool
-	ControllerID   ID
-	File           string
-	Line           int
+	// Version is the route's declared API version — NestJS's
+	// @Controller({ version }) / @Version(), Spring's `version` attribute
+	// on a mapping annotation — per
+	// docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
+	// Amendment 2 §7. Empty means no version was declared, which is
+	// *absent*, not unknown: such an endpoint keeps exactly the identity
+	// it had before that amendment.
+	//
+	// It is deliberately not folded into Path. Whether a version reaches
+	// the URL depends on how the application configures versioning, which
+	// is declared away from the endpoint (NestJS's enableVersioning) and
+	// is not read here — URI versioning puts it in the path, header and
+	// media-type versioning do not.
+	Version string
+	// RouteCollision marks an endpoint whose declared route is also
+	// declared by a *different* controller in the same analyzed tree, per
+	// docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
+	// Amendment 2 §8.
+	//
+	// Nothing here is unanalyzable: both paths read perfectly. What is
+	// unknown is whether the two are the same route — a runtime path
+	// prefix, a conditional controller registration, or a separate
+	// application mount may separate them, and none of those is visible
+	// to this extractor. The endpoints are kept apart unconditionally,
+	// because assuming they are one endpoint is what merged their guards
+	// (NestJS) or dropped one of them outright (Spring).
+	RouteCollision bool
+	// VersionUnresolved marks a route that declares a version whose value
+	// could not be read — a constant reference, an array of them, a
+	// computed value. Two such endpoints must never be assumed equal, so
+	// identity falls back to the controller-and-handler synthesis
+	// Amendment 1 §5 introduced.
+	VersionUnresolved bool
+	ControllerID      ID
+	File              string
+	Line              int
 }
 
 // NewEndpointID derives an Endpoint's stable ID from its method and path,
@@ -212,6 +276,61 @@ func NewEndpointID(method HTTPMethod, path string) ID {
 // path is always normalized to a leading "/".
 func NewUnresolvedPathEndpointID(method HTTPMethod, controllerName, handlerName string) ID {
 	return ID(string(method) + " ?unresolved-path " + controllerName + "." + handlerName)
+}
+
+// NewVersionedEndpointID derives an Endpoint's ID from its method, path,
+// and declared API version, per
+// docs/decisions/0020-unanalyzable-is-unknown-not-absent.md Amendment 2 §7.
+//
+// It is used only when a version is declared *and* readable. An endpoint
+// declaring no version keeps NewEndpointID, unchanged — that is the
+// bounding rule the amendment rests on, and it is what leaves existing
+// allowlist anchors and stored diff baselines untouched.
+//
+// An endpoint declaring a version that could not be read does not come
+// here: an unreadable version is unknown, and two unknowns must not
+// collapse onto one key, so those fall back to
+// NewUnresolvedVersionEndpointID.
+//
+// The "@" separator cannot collide with a plain path-derived ID, since a
+// bare NewEndpointID never contains one.
+func NewVersionedEndpointID(method HTTPMethod, path, version string) ID {
+	return ID(string(method) + " " + path + " @" + version)
+}
+
+// NewUnresolvedVersionEndpointID derives an Endpoint's ID from its
+// controller and handler for the case where a version is declared but its
+// value could not be read — the cal.com shape, where the version is a
+// constant reference or an array of them.
+//
+// It is the same synthesis NewUnresolvedPathEndpointID performs, under a
+// distinct marker so the two causes stay distinguishable in output and in
+// a diff. The reasoning for structure-derived identity is identical, and
+// recorded there.
+func NewUnresolvedVersionEndpointID(method HTTPMethod, controllerName, handlerName string) ID {
+	return ID(string(method) + " ?unresolved-version " + controllerName + "." + handlerName)
+}
+
+// NewCollidingRouteEndpointID derives an Endpoint's ID from its controller
+// and handler for the case where a *different* controller in the same tree
+// declares the same route, per
+// docs/decisions/0020-unanalyzable-is-unknown-not-absent.md Amendment 2 §8.
+//
+// It is the same synthesis the two constructors above perform, under its
+// own marker so the cause stays distinguishable in output and in a diff.
+// Unlike those two, nothing here was unreadable: the identity is
+// synthesized because a shared one is *wrong*, not because the real one
+// could not be formed.
+//
+// The file is part of the key here, where the other two constructors need
+// only the class and handler names. A collision frequently *is* the same
+// class name declared twice — a HealthController in each of a monorepo's
+// services, a worker re-declaring a controller — so class and handler
+// alone would reproduce the very collision this is resolving. The cost is
+// that moving such a file changes the endpoint's ID and `sphinxor diff`
+// reports a removal and an addition, on the same terms §5 already accepts.
+func NewCollidingRouteEndpointID(method HTTPMethod, file, controllerName, handlerName string) ID {
+	return ID(string(method) + " ?colliding-route " + file + ":" + controllerName + "." + handlerName)
 }
 
 // GuardScope records where a GuardApplication's evidence was found in

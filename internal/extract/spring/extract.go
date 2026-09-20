@@ -26,6 +26,7 @@ import (
 	"github.com/smacker/go-tree-sitter/java"
 
 	"github.com/chebilax/sphinxor/internal/allowlist"
+	"github.com/chebilax/sphinxor/internal/extract/collide"
 	"github.com/chebilax/sphinxor/internal/model"
 )
 
@@ -93,10 +94,29 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	// reimplementing it: the marker grammar is a `//` line comment in both
 	// languages, and matching operates on line positions and anchors, not
 	// on either language's syntax tree.
+	for _, f := range files {
+		extractControllers(f.tree.RootNode(), f.src, f.relPath, b, roleByName)
+	}
+
+	// Two controllers declaring one route are two endpoints until proven
+	// otherwise (ADR 0020 Amendment 2 §8). It runs after every file has
+	// been walked, and before both the allowlist matching below and the
+	// URL-layer pass further down, so each of those sees final IDs.
+	collide.Resolve(collide.Input{
+		Model:       &b.model,
+		GuardOwner:  b.guardOwner,
+		Anchors:     b.anchors,
+		AnchorOwner: b.anchorOwner,
+	})
+
 	outcome := allowlist.Outcome{AllowlistedEndpoints: make(map[model.ID]bool)}
 	for _, f := range files {
-		anchors := extractControllers(f.tree.RootNode(), f.src, f.relPath, b, roleByName)
-
+		var anchors []allowlist.Anchor
+		for _, a := range b.anchors {
+			if a.File == f.relPath {
+				anchors = append(anchors, a)
+			}
+		}
 		allowlisted, stale := allowlist.MatchFile(f.src, f.relPath, anchors, b.nextID("finding"))
 		for _, id := range allowlisted {
 			outcome.AllowlistedEndpoints[id] = true
@@ -181,15 +201,31 @@ type builder struct {
 	// sharing one ID. The first handler encountered, in file-then-source
 	// order (parseProject walks files in deterministic lexical order),
 	// wins as the Endpoint's own HandlerName/File/Line.
-	seenEndpoints map[model.ID]bool
+	// It is keyed by controller as well as by ID: two handlers sharing
+	// HTTPMethod+Path across *different* controllers are not content
+	// negotiation but a route collision (ADR 0020 Amendment 2 §8), and
+	// merging them is what silently dropped one of them.
+	seenEndpoints map[endpointKey]int
+	// Ownership bookkeeping for that amendment — see the NestJS twin and
+	// internal/extract/collide.
+	guardOwner  []int
+	anchors     []allowlist.Anchor
+	anchorOwner []int
+	curEndpoint int
 	// authCandidates accumulates every @PreAuthorize("isAuthenticated()")
 	// occurrence found while applying guards, consumed by the final
 	// computeAuthenticationRequirements pass (authentication.go).
 	authCandidates []authCandidate
 }
 
+// endpointKey identifies one endpoint within one controller.
+type endpointKey struct {
+	id         model.ID
+	controller model.ID
+}
+
 func newBuilder() *builder {
-	return &builder{counters: make(map[string]int), seenEndpoints: make(map[model.ID]bool)}
+	return &builder{counters: make(map[string]int), seenEndpoints: make(map[endpointKey]int)}
 }
 
 func (b *builder) nextIDFor(prefix string) model.ID {

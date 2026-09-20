@@ -126,6 +126,20 @@ func analyzeDirectory(w io.Writer, dir, override string) (*model.Model, []model.
 // can be correct as far as it goes and still be presented with more
 // confidence than the analysis earned — and an audit tool that does that
 // is the failure this project is built to avoid.
+// guardDifferingCollisions renders the route collisions worth telling the
+// user about — those whose sides do not carry the same guards (ADR 0020
+// Amendment 2 §8).
+func guardDifferingCollisions(m *model.Model) []string {
+	var out []string
+	for _, c := range m.RouteCollisions {
+		if !c.GuardsDiffer {
+			continue
+		}
+		out = append(out, string(c.HTTPMethod)+" "+c.Path+" ("+strings.Join(c.Controllers, ", ")+")")
+	}
+	return out
+}
+
 func projectWarnings(m *model.Model) []string {
 	var out []string
 
@@ -161,6 +175,24 @@ func projectWarnings(m *model.Model) []string {
 			"         so the paths shown for them are marked \u2026 and are only the part that resolved. They are still\n"+
 			"         analyzed and still linted; `sphinxor export cerbos` omits them, since a policy cannot be named\n"+
 			"         after a fragment of a route.")
+	}
+
+	// Amendment 2 §8: one route declared by two controllers, where the two
+	// sides carry different guards. It is conditioned on that difference
+	// deliberately: the survey behind that amendment found same-path
+	// collisions to be common and almost always harmless (a monorepo's
+	// per-service health check, a worker re-declaring a route), and
+	// warning on all of them would have fired 324 times across the corpus,
+	// nearly all where nothing is wrong. A caveat that mostly fires on
+	// healthy projects stops being read — which is what
+	// TestAnalyzeDirectory_RealProjectStaysQuiet exists to prevent.
+	if c := guardDifferingCollisions(m); len(c) > 0 {
+		out = append(out, "the same route is declared by more than one controller, with DIFFERENT access control\n"+
+			"         on each side: "+strings.Join(c, "; ")+".\n"+
+			"         Sphinxor cannot tell whether these are one route or two — a runtime path prefix, a\n"+
+			"         conditional controller registration, or a second application in this tree would separate\n"+
+			"         them, and none of those is visible here. Each endpoint is listed with its own guards\n"+
+			"         rather than merged; `sphinxor export cerbos` omits them.")
 	}
 
 	// ADR 0021 §2: a GraphQL API this tool deliberately does not analyze.

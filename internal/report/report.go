@@ -35,13 +35,22 @@ type Row struct {
 	// than the whole of it, because the declared path could not be read
 	// (ADR 0020 Amendment 1 §5). Markdown renders such a path with a
 	// leading ellipsis; JSON consumers get the flag.
-	PathUnresolved bool            `json:"pathUnresolved,omitempty"`
-	Handler        string          `json:"handler"`
-	File           string          `json:"file"`
-	Line           int             `json:"line"`
-	Guards         []string        `json:"guards"`
-	Roles          []string        `json:"roles"`
-	Findings       []model.Finding `json:"findings,omitempty"`
+	PathUnresolved bool `json:"pathUnresolved,omitempty"`
+	// Version is the route's declared API version (ADR 0020 Amendment 2
+	// §7), shown so two rows sharing a method and path are visibly
+	// distinguishable rather than looking like a duplicate. Empty means
+	// none was declared.
+	Version string `json:"version,omitempty"`
+	// VersionUnresolved marks a route that declares a version whose value
+	// could not be read. Markdown renders it as "?"; JSON consumers get
+	// the flag.
+	VersionUnresolved bool            `json:"versionUnresolved,omitempty"`
+	Handler           string          `json:"handler"`
+	File              string          `json:"file"`
+	Line              int             `json:"line"`
+	Guards            []string        `json:"guards"`
+	Roles             []string        `json:"roles"`
+	Findings          []model.Finding `json:"findings,omitempty"`
 }
 
 // Matrix is the full RBAC matrix: one row per endpoint, plus every
@@ -90,16 +99,18 @@ func BuildMatrix(m *model.Model, findings []model.Finding) Matrix {
 	rows := make([]Row, 0, len(m.Endpoints))
 	for _, e := range m.Endpoints {
 		rows = append(rows, Row{
-			Controller:     controllerName[e.ControllerID],
-			Method:         e.HTTPMethod,
-			Path:           e.Path,
-			PathUnresolved: e.PathUnresolved,
-			Handler:        e.HandlerName,
-			File:           e.File,
-			Line:           e.Line,
-			Guards:         guardsByEndpoint[e.ID],
-			Roles:          rolesByEndpoint[e.ID],
-			Findings:       findingsByEndpoint[e.ID],
+			Controller:        controllerName[e.ControllerID],
+			Method:            e.HTTPMethod,
+			Path:              e.Path,
+			PathUnresolved:    e.PathUnresolved,
+			Version:           e.Version,
+			VersionUnresolved: e.VersionUnresolved,
+			Handler:           e.HandlerName,
+			File:              e.File,
+			Line:              e.Line,
+			Guards:            guardsByEndpoint[e.ID],
+			Roles:             rolesByEndpoint[e.ID],
+			Findings:          findingsByEndpoint[e.ID],
 		})
 	}
 

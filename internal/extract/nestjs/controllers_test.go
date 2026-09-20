@@ -34,7 +34,8 @@ export class UsersController {
 		roleByName[d.Name] = d.ID
 	}
 
-	anchors := extractControllers(root, source, "users.controller.ts", b, roleByName, nil)
+	extractControllers(root, source, "users.controller.ts", b, roleByName, nil)
+	anchors := b.anchors
 
 	if len(b.model.Endpoints) != 2 {
 		t.Fatalf("got %d endpoints, want 2: %+v", len(b.model.Endpoints), b.model.Endpoints)
@@ -83,7 +84,8 @@ export class UsersController {
 `
 	root, source := parseTS(t, src)
 	b := newBuilder()
-	anchors := extractControllers(root, source, "f.ts", b, nil, nil)
+	extractControllers(root, source, "f.ts", b, nil, nil)
+	anchors := b.anchors
 
 	if len(anchors) != 1 {
 		t.Fatalf("got %d anchors, want 1", len(anchors))

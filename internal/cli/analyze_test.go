@@ -339,3 +339,68 @@ func TestAnalyzeDirectory_RealProjectStaysQuiet(t *testing.T) {
 		t.Errorf("a fully-analyzed real project must produce no caveats, got:\n%s", notices.String())
 	}
 }
+
+// TestAnalyzeDirectory_GuardDifferingCollisionWarns is ADR 0020
+// Amendment 2 §8's conditional half, end to end: the vendored yudao pair
+// declares one route from two controllers, one side carrying @PreAuthorize
+// and the other nothing, so the run must say so.
+func TestAnalyzeDirectory_GuardDifferingCollisionWarns(t *testing.T) {
+	var notices bytes.Buffer
+	m, findings, err := analyzeDirectory(&notices, "../extract/spring/testdata/ruoyi-vue-pro", "")
+	if err != nil {
+		t.Fatalf("analyzeDirectory: %v", err)
+	}
+
+	if !strings.Contains(notices.String(), "declared by more than one controller") {
+		t.Errorf("no route-collision warning, got:\n%s", notices.String())
+	}
+	if !strings.Contains(notices.String(), "PUT /member/user/update") {
+		t.Errorf("warning does not name the colliding route, got:\n%s", notices.String())
+	}
+
+	// The endpoint the collision used to hide, and its finding.
+	app := model.ID("")
+	for _, e := range m.Endpoints {
+		if e.HTTPMethod == model.MethodPut && e.Path == "/member/user/update" && e.HandlerName == "updateUser" {
+			for _, c := range m.Controllers {
+				if c.ID == e.ControllerID && c.Name == "AppMemberUserController" {
+					app = e.ID
+				}
+			}
+		}
+	}
+	if app == "" {
+		t.Fatal("the app-side PUT /member/user/update is still absent from the model")
+	}
+	found := false
+	for _, f := range findings {
+		if f.RuleID == "mutating-endpoint-without-access-control" && f.SubjectID == app {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("mutating-endpoint-without-access-control did not fire on the unguarded app-side endpoint")
+	}
+}
+
+// TestAnalyzeDirectory_MatchingGuardCollisionStaysQuiet pins the other side
+// of §8's criterion at CLI level: a collision whose sides carry the same
+// guards has nothing to bleed and must not add to the run's caveats.
+func TestAnalyzeDirectory_MatchingGuardCollisionStaysQuiet(t *testing.T) {
+	dir := t.TempDir()
+	for name, class := range map[string]string{"a.controller.ts": "Api", "b.controller.ts": "Worker"} {
+		src := "import { Controller, Get } from '@nestjs/common';\n\n" +
+			"@Controller('health')\nexport class " + class + "Controller {\n  @Get('live')\n  live() {}\n}\n"
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var notices bytes.Buffer
+	if _, _, err := analyzeDirectory(&notices, dir, ""); err != nil {
+		t.Fatalf("analyzeDirectory: %v", err)
+	}
+	if strings.Contains(notices.String(), "declared by more than one controller") {
+		t.Errorf("identical-guard collision must not warn, got:\n%s", notices.String())
+	}
+}
