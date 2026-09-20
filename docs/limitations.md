@@ -42,11 +42,11 @@ This is the largest gap recorded in this file, and it is **not an extraction gap
 
 ### The number
 
-A survey of 11 production NestJS repositories — 2,428 endpoints — produced this:
+A survey of 11 production NestJS repositories — 2,435 endpoints — produced this:
 
 > **The model records zero roles, on zero endpoints, in all 11 repositories.**
 
-Not "few". None. The positive control is the vendored `awesome-nest-boilerplate` fixture, which produces three role-carrying endpoints in the same run, so this is a fact about the corpus and not an artifact of the harness.
+Not "few". None. The positive control is the vendored `awesome-nest-boilerplate` fixture, which the same binary reports three role-carrying endpoints for, so this is a fact about the corpus and not an artifact of the harness.
 
 ### Why
 
