@@ -30,3 +30,9 @@ Keeps foreign source code out of the repository entirely; expanding the corpus i
 Test fixture provenance for real-repo validation follows this pattern going forward: a small, curated subset of files (not a full repo clone) vendored under `internal/extract/nestjs/testdata/<repo-name>/`, with a `NOTICE.md` documenting source URL, pinned commit, license, and why each specific file was chosen — not copied wholesale.
 
 This scales linearly with corpus size: each additional real repository added for validation (the next planned step is a second one) adds a few more files and a few more KB, not a full checkout. If the corpus eventually grows large enough that this becomes real tree bloat, that's a reason to revisit this ADR with the clone-on-demand alternative back on the table — not a reason to abandon the reliability argument above without one.
+
+### Growth so far
+
+Recorded so the threshold above is reached deliberately rather than discovered late. At the time this ADR was written the corpus was one repository and four files. It now stands at **seven repositories and roughly 2,500 lines** of vendored source, having roughly tripled during [ADR 0020](0020-unanalyzable-is-unknown-not-absent.md) Amendment 2 alone — which added novu, cal.com, `eugenp/tutorials` and `ruoyi-vue-pro` for one decision.
+
+That is still comfortably inside what vendoring is worth paying, and **no action is taken here**. The point of the number is the trajectory: if it continues at this rate, this ADR should be re-evaluated against the clone-on-demand alternative at around 3,000 lines, while the decision is still cheap to change — not at 8,000, when it isn't.
