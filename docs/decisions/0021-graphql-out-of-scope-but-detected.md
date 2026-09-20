@@ -156,6 +156,13 @@ its own real fixtures.
   end by hand before the change is called done, since a reduction can preserve a
   shape while losing the thing that made it occur. Confirmed failing before being
   kept, per the bar set in ADR 0014 and reaffirmed since.
+
+  That last point stopped being hypothetical on first use: the reduced fixture
+  reports 3 operations where `nestjs-prisma-starter` reports 16. The shape is
+  faithful and the magnitude is not, and magnitude is exactly what this warning
+  exists to convey — a reader deciding whether to care about "3 unanalyzed
+  operations" is not the reader deciding about 16. Neither the fixture nor the
+  real run substitutes for the other.
 - The noise floor is guarded the same way ADR 0020 §4's caveats are: a project with
   no resolvers must produce no warning, pinned by a test against a real
   GraphQL-free project.
