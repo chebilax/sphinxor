@@ -163,6 +163,17 @@ func projectWarnings(m *model.Model) []string {
 			"         after a fragment of a route.")
 	}
 
+	// ADR 0021 §2: a GraphQL API this tool deliberately does not analyze.
+	// It fires whenever resolvers are present, not only when they
+	// outnumber the REST routes: a mixed project is the more dangerous
+	// case, because its REST matrix is correct and complete, and that
+	// apparent completeness is what makes the missing half easy to miss.
+	if g := m.GraphQL; g.Present {
+		out = append(out, "this project exposes a GraphQL API ("+strconv.Itoa(g.Operations)+" operation(s) in @Resolver\n"+
+			"         classes), which Sphinxor does not analyze. Any authorization on those operations is absent\n"+
+			"         from this report — the matrix below covers the project's HTTP routes only.")
+	}
+
 	// §4: the inverted default. Verified against nestjs/nest's own
 	// 19-auth-jwt sample, where every endpoint shows no guard because the
 	// guard is registered globally and @Public() opts out.

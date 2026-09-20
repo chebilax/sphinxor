@@ -50,6 +50,7 @@ type Model struct {
 	MethodSecurity MethodSecurityStatus
 	URLLayer       URLLayerStatus
 	GlobalGuards   GlobalGuardStatus
+	GraphQL        GraphQLStatus
 }
 
 // GlobalGuardStatus records a framework-level guard registered away from
@@ -62,6 +63,26 @@ type Model struct {
 // extractor assumes, so endpoint-level results systematically understate
 // protection. The direction is safe; the distortion being unsignalled is
 // not.
+// GraphQLStatus records that a project exposes a GraphQL API, which
+// this extractor deliberately does not analyze —
+// docs/decisions/0021-graphql-out-of-scope-but-detected.md.
+//
+// Detection exists so that a scope boundary stops being invisible. A
+// GraphQL-first project otherwise produced a clean, confident report
+// describing whatever REST routes it happened to have beside its real
+// API, and ADR 0019 §2's "recognized no endpoints" notice could not
+// fire because the count was not zero.
+//
+// Operations counts @Query/@Mutation/@Subscription/@ResolveField so the
+// warning can state the size of what was skipped. None of them becomes
+// an Endpoint: a GraphQL operation has no HTTP method and no path, and
+// the model's identity, the matrix's columns, the allowlist's anchoring
+// and the Cerbos exporter's action mapping are all built on those.
+type GraphQLStatus struct {
+	Present    bool
+	Operations int
+}
+
 type GlobalGuardStatus struct {
 	Registered bool
 	// Mechanism names how it was registered, for the warning text.
