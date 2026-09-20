@@ -36,19 +36,25 @@ A composite outside this bounded shape isn't guessed at — it falls back to exa
 
 **What to do about it today**: for anything outside the resolved shape, same as above — `sphinxor-allow` on endpoints known to be protected this way. There is no plan to extend beyond one level of indirection or direct pass-through substitution in v0.1; whether it's worth the extraction complexity in a later version is an open question, not a commitment made here.
 
-## Permissions as metadata: the model has no concept for how production NestJS actually authorizes
+## Permissions as metadata: the model has no concept for how production code actually authorizes
 
-This is the largest gap recorded in this file, and it is **not an extraction gap**. Extending composite-decorator resolution cannot close it at any depth. It is a question about [ADR 0002](decisions/0002-intermediate-model-structure.md)'s model, and it is deliberately left open here rather than answered — no ADR has been written, and nothing below proposes one.
+This is the largest gap recorded in this file, and it is **not an extraction gap**. Extending composite-decorator resolution cannot close it at any depth. It is a question about [ADR 0002](decisions/0002-intermediate-model-structure.md)'s model, and it is deliberately left open here rather than answered — **no ADR closes it, and nothing below proposes one.** [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) Amendment 3, referenced under *Consequence today*, fixed how one consequence of this gap was *reported*; it did not make the tool understand a permission, and it was never meant to.
 
-### The number
+It was first found on NestJS and recorded here as a NestJS finding, with whether it generalized left explicitly unanswered. It has since been surveyed on Spring as well. **It generalizes**: the same model gap, under syntax that looks nothing alike. Both surveys are below, along with the one place the two frameworks genuinely differ, which is not smoothed over.
 
-A survey of 11 production NestJS repositories — 2,435 endpoints — produced this:
+### The number, in both frameworks
+
+A survey of 11 production NestJS repositories — 2,435 endpoints:
 
 > **The model records zero roles, on zero endpoints, in all 11 repositories.**
 
-Not "few". None. The positive control is the vendored `awesome-nest-boilerplate` fixture, which the same binary reports three role-carrying endpoints for, so this is a fact about the corpus and not an artifact of the harness.
+A later survey of 14 production Spring repositories — 2,959 endpoints:
 
-### Why
+> **The model records zero roles, on zero endpoints, in 13 of the 14.**
+
+Not "few". None — literally zero role-bearing endpoints in 11 of 11 NestJS repositories and in 13 of 14 Spring ones, the fourteenth being the exception discussed below. Each survey has a positive control run by the same binary in the same session: the vendored `awesome-nest-boilerplate` fixture reports three role-carrying endpoints, and the vendored `Pharmacy` fixture reports 8 endpoints, 7 of them role-carrying, across 2 distinct roles. The zeros are facts about the corpora, not artifacts of a harness.
+
+### Why — NestJS
 
 Production NestJS does not authorize with `@UseGuards(RolesGuard)` + `@Roles(Role.Admin)`, which is the pair this extractor is built to read. It declares a **requirement as metadata** and lets a globally registered guard enforce it. The decorator does not say *"this guard protects this endpoint"*; it says *"this endpoint requires permission X"* — and the model has no field that means that.
 
@@ -69,19 +75,101 @@ Three things this table is saying, each of which matters on its own:
 - **A high guard count is not understanding.** `nocodb` reports guards on 339 of 344 endpoints, which looks like near-total coverage; those guards are `GlobalGuard` and three rate limiters applied at class level, while all 279 `@Acl` permissions — *including their `allowedRoles` lists* — are invisible. `teable`, `ToolJet`, `cal.com` and `ghostfolio` are the same story: the enforcer is visible, the requirement it enforces is not.
 - **Extraction is the easy half.** immich's `SetMetadata(MetadataKey.AuthRoute, options)` passes the composite's bare parameter, so ADR 0006's existing positional pass-through would already hand back the call site's `{ permission: Permission.AssetUpdate }` literal. The value is mechanically reachable today. There is nowhere in the model to put it: `GuardApplication{GuardName}` plus `RoleReference{RawLiteral}` has no slot for a permission, and immich's option object carries `permission`, `admin`, `sharedLink`, `public` and `setup`, of which only `admin` is even role-shaped.
 
+### Why — Spring: the same finding, under syntax that looks nothing alike
+
+Spring's version of "requirement as metadata" is a permission string in an annotation the extractor either doesn't recognize or recognizes without being able to read, enforced by a Shiro realm, a Spring bean, or the application's own filter.
+
+| Repository | How authorization is declared | Uses | What the model records |
+|---|---|---:|---|
+| `thingsboard/thingsboard` | `@PreAuthorize("hasAnyAuthority('TENANT_ADMIN','CUSTOMER_USER')")` | 536 | **439 endpoints, 5 roles** — works |
+| `alibaba/nacos` | `@Secured(resource=…, action=ActionTypes.WRITE)` — alibaba's own annotation, not Spring's | 419 | 392 guards named `Secured`, zero roles |
+| `jeecgboot/JeecgBoot` | Shiro `@RequiresPermissions("airag:knowledge:add")`, `@RequiresRoles("admin")` | 223 + 27 | nothing |
+| `apolloconfig/apollo` | `@PreAuthorize(value = "@unifiedPermissionValidator.hasCreateNamespacePermission(#appId)")` | 140 | 68 guards, zero roles |
+| `yangzongzhuan/RuoYi-Vue` | `@PreAuthorize("@ss.hasPermi('system:user:edit')")` | 116 | 116 guards, zero roles |
+| `apache/streampark` | Shiro `@RequiresPermissions("yarnQueue:create")` | 101 | nothing |
+| `apache/shenyu` | Shiro `@RequiresPermissions("system:pluginHandler:edit")` | 100 | nothing — all 100 sit in controllers extraction never recognizes |
+| `elunez/eladmin` | `@PreAuthorize("@el.check('deploy:edit')")` | 99 | 99 guards, zero roles |
+| `spring-cloud/spring-cloud-dataflow` | YAML: `- POST /apps => hasRole('ROLE_CREATE')` | 66 | nothing — it is not a `.java` file |
+| `apache/fineract` | in-handler `context.authenticatedUser().validateHasReadPermission("LOAN")` | 389 | nothing — and only 1 of its ~966 routes is even seen (JAX-RS) |
+| `apache/dolphinscheduler` | in-handler/service `canOperator(...)`, `resourcePermissionCheckService.*` | 60 | nothing |
+| `zalando/nakadi` | legacy `WebSecurityConfigurerAdapter` + `.access(hasScope('nakadi.event_stream.read'))` | 23 | nothing |
+| `microcks/microcks` | URL layer `requestMatchers(…).hasAnyRole(ROLE_ADMIN)` + in-handler `authorizationChecker.hasRole(…)` | 12 + 22 | nothing |
+| `conductor-oss/conductor` | none — the OSS build ships no endpoint authorization | 0 | nothing, correctly |
+
+Three things this table is saying:
+
+- **It is the same gap, not an analogous one.** `system:user:edit`, `yarnQueue:create`, and `resource=…, action=WRITE` are immich's `@Authenticated({ permission: Permission.AssetUpdate })` in Java. A requirement is named at the endpoint; something the extractor does not read enforces it; `GuardApplication{GuardName}` + `RoleReference{RawLiteral}` has no field that means "requires permission P". Counted across the Spring corpus: **1,133 permission declarations with nowhere in the model to go** — 416 Shiro permission literals, 27 Shiro role literals, 205 permission literals inside bean-call SpEL, 419 nacos `resource`/`action` pairs, 66 SCDF YAML rules.
+- **Extraction is the easy half here too.** `@ss.hasPermi('system:user:edit')` and `@RequiresPermissions("system:pluginHandler:edit")` are quoted literals in fixed positions — a dozen lines of pattern-matching each, no dataflow. What stops them is the absence of a slot, exactly as on the NestJS side. The one Spring shape where extraction is *not* the easy half is apollo's: its 140 bean calls carry no literal at all, the requirement being encoded in the method name and its arguments (`hasCreateNamespacePermission(#appId)`), which is also ABAC rather than RBAC.
+- **A guard count is not understanding, again.** nacos reports a guard on 392 of its 422 endpoints. All 392 are the `Secured` name; all 419 `resource`/`action` pairs those annotations carry are invisible. RuoYi-Vue, eladmin and apollo are the same story in miniature.
+
+**The URL layer contributed roles in zero of the fourteen.** Nine projects had a `SecurityFilterChain` that [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) §2 correctly suppressed and warned about: six for declaring more than one chain (apollo, fineract, microcks, nacos, `spring-cloud-dataflow`, thingsboard), two for a single chain whose rules would not parse (dolphinscheduler, eladmin), and one for being reactive (JeecgBoot). Four had no chain this extractor recognizes at all, and warn about nothing — conductor, plus nakadi's pre-5.7 `WebSecurityConfigurerAdapter` and Shiro's `ShiroFilterFactoryBean` in shenyu and streampark. The fourteenth, RuoYi-Vue, is the one URL-layer result in the corpus that is right rather than absent: exactly one chain, parsed correctly, and it genuinely grants no roles (`permitAll` plus `anyRequest().authenticated()`).
+
+### The asymmetry: Spring found one repository where the model works, and NestJS found none
+
+This is the one place the two surveys disagree, and it is not flattened into "both are equally broken".
+
+`thingsboard/thingsboard` records **439 role-carrying endpoints across 5 roles**. All 15 endpoints it reports without roles carry no method-security annotation in source either: 13 are explicitly public by route (`/api/noauth/*`, `/.well-known/*`, `/api/images/public/*`) and the other two are an OAuth2 redirect callback and a readiness probe, both unauthenticated by construction. The empty cells are correct, not missing. On that repository the model does the job it was designed for, end to end.
+
+So `hasRole`/`hasAuthority` is **a live idiom that real production code still uses**, and ADR 0011 §1's deliberately narrow SpEL subset is a real, load-bearing capability rather than a bet that missed. The NestJS zero was a *total mismatch* — no surveyed repository authorized the way the extractor reads, and `@UseGuards` + `@Roles` behaved like a dead idiom. The Spring zero is a *distribution problem*: the idiom the extractor reads is alive, and most of this corpus happens not to use it. Those are different findings and they license different responses, so they are recorded as different findings.
+
+### What the Spring corpus does not prove
+
+Two caveats, both material:
+
+- **Four of the fourteen share a lineage.** `RuoYi-Vue`, `eladmin`, `JeecgBoot` and arguably `nacos` come from an overlapping Chinese admin-framework tradition and may not be independent samples. What keeps the finding standing is that the same permission-string idiom appears independently outside that tradition: via Apache Shiro in two Apache projects (`shenyu`, `streampark`), and via YAML in `spring-cloud-dataflow`.
+- **Spring's zeros are confounded in a way NestJS's were not.** Several of them are caused by route shapes extraction does not recognize rather than by the model gap — see *Spring route shapes outside ADR 0011 §1's scope* below. Those are **separable problems**: fixing endpoint discovery would surface more endpoints without recording a single additional role, and closing the model gap would record permissions on endpoints extraction already sees. Neither subsumes the other, and this entry claims only the second.
+
+And one result that is not a gap at all: **`conductor-oss/conductor`'s zero is a true negative, verified rather than assumed.** Its OSS build ships no endpoint authorization — one `SecurityContextHolder` read in a scheduler service, no filter chain, no security annotations anywhere in main source. Reporting no roles for it is correct. Not every zero in this corpus is a failure to see something.
+
 ### Why an extraction answer could not be complete anyway
 
-Even granted a model concept, the link from a metadata key to the guard that enforces it is **module wiring, not decorator syntax**. immich registers two different `APP_GUARD` providers in two different modules — `AuthGuard` for the API, `MaintenanceAuthGuard` for the maintenance worker — and **both read the same key**, `MetadataKey.AuthRoute`. The same decorator on the same handler therefore means two different things depending on which module mounted the controller. No decorator-level analysis resolves that, and this extractor does not parse module provider wiring at all (see the global-guard entry above).
+Even granted a model concept, the link from a metadata key to the guard that enforces it is **wiring, not annotation syntax**. immich registers two different `APP_GUARD` providers in two different modules — `AuthGuard` for the API, `MaintenanceAuthGuard` for the maintenance worker — and **both read the same key**, `MetadataKey.AuthRoute`. The same decorator on the same handler therefore means two different things depending on which module mounted the controller. No decorator-level analysis resolves that, and this extractor does not parse module provider wiring at all (see the global-guard entry above).
+
+Spring reproduces the same problem with different plumbing: nacos's `signType` attribute selects which enforcer interprets a `@Secured`, SCDF's method-and-path-keyed rules live in a YAML file the extractor never opens, and Shiro's realm is configured entirely outside Spring Security. In every case the requirement and its enforcer are declared in different places, and only one of them is an annotation.
 
 So any future answer has at least three parts, and only the first is extraction: read the requirement; represent it in the model; and know, or honestly refuse to know, which guard enforces it.
 
 ### Consequence today
 
-Every endpoint in every one of these projects is reported with an empty `Roles` column, and the mutating ones among them are flagged by `mutating-endpoint-without-access-control` at Low confidence. The direction is the safe one and the [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) §4 global-guard warning fires on the projects that register one, so a run does not present these results as a complete picture. But the scale should be stated plainly: on a production NestJS application, the RBAC matrix this tool exists to produce currently has **no role data in it at all**.
+Every endpoint in every one of these projects is reported with an empty `Roles` column. On NestJS the mutating ones among them are flagged by `mutating-endpoint-without-access-control` at Low confidence — the safe direction, and the [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) §4 global-guard warning fires on the projects that register one, so a run does not present these results as a complete picture.
 
-**What to do about it today**: nothing at the endpoint level makes this better — `sphinxor-allow` marks an endpoint as reviewed, it does not recover the permission. Treat the matrix for such a project as a route inventory with authentication hints, not as an authorization model.
+**On Spring this gap used to do something worse than under-report — it broke the build, and that is fixed.** ADR 0011 §1 fuses guard and role-carrier — `@PreAuthorize`/`@Secured` is simultaneously "this endpoint is protected" and "this is what it requires" — so a recognized-but-unresolved annotation was recorded with `DeclaresRoles: true` and zero `RoleReference`s, which is precisely `empty-role`'s trigger, at **High** confidence, which gates CI. The survey measured **675 High-confidence findings across four repositories** (nacos 392, RuoYi-Vue 116, eladmin 99, apollo 68), every one invented:
 
-**Status**: open, and framed here rather than decided. Closing it means amending ADR 0002 to carry a requirement that is neither a guard nor a role. That amendment has not been written.
+```
+@PreAuthorize() on GET /monitor/cache declares no roles      # really: @ss.hasPermi('monitor:cache:list')
+@PreAuthorize() on GET /api/logs/download declares no roles  # really: @el.check('logs:list')
+@Secured() on POST / declares no roles                       # really: resource=…, action=WRITE
+```
+
+Since [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) Amendment 3, a role list that could not be *read* is distinguished from one the source declares *empty*. `empty-role` fires only on the latter — `@Secured({})`, NestJS's `@Roles()` — so all 675 are gone and all four projects exit zero. What replaces them is a warning naming the count and a `?` in the Roles cell, because suppressing the finding without saying anything would leave the same absent-looking output that ADR 0020 exists to stop. A `-` there would claim no role is required; `?` says the requirement exists and was not recovered.
+
+The gap itself is unchanged, and that is the point: the tool now under-reports honestly instead of accusing the code of something the file in front of you disproves. The same fix removed 5 instances of that false positive from this repository's own vendored `ruoyi-vue-pro` fixture, where they had sat unnoticed since it was added for an unrelated decision.
+
+But the scale should be stated plainly for both: on a production application in either framework, the RBAC matrix this tool exists to produce currently has **no role data in it at all** — with `thingsboard` as the single surveyed exception. Amendment 3 changed how honestly that emptiness is presented, not how empty it is.
+
+**What to do about it today**: nothing at the endpoint level recovers the permission — `sphinxor-allow` marks an endpoint as reviewed, it does not read what the endpoint requires. Treat the matrix for such a project as a route inventory with authentication hints, not as an authorization model.
+
+**Status**: open, and framed here rather than decided. Closing it means amending ADR 0002 to carry a requirement that is neither a guard nor a role. That amendment has not been written. What the Spring survey changes is the scope of the question, not its answer: it is now known to be a model-level gap that surfaces in both supported frameworks, not a NestJS-specific one.
+
+## Spring route shapes outside ADR 0011 §1's scope — and the recognized-endpoint count is not the API surface
+
+Found by the same Spring survey as the entry above, and recorded separately because it is a different gap: this is about **which endpoints exist at all**, not about what authorizes them. Fixing it would surface more endpoints without recording one additional role.
+
+[ADR 0011](decisions/0011-spring-second-framework.md) §1 recognizes `@RestController`/`@Controller` classes and `@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping` methods. Everything below is real production Spring that declares routes some other way. The measured consequence is that a run reports a matrix that looks complete and is not.
+
+- **A controller-level meta-annotation.** `apache/shenyu`'s `@RestApi` composes `@RestController` + `@RequestMapping` with `@AliasFor`, and sits on **35 of shenyu-admin's 41 controller classes**, hiding **179 route declarations and all 100 `@RequiresPermissions`**. What the run reports instead is 192 endpoints, of which 155 are from `shenyu-examples/` demo applications, 26 from `shenyu-web`, and **11 from the real admin API**. **Silent** — nothing in the output suggests the admin API is missing. This is the Spring counterpart of NestJS's composite decorator, one level up: it hides the endpoint, not just its guard.
+- **Routes declared on an inherited interface.** `apolloconfig/apollo`'s 14 OpenAPI v1 controllers carry `@RestController` but not one mapping annotation; the mappings live on interfaces supplied by an external artifact, and the handlers are `@Override` methods. **72 `@PreAuthorize` disappear with the endpoints that carry them. Silent.**
+- **`@RequestMapping(method = RequestMethod.X)`** — 381 method-level declarations across the corpus (JeecgBoot 229, thingsboard 93, nakadi 45, nacos and eladmin 5 each, microcks 4). ADR 0011 §1 names this as a deliberate scope cut, so it is not a surprise; its *scale* is. It also means **the one repository where the model works is only partly seen**: thingsboard mixes both shapes, so `POST /api/customer` — `@PreAuthorize("hasAuthority('TENANT_ADMIN')")`, plainly readable — is absent from its model entirely.
+- **JAX-RS in a Spring Boot application.** `apache/fineract` is a Spring Boot application that declares its routes with `@Path` plus JAX-RS verb annotations — 966 of them. Extraction recognizes **one endpoint**, and its 389 in-handler `validateHasReadPermission("LOAN")`-style checks go with the endpoints that never appeared.
+- **Method-level meta-annotations over `@RequestMapping`.** `elunez/eladmin`'s `@AnonymousGetMapping` and siblings, 11 uses. Minor in scale, identical in mechanism to shenyu's.
+
+A negative result from the same survey, worth recording because it was specifically looked for: **no repository in the Spring corpus wraps `@PreAuthorize` in a meta-annotation.** The NestJS-style "custom decorator bundling the security annotation" does not appear on the Spring side at all. The wrapping happens at the routing layer instead — which is the worse of the two, since an unreadable guard leaves a visible endpoint while an unreadable controller leaves nothing.
+
+**Consequence**: for a project using any of these, the matrix under-reports the API surface, and in the shenyu and apollo cases it does so without saying anything. That silence is the specific failure class [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) exists to eliminate — an unanalyzable thing presenting as an absent thing — reached here through endpoint discovery rather than through paths, versions or filter chains. ADR 0019 §2's "recognized no endpoints" notice cannot fire on any of them, because none of them recognizes *zero*.
+
+**What to do about it today**: check the endpoint count against what the application actually serves before trusting a matrix as complete. Nothing in the current output will tell you that most of a module is missing.
+
+**Status**: measured, recorded, not fixed. No ADR proposes a change yet.
 
 ## Spring: `SecurityFilterChain` beyond simple, single-chain patterns
 

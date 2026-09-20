@@ -9,11 +9,13 @@ import (
 type spelKind int
 
 const (
-	// spelUnrecognized covers permitAll(), denyAll(), any boolean
-	// combination, any bean method call, or anything else outside the
-	// small recognized set below — the guard is still real (its presence
-	// is evidence), it simply resolves no role and no authentication
-	// requirement, landing in the existing "guarded, no role" bucket.
+	// spelUnrecognized covers any boolean combination, any bean method
+	// call, or anything else outside the small recognized set below —
+	// the guard is still real (its presence is evidence), but its role
+	// list was *not read*, which is a different state from being read
+	// and found empty. Callers mark it RolesUnresolved, per
+	// docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
+	// Amendment 3 §9.
 	spelUnrecognized spelKind = iota
 	// spelRoles is hasRole/hasAnyRole/hasAuthority/hasAnyAuthority — one
 	// or more role/authority literals.
@@ -22,6 +24,21 @@ const (
 	// establishing "authenticated, any role" (ADR 0010) via the URL-less,
 	// method-layer path (docs/decisions/0011-spring-second-framework.md §2).
 	spelAuthenticated
+	// spelNoRole is permitAll() or denyAll(): recognized expressions that
+	// resolve to no role list, as opposed to a role list that could not
+	// be read.
+	//
+	// Naming them is what keeps ADR 0017's settled boundary intact under
+	// Amendment 3. ADR 0017 decided deliberately that permitAll() keeps
+	// DeclaresRoles: true and "still surfaces through empty-role", on the
+	// reasoning that a developer's permitAll() could itself be the
+	// mistake; TestExtractControllers_PermitAllStillDeclaresRoles pins
+	// it. Had these two stayed in spelUnrecognized they would have been
+	// swept into RolesUnresolved and silently stopped firing — reversing
+	// a documented decision as a side effect of an unrelated fix.
+	// Amendment 3 §10 leaves whether empty-role should fire on
+	// permitAll() at all as an open question for its own ADR.
+	spelNoRole
 )
 
 // spelResult is what parseSpEL recognized in one @PreAuthorize string.
@@ -41,12 +58,13 @@ var spelRoleFuncs = map[string]bool{
 
 // parseSpEL recognizes a small, explicit set of whole-expression SpEL call
 // shapes inside a @PreAuthorize string: hasRole('X'), hasAnyRole('X','Y'),
-// hasAuthority('X'), hasAnyAuthority('X','Y'), and isAuthenticated().
-// Anything else — a bean method call, a boolean combination, a comparison
-// against #parameter or authentication.name, extra whitespace-separated
-// junk after the call — is deliberately left spelUnrecognized rather than
-// partially parsed; ADR 0011 §1 is explicit that this is not a full SpEL
-// parser and never guesses on an ambiguous or unfamiliar shape.
+// hasAuthority('X'), hasAnyAuthority('X','Y'), isAuthenticated(), and
+// permitAll()/denyAll(). Anything else — a bean method call, a boolean
+// combination, a comparison against #parameter or authentication.name,
+// extra whitespace-separated junk after the call — is deliberately left
+// spelUnrecognized rather than partially parsed; ADR 0011 §1 is explicit
+// that this is not a full SpEL parser and never guesses on an ambiguous or
+// unfamiliar shape.
 func parseSpEL(expr string) spelResult {
 	expr = strings.TrimSpace(expr)
 
@@ -57,6 +75,10 @@ func parseSpEL(expr string) spelResult {
 
 	if name == "isAuthenticated" && argsText == "" {
 		return spelResult{Kind: spelAuthenticated}
+	}
+
+	if (name == "permitAll" || name == "denyAll") && argsText == "" {
+		return spelResult{Kind: spelNoRole}
 	}
 
 	if !spelRoleFuncs[name] {

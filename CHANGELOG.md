@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`empty-role` no longer fails the build on a role requirement Sphinxor
+  could not read.** On Spring, presence and role-check are fused into one
+  annotation (ADR 0011 §1), so an annotation whose content was outside the
+  recognized SpEL subset — a bean call like
+  `@PreAuthorize("@ss.hasPermi('system:user:edit')")`, or a same-named
+  annotation from another framework such as alibaba's
+  `@Secured(resource = …, action = …)` — was recorded as declaring *zero*
+  roles rather than as declaring a requirement that went unread. That is
+  `empty-role`'s trigger, at High confidence, which gates CI.
+
+  A survey of 14 production Spring repositories measured **675 such
+  findings across four of them** (nacos 392, RuoYi-Vue 116, eladmin 99,
+  apollo 68), every one naming a permission the source states plainly. All
+  four failed CI; all four now pass, with no other change to any
+  repository in the corpus. The same fix cleared 5 instances from this
+  project's own vendored `ruoyi-vue-pro` fixture.
+
+  A role list that was *read and found empty* — `@Secured({})`, NestJS's
+  `@Roles()` — still fires, unchanged: that is the case the rule exists
+  for. `permitAll()`/`denyAll()` also still fire, deliberately, per
+  ADR 0017. Affected endpoints now show `?` in the Roles column instead of
+  `-`, and the run warns how many there are, because `-` claims no role is
+  required while `?` says the requirement was not recovered. See
+  [ADR 0020](docs/decisions/0020-unanalyzable-is-unknown-not-absent.md)
+  Amendment 3.
+
 ### Security
 
 Six blind spots, found by an audit of Spring and NestJS extraction against

@@ -195,6 +195,20 @@ func projectWarnings(m *model.Model) []string {
 			"         rather than merged; `sphinxor export cerbos` omits them.")
 	}
 
+	// Amendment 3 §11: annotations whose role requirement could not be
+	// read. Suppressing the empty-role finding alone would satisfy that
+	// amendment's letter and break its spirit — a silently empty Roles
+	// column is exactly the absent-looking output ADR 0020 exists to
+	// stop. The matrix marks each such cell "?"; this says what the mark
+	// means and in which direction the reader should be wrong.
+	if n := unresolvedRoleEndpoints(m); n > 0 {
+		out = append(out, "the role requirement could not be read for "+strconv.Itoa(n)+" endpoint(s) carrying an\n"+
+			"         access-control annotation (a @PreAuthorize bean call such as @ss.hasPermi('...'), a SpEL\n"+
+			"         expression outside the recognized subset, or a same-named annotation from another\n"+
+			"         framework). Their Roles column is marked ? and UNDERSTATES what the application\n"+
+			"         requires — an empty or partial cell there is not evidence that no role is needed.")
+	}
+
 	// ADR 0021 §2: a GraphQL API this tool deliberately does not analyze.
 	// It fires whenever resolvers are present, not only when they
 	// outnumber the REST routes: a mixed project is the more dangerous
@@ -274,4 +288,19 @@ func unresolvedPaths(m *model.Model) unresolvedPathCount {
 	}
 	sort.Strings(result.controllers)
 	return result
+}
+
+// unresolvedRoleEndpoints counts endpoints carrying at least one
+// GuardApplication whose role list could not be read
+// (docs/decisions/0020-unanalyzable-is-unknown-not-absent.md Amendment 3
+// §9). Counted per endpoint rather than per annotation, so the warning's
+// number matches the rows a reader would go and look at.
+func unresolvedRoleEndpoints(m *model.Model) int {
+	affected := make(map[model.ID]bool)
+	for _, g := range m.GuardApplications {
+		if g.RolesUnresolved {
+			affected[g.EndpointID] = true
+		}
+	}
+	return len(affected)
 }

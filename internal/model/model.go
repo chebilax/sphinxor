@@ -400,6 +400,27 @@ type GuardApplication struct {
 	// wrong rather than visibly broken. This field replaces the string
 	// comparison with an explicit fact extraction sets directly.
 	DeclaresRoles bool
+	// RolesUnresolved is true when this GuardApplication declares a role
+	// requirement (DeclaresRoles) whose role list extraction could not
+	// read — as distinct from reading it and finding it empty. It is a
+	// statement about what extraction could recover from the source,
+	// never about what the application requires.
+	//
+	// The distinction exists because the two states were previously
+	// indistinguishable: both produced DeclaresRoles: true with zero
+	// RoleReferences, which is internal/lint/empty_role.go's trigger. On
+	// Spring, where ADR 0011 §1 fuses presence and role-check into one
+	// annotation, that collision made every unreadable @PreAuthorize SpEL
+	// expression and every non-Spring @Secured look like a role list a
+	// developer had forgotten to fill in — 675 High-confidence, CI-gating
+	// false positives across four production repositories. See
+	// docs/decisions/0020-unanalyzable-is-unknown-not-absent.md Amendment 3.
+	//
+	// The zero value, false, is "the role list was read" — so every
+	// existing construction path (NestJS's @Roles(), a resolved
+	// @Secured({"ROLE_A"}), a genuinely empty @Secured({})) keeps its
+	// current behavior with no explicit initialization.
+	RolesUnresolved bool
 }
 
 // RoleDeclarationKind records how a role's canonical declaration was
