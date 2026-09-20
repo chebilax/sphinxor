@@ -34,6 +34,26 @@ and its Amendment 1.
   keeps exactly the identity it had before, so existing allowlist anchors and
   diff baselines are untouched. See ADR 0020 Amendment 2 §7.
 
+- **One route declared by two controllers no longer merges or disappears.** Endpoint
+  identity was `(method, path)`, so two controllers declaring the same absolute route
+  shared one: NestJS merged them, and an unguarded endpoint was reported carrying the
+  other's guards with `mutating-endpoint-without-access-control` suppressed; Spring
+  dropped one of the pair outright. Both endpoints are now kept, each with its own
+  guards, and `sphinxor export cerbos` omits them, since a policy written for one
+  might govern the other's traffic. Verified on `YunaiV/ruoyi-vue-pro`, where a
+  runtime path prefix keyed on the Java package separates an admin API from an app
+  API: `PUT /member/user/update` exists twice, one side carrying `@PreAuthorize` and
+  the other no access control at all, and the unguarded side was absent from the
+  report entirely. It is now reported and flagged.
+
+  The run warns about such a collision only when the two sides' guards actually
+  differ. Warning on every collision would have fired 324 times across the 17-repo
+  survey behind this work, almost entirely on cases it proved harmless — a monorepo's
+  per-service health check, a worker deliberately re-declaring a route. Measured
+  against the implementation, the criterion fires 47 times in `ruoyi-vue-pro`, 13 in
+  `eugenp/tutorials`, and not at all in immich, `shenyu`, cal.com, novu or
+  `amplication`. See ADR 0020 Amendment 2 §8.
+
 - **A project exposing a GraphQL API is now told that it was not analyzed.**
   GraphQL stays out of scope
   ([ADR 0021](docs/decisions/0021-graphql-out-of-scope-but-detected.md)), but a

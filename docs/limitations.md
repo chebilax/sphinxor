@@ -86,11 +86,11 @@ Since ADR 0021 this is loud. A project containing resolvers is detected and the 
 
 **Not covered**: Spring's `@QueryMapping`/`@MutationMapping`/`@SchemaMapping`. It was not surveyed during the audit that produced this entry, and it is not claimed as handled on the strength of symmetry with NestJS.
 
-## Two controllers declaring the same route — silent, over-reports access
+## Two controllers declaring the same route — now loud, no longer over-reports access
 
-**This is the one silent, access-over-reporting gap still open in the tool.** Everything else on this page either fails loudly or errs toward under-reporting protection; this one reports an endpoint as protected when it is not, and says nothing.
+Endpoint identity was `(method, path)`. If two controllers in the same analyzed tree declared the same absolute route, they shared one identity, and the same damage followed as in the unreadable-path case above — except here nothing is unanalyzable. Both paths read perfectly. **Consequence**, reproduced on a minimal case: in NestJS the two endpoints merged, so an unguarded route showed the other's guards and roles — a `DELETE` with no guard at all reported as `ADMIN`-protected, with `mutating-endpoint-without-access-control` suppressed. In Spring one of the pair was dropped from the report entirely, and the survivor was whichever was extracted first.
 
-Endpoint identity is `(method, path)`. If two controllers in the same analyzed tree declare the same absolute route, they share one identity, and the same damage follows as in the unreadable-path case above — except here nothing is unanalyzable. Both paths are read perfectly. **Consequence**, reproduced on a minimal case: in NestJS the two endpoints merge, so an unguarded route shows the other's guards and roles — a `DELETE` with no guard at all reported as `ADMIN`-protected, with `mutating-endpoint-without-access-control` suppressed. In Spring one of the pair is dropped from the report entirely, and the survivor is whichever was extracted first.
+Since [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) Amendment 2 §8, colliding endpoints are kept apart unconditionally — each keeps its own guards, neither is merged or dropped — and `sphinxor export cerbos` omits them, since a policy written for one might govern the other's traffic. The run warns only when the two sides' guards actually differ, which is the case where merging them would have reported one endpoint's protection against another. **What remains unknowable** is the thing the warning names: whether the two are one route or two. A runtime path prefix, a conditional controller registration, or a second application mounted from the same tree would separate them, and none of those is visible to this extractor.
 
 This entry previously named the failing assumption as *"one analyzed tree is one application"*, on the strength of a single sighting in immich. A survey of 23 real repositories (17 measurable; the rest use route shapes this extractor doesn't recognize, so they can't answer either way) found that diagnosis to be the benign case, and found two other causes that do the damage. What follows is what was measured.
 
@@ -120,9 +120,9 @@ The pattern is real — 7 of the 17 measurable repositories — and in every pro
 
 A fourth shape, recorded without a verdict: **conditional controller registration**. `novu`'s `organization.module.ts` returns `[EEOrganizationController]` or `[OrganizationController]` depending on a runtime check, so only one is ever mounted. Three collisions, identical class-level guards, no bleed observed.
 
-**Status of a fix**: [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) Amendment 2 is **Accepted**. §7 (the version) is implemented, as described above. §8 — treating a same-path collision as unknown-whether-distinct rather than silently keeping one side, with a warning conditioned on the colliding endpoints' guards actually differing — is **not implemented yet**, so the collision behaviour described at the top of this entry, and the configured-prefix damage below it, are both still current.
+**Status of a fix**: [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) Amendment 2 is **Accepted and implemented**, in both halves. The rest of this entry describes what the tool did before it, and is kept because the mechanism it describes is still the reason the current behaviour looks the way it does.
 
-**What to do about it today**: treat two matrix rows sharing a method and path as a signal that neither row's guards can be trusted — and, in Spring, that one of the two may be missing from the report entirely rather than duplicated in it. Pointing `sphinxor` at a single application's source root helps with the multi-application case, but not with the two causes above, which occur inside one application.
+**What to do about it today**: when the run warns that one route is declared by two controllers with different access control, check which of the two your request actually reaches — the tool cannot, and the answer decides which row's guards apply. Pointing `sphinxor` at a single application's source root removes the multi-application case, but not the two causes above, which occur inside one application.
 
 ## A `sphinxor-allow` marker separated from its endpoint by a block comment
 

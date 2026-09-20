@@ -51,8 +51,7 @@ var httpMappingAnnotations = map[string]model.HTTPMethod{
 // a single Endpoint under ADR 0014 (same method+path, differing only in
 // `produces`) are two real places in the source a developer could put a
 // marker above, and either should exempt the endpoint they share.
-func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID) []allowlist.Anchor {
-	var anchors []allowlist.Anchor
+func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID) {
 	for _, decl := range namedChildren(root) {
 		if decl.Type() != "class_declaration" {
 			continue
@@ -147,7 +146,7 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			// signature) — verified against real Pharmacy source rather
 			// than assumed from the grammar, and the same line the
 			// Endpoint row records below.
-			anchors = append(anchors, allowlist.Anchor{
+			b.anchors = append(b.anchors, allowlist.Anchor{
 				EndpointID: endpointID,
 				File:       file,
 				Line:       int(member.StartPoint().Row) + 1,
@@ -176,8 +175,13 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			// as a regression test, TestExtractControllers_MergedHandlerRetainsOwnGuard
 			// (guards_test.go), confirmed to actually fail against the
 			// original buggy shape before being kept.
-			if !b.seenEndpoints[endpointID] {
-				b.seenEndpoints[endpointID] = true
+			// Keyed by controller as well as by ID: a second handler in
+			// the *same* controller is ADR 0014 content negotiation and
+			// merges, while a second *controller* is a route collision
+			// and must keep its own endpoint (ADR 0020 Amendment 2 §8).
+			key := endpointKey{id: endpointID, controller: controllerID}
+			idx, merged := b.seenEndpoints[key]
+			if !merged {
 				b.model.Endpoints = append(b.model.Endpoints, model.Endpoint{
 					ID:                endpointID,
 					HTTPMethod:        httpMethod,
@@ -190,19 +194,23 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 					File:              file,
 					Line:              int(member.StartPoint().Row) + 1,
 				})
+				idx = len(b.model.Endpoints) - 1
+				b.seenEndpoints[key] = idx
 				// Class-level guards apply once per endpoint, not once per
 				// merged handler — attaching them again for a second
 				// merged handler would duplicate identical
 				// GuardApplications for no reason (both variants share the
 				// exact same class-level annotations by construction).
+				b.curEndpoint = idx
 				b.applyGuards(endpointID, classGuards, model.ScopeClass)
 			}
+			b.anchorOwner = append(b.anchorOwner, idx)
+			b.curEndpoint = idx
 
 			methodGuards := pendingGuardsFromAnnotations(methodAnns, src, file, roleByName)
 			b.applyGuards(endpointID, methodGuards, model.ScopeMethod)
 		}
 	}
-	return anchors
 }
 
 func hasAny(anns []annotationCall, names map[string]bool) bool {

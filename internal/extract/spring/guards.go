@@ -98,6 +98,7 @@ func resolveRoleArgs(literals []string, roleByName map[string]model.ID) []roleAr
 func (b *builder) applyGuards(endpointID model.ID, guards []pendingGuard, scope model.GuardScope) {
 	for _, g := range guards {
 		appID := b.nextIDFor("guardapp")
+		b.guardOwner = append(b.guardOwner, b.curEndpoint)
 		b.model.GuardApplications = append(b.model.GuardApplications, model.GuardApplication{
 			ID:            appID,
 			EndpointID:    endpointID,

@@ -51,6 +51,37 @@ type Model struct {
 	URLLayer       URLLayerStatus
 	GlobalGuards   GlobalGuardStatus
 	GraphQL        GraphQLStatus
+	// RouteCollisions records every route declared by more than one
+	// controller in the analyzed tree — ADR 0020 Amendment 2 §8.
+	RouteCollisions []RouteCollision
+}
+
+// RouteCollision is one route declared by two or more different
+// controllers in the same analyzed tree, per
+// docs/decisions/0020-unanalyzable-is-unknown-not-absent.md Amendment 2 §8.
+//
+// It is recorded for every collision, but only reported to the user when
+// GuardsDiffer. A collision whose sides carry identical guards has nothing
+// to bleed, and the measurement behind that amendment found those to be
+// the overwhelming majority — warning on all of them would fire 324 times
+// across the survey corpus, almost entirely where nothing is wrong, and
+// cost the caveat mechanism its meaning.
+type RouteCollision struct {
+	HTTPMethod HTTPMethod
+	Path       string
+	// Controllers names every controller declaring this route, sorted.
+	Controllers []string
+	// GuardsDiffer is true when the colliding endpoints do not all carry
+	// the same guards and roles — the case where merging them would have
+	// reported one endpoint's protection against another.
+	//
+	// It reflects what extraction can *see*. Where guards are invisible to
+	// it (an unrecognized composite decorator, say), two endpoints look
+	// identical and this stays false. That is deliberate: the criterion
+	// tracks what the tool actually knows, and if guard coverage later
+	// improves and a real difference surfaces, the warning starts firing
+	// on its own.
+	GuardsDiffer bool
 }
 
 // GlobalGuardStatus records a framework-level guard registered away from
@@ -183,6 +214,19 @@ type Endpoint struct {
 	// is not read here — URI versioning puts it in the path, header and
 	// media-type versioning do not.
 	Version string
+	// RouteCollision marks an endpoint whose declared route is also
+	// declared by a *different* controller in the same analyzed tree, per
+	// docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
+	// Amendment 2 §8.
+	//
+	// Nothing here is unanalyzable: both paths read perfectly. What is
+	// unknown is whether the two are the same route — a runtime path
+	// prefix, a conditional controller registration, or a separate
+	// application mount may separate them, and none of those is visible
+	// to this extractor. The endpoints are kept apart unconditionally,
+	// because assuming they are one endpoint is what merged their guards
+	// (NestJS) or dropped one of them outright (Spring).
+	RouteCollision bool
 	// VersionUnresolved marks a route that declares a version whose value
 	// could not be read — a constant reference, an array of them, a
 	// computed value. Two such endpoints must never be assumed equal, so
@@ -265,6 +309,28 @@ func NewVersionedEndpointID(method HTTPMethod, path, version string) ID {
 // recorded there.
 func NewUnresolvedVersionEndpointID(method HTTPMethod, controllerName, handlerName string) ID {
 	return ID(string(method) + " ?unresolved-version " + controllerName + "." + handlerName)
+}
+
+// NewCollidingRouteEndpointID derives an Endpoint's ID from its controller
+// and handler for the case where a *different* controller in the same tree
+// declares the same route, per
+// docs/decisions/0020-unanalyzable-is-unknown-not-absent.md Amendment 2 §8.
+//
+// It is the same synthesis the two constructors above perform, under its
+// own marker so the cause stays distinguishable in output and in a diff.
+// Unlike those two, nothing here was unreadable: the identity is
+// synthesized because a shared one is *wrong*, not because the real one
+// could not be formed.
+//
+// The file is part of the key here, where the other two constructors need
+// only the class and handler names. A collision frequently *is* the same
+// class name declared twice — a HealthController in each of a monorepo's
+// services, a worker re-declaring a controller — so class and handler
+// alone would reproduce the very collision this is resolving. The cost is
+// that moving such a file changes the endpoint's ID and `sphinxor diff`
+// reports a removal and an addition, on the same terms §5 already accepts.
+func NewCollidingRouteEndpointID(method HTTPMethod, file, controllerName, handlerName string) ID {
+	return ID(string(method) + " ?colliding-route " + file + ":" + controllerName + "." + handlerName)
 }
 
 // GuardScope records where a GuardApplication's evidence was found in

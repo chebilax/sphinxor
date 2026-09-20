@@ -41,9 +41,7 @@ type roleArg struct {
 // extractControllers finds every @Controller() class in root, and every
 // route handler method within it, populating b.model and returning the
 // endpoint anchors needed for allowlist matching.
-func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID, composites map[string]compositeDecorator) []allowlist.Anchor {
-	var anchors []allowlist.Anchor
-
+func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID, composites map[string]compositeDecorator) {
 	for _, group := range groupDecorators(flattenTopLevel(root)) {
 		if group.decl == nil || group.decl.Type() != "class_declaration" {
 			continue
@@ -145,15 +143,15 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 				File:              file,
 				Line:              anchorLine,
 			})
-			anchors = append(anchors, allowlist.Anchor{EndpointID: endpointID, File: file, Line: anchorLine})
+			b.curEndpoint = len(b.model.Endpoints) - 1
+			b.anchors = append(b.anchors, allowlist.Anchor{EndpointID: endpointID, File: file, Line: anchorLine})
+			b.anchorOwner = append(b.anchorOwner, b.curEndpoint)
 
 			methodGuards := pendingGuardsFromDecorators(methodGroup.decorators, src, file, roleByName, composites)
 			b.applyGuards(endpointID, classGuards, model.ScopeClass)
 			b.applyGuards(endpointID, methodGuards, model.ScopeMethod)
 		}
 	}
-
-	return anchors
 }
 
 func anchorLineOf(g declGroup) int {
@@ -261,6 +259,7 @@ func (b *builder) applyGuards(endpointID model.ID, guards []pendingGuard, scope 
 	for _, g := range guards {
 		switch g.kind {
 		case "guard":
+			b.guardOwner = append(b.guardOwner, b.curEndpoint)
 			b.model.GuardApplications = append(b.model.GuardApplications, model.GuardApplication{
 				ID:            b.nextIDFor("guardapp"),
 				EndpointID:    endpointID,
@@ -272,6 +271,7 @@ func (b *builder) applyGuards(endpointID model.ID, guards []pendingGuard, scope 
 			})
 		case "roles":
 			guardAppID := b.nextIDFor("guardapp")
+			b.guardOwner = append(b.guardOwner, b.curEndpoint)
 			b.model.GuardApplications = append(b.model.GuardApplications, model.GuardApplication{
 				ID:            guardAppID,
 				EndpointID:    endpointID,

@@ -886,7 +886,17 @@ throughout, by the unconditional half above, so nothing is hidden in the meantim
   not by keeping real endpoints out of the report.
 - **The §8 warning fires on 47 collisions in `ruoyi-vue-pro` and 13 in `tutorials`
   across the whole survey, and nowhere else** — the measured effect of the criterion,
-  and the number to re-check if the criterion is ever revisited.
+  and the number to re-check if the criterion is ever revisited. Re-measured against
+  the implementation, it reproduces exactly: 47, 13, and zero in immich, `shenyu`,
+  cal.com, novu and `amplication`.
+- One defect in the criterion was found by that re-measurement rather than by
+  reasoning: comparing guard *multisets* made an endpoint merged from two handlers
+  under ADR 0014 — which keeps each handler's own annotations, so an identical
+  `@PreAuthorize` is recorded twice — look different from a colliding sibling
+  requiring exactly the same thing. Protection is a set, not a multiset. It showed up
+  as one unpredicted warning in `tutorials` (`GET /api/authorities`), is fixed, and
+  has its own regression test. Worth recording as a reason to re-measure after
+  implementing, not only before.
 - §7 must land before §8, or §8's warning fires on every version pair — 26 of the
   survey's collisions are version pairs that stop being collisions once §7 exists.
   This ordering is a requirement, not a preference.
