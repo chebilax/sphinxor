@@ -8,6 +8,11 @@ Accepted (§1–§4, implemented).
 is unchanged; the amendment extends its reach to two mechanisms the original text
 did not examine.
 
+**Amendment 2 (§7–§8): Proposed.** See *Amendment 2* below. Same principle again,
+at a seventh and eighth mechanism — a route-discriminating `version` that is read
+past, and a path prefix applied by runtime configuration. Both were found by
+measuring the duplicate-route limitation across 17 real repositories.
+
 ## Context
 
 A blind-spot audit across the documented limitations and several new real
@@ -477,3 +482,332 @@ project-level warning, not a GraphQL parser. It gets its own small ADR once §5 
   result argues against assuming the frameworks are equally well covered: the
   official `nestjs/nest` samples surfaced nothing, and all three silent findings
   came from real third-party and production code.
+
+---
+
+# Amendment 2 — a route-discriminating **version**, and a path prefix applied by **configuration**
+
+## Status
+
+Proposed.
+
+## Context
+
+`docs/limitations.md` carried one open entry describing a *silent,
+access-over-reporting* gap: two controllers in one analyzed tree declaring the same
+absolute route collide on one `(method, path)` identity, so NestJS merges them and
+Spring drops one. That entry named the failing assumption as **"one analyzed tree is
+one application"**, cited immich's `MaintenanceWorkerController`, and explicitly
+declined to choose a fix — per-application scoping, an analyzed-root option, or
+detect-and-warn — on the grounds that one repository is not enough to know whether
+the pattern is real.
+
+That question has now been measured, and the measurement changes what the fix should
+be.
+
+### What was measured
+
+23 repositories were cloned and analyzed; **17 were measurable**. Six Spring
+repositories (`piggymetrics`, `ftgo-application`, `mall`, `mall-swarm`,
+`sample-spring-microservices`, `halo`) yield between 0 and 4 handlers because they
+use `@RequestMapping(method = RequestMethod.X)` or reactive routers — the ADR 0011
+§1 scope cut — and are reported as *not measurable* rather than as zero collisions.
+
+Collisions were counted with temporary instrumentation recording every handler
+*before* deduplication, since the Spring extractor drops a colliding endpoint and
+the model alone cannot show it. The instrumentation was validated by reproducing
+immich's 11 documented pairs exactly before any other repository was trusted, and
+removed afterwards.
+
+| Repository | Framework | Handlers | Collisions | Cause |
+|---|---|---:|---:|---|
+| `eugenp/tutorials` | Spring | 1743 | 204 | multi-app 186, mixed 18 |
+| `YunaiV/ruoyi-vue-pro` | Spring | 3253 | 59 | configured path prefix |
+| `apache/shenyu` | Spring | 192 | 43 | multi-app (all in `shenyu-examples/`) |
+| `novuhq/novu` | NestJS | 465 | 17 | versioning 11, multi-app 3, conditional registration 3 |
+| `calcom/cal.com` | NestJS | 175 | 15 | versioning |
+| `immich-app/immich` | NestJS | 303 | 11 | multi-app |
+| `amplication/amplication` | NestJS | 22 | 2 | multi-app |
+| `Ever-co/ever-gauzy` | NestJS | 1196 | 1 | multi-app |
+| `ToolJet`, `ghostfolio`, `twenty` | NestJS | 398 / 118 / 146 | 0 | — |
+| `JeecgBoot`, `nacos`, `dolphinscheduler`, `streampark`, `hertzbeat`, `spring-petclinic-microservices` | Spring | 587 / 422 / 238 / 232 / 175 / 15 | 0 | — |
+
+### The documented cause is real, common, and benign
+
+Multi-application trees occur in 7 of the 17 measurable repositories. In **every
+production instance, guard bleed was zero**, hand-verified rather than inferred:
+
+- `amplication`'s `POST /login` pair — the two `AuthController`s are byte-identical
+  generated files.
+- `novu`'s `GET /health-check` (api vs. worker) — both unguarded, same shape.
+- `ever-gauzy`'s `GET /` pair does differ (`@Public()` on one side), but that is an
+  opt-out decorator extraction reads on neither side, so nothing bleeds today.
+- `shenyu`'s 43 are entirely inside `shenyu-examples/`, each its own
+  `@SpringBootApplication`, all unguarded. `shenyu-admin` has none.
+- `spring-petclinic-microservices` is a four-service tree with **zero** collisions:
+  a multi-application tree does not even imply a collision.
+
+Amendment 1 recorded 13 colliding pairs in immich and attributed 2 of them to the
+unreadable-path cause, leaving the rest unattributed. The survey measures 11, which
+is the same number less the 2 that §5 fixed — the remainder are the maintenance
+worker, and they are now attributed.
+
+**None of the three options the limitations entry listed would have caught a single
+dangerous collision**, because every dangerous collision found is *inside one
+application*. That is the finding, and it is why this amendment exists rather than
+an ADR choosing among those three.
+
+One honest caveat, carried forward into `docs/limitations.md`: immich's and novu's
+"no bleed" is **measurement-limited**. Their authorization runs through composite
+decorators extraction does not recognize at all (see the composite-decorator entry),
+so there are no guards available to bleed. That is *nothing to bleed*, not *safe* —
+the same latency the original entry recorded for immich, now known to apply to novu
+as well.
+
+### G. A `version` that is read past, so two distinct routes become one
+
+`controllerBasePath` (`internal/extract/nestjs/syntax.go`) walks the object form of
+`@Controller({...})` looking for the `path` key **and ignores every other key**. The
+`version` key is seen and stepped over. Spring's `pathAttributeValue`
+(`internal/extract/spring/syntax.go`) does the same for `version` on a mapping
+annotation.
+
+Version is not decoration. It is a route discriminator: two handlers with the same
+path and different versions are two distinct endpoints the running application
+routes separately. Collapsing them is §5's failure reached by a new door — *distinct
+becomes identical*, so one endpoint is reported carrying another's guards.
+
+Hand-verified on `cal.com`, `POST /v2/bookings`:
+
+```ts
+// apps/api/v2/src/platform/bookings/2024-04-15/controllers/bookings.controller.ts
+@Controller({ path: "/v2/bookings", version: [VERSION_2024_04_15, VERSION_2024_06_11, VERSION_2024_06_14] })
+@UseGuards(PermissionsGuard)
+export class BookingsController_2024_04_15 {
+  @Post("/")
+  async createBooking(...)                      // PermissionsGuard only
+
+// apps/api/v2/src/platform/bookings/2024-08-13/controllers/bookings.controller.ts
+@Controller({ path: "/v2/bookings", version: VERSION_2024_08_13_VALUE })
+@UseGuards(PermissionsGuard)
+export class BookingsController_2024_08_13 {
+  @Post("/")
+  @UseGuards(OptionalApiAuthGuard)              // one guard more
+  async createBooking(...)
+```
+
+The two merge, and the 2024-04-15 endpoint is reported carrying an
+`OptionalApiAuthGuard` it does not have. 4 of cal.com's 15 collision groups differ
+in guards this way; the other 11 are the same defect with matching guards.
+
+Two properties of the real code decide the shape of the fix:
+
+- **The effect of a version on the path is not derivable from the decorator.**
+  `novu` bootstraps `VersioningType.URI` with `prefix: '…v'` and
+  `defaultVersion: '1'`, so its real routes are `/v1/subscribers` and
+  `/v2/subscribers` — the path changes, and the prefix and the default live in
+  `bootstrap.ts`, not at the endpoint. `cal.com` bootstraps `VersioningType.CUSTOM`
+  with a header extractor, so its paths are genuinely identical and the version is a
+  separate runtime discriminator. Any fix that folds version into the path is wrong
+  for one of these two.
+- **A version is frequently not a readable literal.** novu writes `version: '2'`;
+  cal.com writes constant references, and in one case an array of them. So the fix
+  must handle a version that is present and unreadable, which is this ADR's own
+  central case.
+
+Spring has the same mechanism, already present in the corpus:
+`spring-boot-modules/spring-boot-5/.../apiversions/header/ProductController.java`
+declares `@GetMapping(value = "/{id}", version = "1.0")` and
+`version = "2.0"` **in one controller, in one file**, and Sphinxor reports one
+endpoint. The attribute is a plain string literal there.
+
+### H. A path prefix applied by runtime configuration, which no static analysis can resolve
+
+`YunaiV/ruoyi-vue-pro` (yudao) produced 59 collisions, **47 of them with differing
+guards** — the largest concentration of real over-reporting in the survey. Both
+controllers declare the same path, literally:
+
+```java
+// controller/admin/address/AddressController.java
+@RestController @RequestMapping("/member/address")
+  @GetMapping("/list") @PreAuthorize("@ss.hasPermission('member:user:query')")
+
+// controller/app/address/AppAddressController.java
+@RestController @RequestMapping("/member/address")
+  @GetMapping("/list")                            // no access control at all
+```
+
+They differ at runtime only because `YudaoWebAutoConfiguration` registers a
+`WebMvcRegistrations` bean calling
+`RequestMappingHandlerMapping.setPathPrefixes(...)`, mapping `/admin-api` and
+`/app-api` by matching the controller's **Java package name** against a configured
+pattern. The real routes are `/admin-api/member/address/list` and
+`/app-api/member/address/list`.
+
+This is categorically unreadable — an arbitrary `Predicate<Class<?>>` evaluated at
+runtime over package names, with the prefixes themselves coming from configuration
+properties. It sits with ADR 0012's custom `AuthorizationManager`: executing the
+application to know the answer is not static analysis.
+
+The damage was reproduced end to end with the shipped CLI, not with the
+instrumentation, on `yudao-module-member/.../controller`:
+
+| | `PUT /member/user/update` |
+|---|---|
+| both controllers in the tree | one row, attributed to admin's `MemberUserController`, carrying `@PreAuthorize`. `AppMemberUserController.updateUser` — **no access control at all** — is absent from the report, and `mutating-endpoint-without-access-control` does not fire. |
+| app subtree alone | correctly flagged `mutating-endpoint-without-access-control`. |
+
+Three mutating endpoints in that repository lose their finding this way:
+`PUT /member/user/update`, `POST /promotion/kefu-message/send`,
+`PUT /promotion/kefu-message/update-read-status`.
+
+### What G and H share with everything above
+
+G is *readable and not read*: the input is right there in the decorator, so the
+answer is to read it. H is *genuinely unreadable*: two controllers declare the same
+path and Sphinxor cannot know whether a runtime prefix separates them. What both
+currently do is record that uncertainty as a fact — "these are the same endpoint" —
+and then silently keep one side's guards. That is this ADR's error, twice more.
+
+## Decision
+
+### §7 A route's version is part of its identity
+
+**NestJS**: the `version` key of `@Controller({ path, version })`, and the
+`@Version(...)` method decorator. **Spring**: the `version` attribute on
+`@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`/`@RequestMapping`.
+
+Three states, matching this ADR's own vocabulary:
+
+- **No version declared** → *absent*. Identity is unchanged:
+  `NewEndpointID(method, path)` exactly as today. This is what keeps every existing
+  allowlist anchor, stored diff baseline, and endpoint ID working — the same
+  bounding rule §5 used, and the reason the overwhelming majority of endpoints in
+  every surveyed repository are untouched by this amendment.
+- **A version declared and readable as a literal** → part of the identity, as a
+  separate component beside method and path, and shown in the matrix so two rows
+  sharing a path are visibly distinguishable.
+- **A version declared but not readable** — a constant reference, an array of
+  references, a computed value → *unknown*. Two endpoints whose versions are both
+  unknown must not be assumed equal, so identity falls back to §5's
+  controller-plus-handler synthesis and the endpoint is marked. This is the cal.com
+  case, and it is the majority of the version-bearing code found.
+
+**Version is not folded into the path.** The evidence above is the reason: novu's
+URI versioning changes the path using a prefix and a default declared in
+`bootstrap.ts`, while cal.com's custom header versioning does not change the path at
+all. Reconstructing the real URI path would require parsing `enableVersioning(...)`
+and is coverage work, not this fix — the same separation Amendment 1 drew between
+§5 and resolving route constants. Until that exists, a URI-versioned path is
+displayed as declared and is *incomplete*, and must be marked as such rather than
+presented as the whole route.
+
+**Open decision for the exporter, deliberately not settled here.** Cerbos resource
+and action names derive from the path (ADR 0009). Two readable versions of one path
+would produce two policies with the same resource and action. The options are to
+include the version in the resource name, or to omit version-bearing endpoints as
+§2 and §5 already omit unknown ones. The recommendation is **omission**, because a
+resource name containing a version that Sphinxor could not confirm reaches the URL
+(see the paragraph above) is a name it has not earned — but this is a public-format
+question and it is flagged for decision rather than chosen in passing.
+
+### §8 Two controllers declaring the same path is unknown-whether-distinct, never silently one
+
+When two controllers in one analyzed tree declare the same absolute route — after
+§7, so genuine version pairs no longer reach this case — Sphinxor cannot know
+whether a runtime prefix, a conditional registration, or a separate application
+mount separates them.
+
+- **Neither endpoint is dropped and neither is merged.** Both are extracted, both
+  keep an identity (synthesized per §5 where the path-derived one would collide),
+  and each keeps only its own guards. This is what restores
+  `mutating-endpoint-without-access-control` on yudao's `AppMemberUserController`.
+- **The run says so**, at project level, naming the colliding paths and the
+  controllers that declare them, and stating that the tool cannot tell whether they
+  are the same endpoint.
+- **`sphinxor export cerbos` omits them**, per ADR 0009 §3: a policy must not be
+  named after a route whose real prefix is unknown.
+
+This is deliberately *not* framed as per-application scoping. The measurement says
+application boundaries are neither necessary nor sufficient: yudao's colliding pair
+is in one application and one Maven module, and petclinic's four applications
+collide on nothing.
+
+**The cost, stated plainly, because it is the argument against this section**: the
+warning will fire on benign collisions, which the measurement says are the common
+ones. After §7 removes the version pairs, it would still fire on immich (11),
+`shenyu` (43, all in example applications), `amplication` (2), `ever-gauzy` (1),
+novu (6), and `tutorials` (204 — a corpus nobody lints whole). It is a warning about
+the model's uncertainty, not a finding against an endpoint, and it does not gate CI;
+that is the proportion this choice rests on.
+
+## Alternatives considered
+
+- **Per-application scoping, an `--analyzed-root` option, or detecting the
+  multi-application case specifically** — the three options `docs/limitations.md`
+  listed. Rejected on the measurement: multi-application collisions occur in 7 of 17
+  repositories and caused real guard bleed in **none** of the production ones, while
+  every dangerous collision found is inside a single application, where none of the
+  three would apply.
+- **Fold version into the path** — rejected; novu and cal.com take opposite paths
+  from the same decorator shape, so the decorator does not determine the route.
+- **Parse `app.enableVersioning(...)` now, to reconstruct URI-versioned paths** —
+  rejected as scope creep, exactly as Amendment 1 rejected resolving route
+  constants. §7 makes the tool correct while the real path is unknown; parsing
+  bootstrap makes "unknown" rarer. Bundling them would make the safety fix wait on
+  the coverage feature.
+- **Parse `setPathPrefixes` / `WebMvcRegistrations`** — rejected as categorically
+  out of scope, with ADR 0012's custom `AuthorizationManager`. The predicate is
+  arbitrary Java over package names and the prefixes come from configuration
+  properties.
+- **Treat a same-path collision as a `High`-confidence finding rather than a
+  project-level warning** — rejected. `High` gates CI, and the measurement says the
+  common case is benign; a gate that fires on immich's maintenance worker and
+  shenyu's example applications is the CI-disabling false positive `docs/vision.md`
+  warns about. The uncertainty is about the model, not about a specific endpoint's
+  protection, which is what the project-level notice mechanism (ADR 0019 §2) is for.
+- **Leave H documented and fix only G** — rejected. H is where the largest measured
+  over-reporting is (47 groups in one repository, 3 mutating endpoints losing their
+  finding), and "detect and say so" is this project's standing answer for input it
+  cannot read. Documenting it a second time without acting would repeat the mistake
+  Amendment 1's preamble describes.
+
+## Consequences
+
+- `model.Endpoint` gains a version component and a mark for an unresolved version,
+  in the shape §5 already established for paths. `internal/model` gains the identity
+  constructor taking it. Both extractors gain version reading. Additive.
+- **Endpoint counts rise again**, as in Amendment 1: cal.com gains 15 endpoints,
+  novu 11, yudao 59, none of which exist in today's reports. Any project whose count
+  rises was being under-reported silently.
+- **Findings appear that did not before**, and they are true: yudao's three
+  unguarded mutating endpoints are the concrete ones.
+- §7 must land before §8, or §8's warning fires on every version pair — 26 of the
+  survey's collisions are version pairs that stop being collisions once §7 exists.
+- Regression tests, at the bar set in ADR 0014 and reaffirmed above — each confirmed
+  to fail against current behavior before being kept, with fixtures vendored per
+  ADR 0005:
+  - §7, NestJS, readable version: novu's `/subscribers` v1/v2 pair must produce two
+    endpoints.
+  - §7, NestJS, unreadable version: cal.com's `POST /v2/bookings` must produce two
+    endpoints, and the 2024-04-15 one must **not** show `OptionalApiAuthGuard`.
+  - §7, Spring: `spring-boot-5`'s `ProductController` with `version = "1.0"` and
+    `version = "2.0"` on one path must produce two endpoints.
+  - §7: no version declared anywhere must leave IDs, allowlist anchoring, and diff
+    output byte-identical to today.
+  - §8, Spring: yudao's `AddressController` / `AppAddressController` pair — both
+    endpoints survive, the app-side one carries no roles, and
+    `mutating-endpoint-without-access-control` fires on
+    `PUT /member/user/update`. Today the app-side endpoint is absent from the report.
+  - §8, NestJS: the immich shape — both endpoints survive, neither carries the
+    other's guards.
+- `docs/limitations.md`'s duplicate-route entry is rewritten to name these two
+  causes instead of multi-application, to keep multi-application as an
+  observed-but-benign case with the evidence, and to carry the measurement-limited
+  caveat about immich and novu.
+- The survey's remaining uncharacterized shape, recorded so it is not lost:
+  **conditional controller registration** — novu's `organization.module.ts` returns
+  `[EEOrganizationController]` or `[OrganizationController]` depending on a runtime
+  check, so only one is ever mounted. Three collisions, identical class-level guards,
+  no bleed observed. §8 covers it correctly by treating it as unknown; nothing
+  further is proposed for it here.

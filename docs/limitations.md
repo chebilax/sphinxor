@@ -86,21 +86,39 @@ Since ADR 0021 this is loud. A project containing resolvers is detected and the 
 
 **Not covered**: Spring's `@QueryMapping`/`@MutationMapping`/`@SchemaMapping`. It was not surveyed during the audit that produced this entry, and it is not claimed as handled on the strength of symmetry with NestJS.
 
-## Two controllers declaring the same route — silent, over-reports access, uncharacterized
+## Two controllers declaring the same route — silent, over-reports access
 
-**This is the one silent, access-over-reporting gap still open in the tool.** Everything else on this page either fails loudly or errs toward under-reporting protection; this one reports an endpoint as protected when it is not, and says nothing. It is documented rather than fixed — see the last paragraph for why — but it should be read as the outstanding item on this page, not as one entry among equals.
+**This is the one silent, access-over-reporting gap still open in the tool.** Everything else on this page either fails loudly or errs toward under-reporting protection; this one reports an endpoint as protected when it is not, and says nothing.
 
-Endpoint identity is `(method, path)`. If two controllers in the same analyzed tree declare the same absolute route, they share one identity, and the same damage follows as in the unreadable-path case above — except here nothing is unanalyzable. Both paths are read perfectly. The assumption that fails is a different one: that one analyzed tree is one application.
+Endpoint identity is `(method, path)`. If two controllers in the same analyzed tree declare the same absolute route, they share one identity, and the same damage follows as in the unreadable-path case above — except here nothing is unanalyzable. Both paths are read perfectly. **Consequence**, reproduced on a minimal case: in NestJS the two endpoints merge, so an unguarded route shows the other's guards and roles — a `DELETE` with no guard at all reported as `ADMIN`-protected, with `mutating-endpoint-without-access-control` suppressed. In Spring one of the pair is dropped from the report entirely, and the survivor is whichever was extracted first.
 
-Observed on [`immich-app/immich`](https://github.com/immich-app/immich), whose `MaintenanceWorkerController` is a bare `@Controller()` that deliberately re-declares `/server/version`, `/server/ping`, `/admin/maintenance` and others, for a separate maintenance worker process that is never mounted alongside the main application. 11 of immich's endpoints pair up this way.
+This entry previously named the failing assumption as *"one analyzed tree is one application"*, on the strength of a single sighting in immich. A survey of 23 real repositories (17 measurable; the rest use route shapes this extractor doesn't recognize, so they can't answer either way) found that diagnosis to be the benign case, and found two other causes that do the damage. What follows is what was measured.
 
-**Consequence**, reproduced on a minimal case rather than inferred from the immich sighting: in NestJS the two endpoints merge, so an unguarded route shows the other's guards and roles — a `DELETE` with no guard at all reported as `ADMIN`-protected, with `mutating-endpoint-without-access-control` suppressed. In Spring one of the pair is dropped from the report entirely, and the survivor is whichever was extracted first.
+### The two causes that actually over-report access
 
-**On immich specifically this is latent, by accident rather than by design**: its authorization uses a composite decorator this extractor doesn't recognize at all (see the composite-decorator entry above), so there are no guards to bleed across the pair. The precondition is real in production code and the damage is merely unrealized there — that is luck, not protection, and it would stop being luck the moment composite-decorator support improved.
+**A route version that is read past.** `@Controller({ path, version })` is walked for its `path` key and every other key is stepped over, so the `version` — a route discriminator the running application routes on — is ignored, and two distinct endpoints collapse into one. Spring's `version` attribute on a mapping annotation is ignored the same way. Hand-verified on [`calcom/cal.com`](https://github.com/calcom/cal.com): `POST /v2/bookings` is declared by two controllers distinguished by a `cal-api-version` header, and the `2024-08-13` one adds `@UseGuards(OptionalApiAuthGuard)` that the `2024-04-15` one does not have. They merge, and the weaker endpoint is reported carrying that guard. 15 of cal.com's collisions are version pairs, 4 of them with differing guards; 11 of novu's are the same. Present in Spring too, in one controller and one file: `@GetMapping(value = "/{id}", version = "1.0")` beside `version = "2.0"`.
 
-**Not characterized, deliberately**: one repository is not enough to know whether a multi-application tree is a pattern worth handling or an immich quirk. Whether the right answer is per-application scoping, an analyzed-root option, or simply detecting the collision and warning, depends on how the pattern actually occurs — and that question has not been answered. It is recorded here so it is not lost, not as a commitment to fix it.
+**A path prefix applied by runtime configuration.** [`YunaiV/ruoyi-vue-pro`](https://github.com/YunaiV/ruoyi-vue-pro) declares `@RequestMapping("/member/address")` on both an admin controller and an app controller, in one application and one Maven module. They differ at runtime only because a `WebMvcRegistrations` bean calls `RequestMappingHandlerMapping.setPathPrefixes(...)`, mapping `/admin-api` and `/app-api` by matching the controller's Java package name — an arbitrary runtime predicate no static analysis resolves. 59 collisions, **47 with differing guards**: the admin side carries `@PreAuthorize`, the app side carries nothing.
 
-**What to do about it today**: point `sphinxor` at a single application's source root rather than a tree containing several. Where that isn't possible, treat two matrix rows sharing a method and path as a signal that neither row's guards can be trusted.
+Reproduced end to end with the CLI on `yudao-module-member`: with both controllers in the tree, `PUT /member/user/update` appears once, attributed to the admin controller and carrying `@PreAuthorize`, while `AppMemberUserController.updateUser` — which has no access control at all — is **absent from the report** and produces no `mutating-endpoint-without-access-control` finding. Linting the app subtree alone flags it correctly. Three mutating endpoints in that repository lose their finding this way.
+
+### Multi-application trees: observed, common, and benign so far
+
+The pattern is real — 7 of the 17 measurable repositories — and in every production instance, hand-verified, the colliding endpoints carried no differing protection:
+
+- [`immich-app/immich`](https://github.com/immich-app/immich)'s `MaintenanceWorkerController` deliberately re-declares `/server/version`, `/admin/maintenance` and others for a separate worker process; 11 endpoints pair up.
+- `amplication`'s `POST /login` pair are byte-identical generated files; `novu`'s `GET /health-check` (api vs. worker) are both unguarded.
+- `ever-gauzy`'s `GET /` pair does differ — `@Public()` on one side — but that is an opt-out decorator extraction reads on neither side.
+- `apache/shenyu`'s 43 collisions are entirely inside `shenyu-examples/`, each its own `@SpringBootApplication`; `shenyu-admin` has none.
+- `spring-petclinic-microservices` is a four-service tree with zero collisions: a multi-application tree does not even imply a collision.
+
+**This is not the same as "safe", and the difference matters.** For immich and novu, the absence of bleed is measurement-limited: their authorization runs through composite decorators this extractor does not recognize at all (see the composite-decorator entry above), so there are no guards available to bleed. That is *nothing to bleed*, not *protected* — and it would stop being true the moment composite-decorator support improved.
+
+A fourth shape, recorded without a verdict: **conditional controller registration**. `novu`'s `organization.module.ts` returns `[EEOrganizationController]` or `[OrganizationController]` depending on a runtime check, so only one is ever mounted. Three collisions, identical class-level guards, no bleed observed.
+
+**Status of a fix**: [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) Amendment 2 proposes reading the version into endpoint identity, and treating a same-path collision as unknown-whether-distinct rather than silently keeping one side. It is **Proposed**, not accepted, and nothing described on this page has changed yet.
+
+**What to do about it today**: treat two matrix rows sharing a method and path as a signal that neither row's guards can be trusted — and, in Spring, that one of the two may be missing from the report entirely rather than duplicated in it. Pointing `sphinxor` at a single application's source root helps with the multi-application case, but not with the two causes above, which occur inside one application.
 
 ## A `sphinxor-allow` marker separated from its endpoint by a block comment
 
