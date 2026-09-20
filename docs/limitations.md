@@ -72,6 +72,20 @@ Those endpoints now keep an identity synthesized from their controller and handl
 
 **What to do about it today**: nothing is required — the analysis is sound. If you want these endpoints exportable, use a string literal in the decorator. Resolving constants to their declarations is a possible future improvement, recorded as the rejected-for-now alternative in that ADR.
 
+## GraphQL resolvers are not analyzed
+
+`@Resolver` classes and the `@Query`/`@Mutation`/`@Subscription`/`@ResolveField` operations they carry are outside Sphinxor's scope, per [ADR 0021](decisions/0021-graphql-out-of-scope-but-detected.md). Authorization declared on them — including `@UseGuards` and `@Roles`, which are the same decorators the REST side uses and are perfectly readable — is not extracted, and no operation appears in the matrix.
+
+The reason it is not simply added: a GraphQL operation has no HTTP method and no path, and endpoint identity, the matrix's columns, allowlist anchoring and the Cerbos exporter's resource/action mapping are all built on those ([ADR 0002](decisions/0002-intermediate-model-structure.md), [ADR 0009](decisions/0009-cerbos-exporter.md)). `@ResolveField` authorizes a field on a type, which the model has no concept of at all. Supporting GraphQL honestly is a model decision, not an extraction tweak.
+
+Since ADR 0021 this is loud. A project containing resolvers is detected and the run warns, naming the number of operations it did not analyze. Before that it was silent in the worst way: `notiz-dev/nestjs-prisma-starter`'s whole API is 16 GraphQL operations, 10 of them guarded, and Sphinxor reported the project's two hello-world REST routes with 0 findings and no caveat — [ADR 0019](decisions/0019-cli-framework-selection.md) §2's "recognized no endpoints" notice could not fire, because two is not zero.
+
+**Consequence**: the HTTP matrix for such a project is correct as far as it goes, and the warning says how far that is. A mixed REST + GraphQL project is the case to watch, not the GraphQL-only one — its REST results are complete and accurate, and that apparent completeness is what makes the unanalyzed half easy to overlook.
+
+**What to do about it today**: review resolver authorization by hand. Sphinxor will tell you it exists; it will not tell you what it requires.
+
+**Not covered**: Spring's `@QueryMapping`/`@MutationMapping`/`@SchemaMapping`. It was not surveyed during the audit that produced this entry, and it is not claimed as handled on the strength of symmetry with NestJS.
+
 ## Two controllers declaring the same route — silent, over-reports access, uncharacterized
 
 **This is the one silent, access-over-reporting gap still open in the tool.** Everything else on this page either fails loudly or errs toward under-reporting protection; this one reports an endpoint as protected when it is not, and says nothing. It is documented rather than fixed — see the last paragraph for why — but it should be read as the outstanding item on this page, not as one entry among equals.

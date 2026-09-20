@@ -17,6 +17,16 @@ construct Sphinxor could not analyze was recorded as *absent* rather than
 earned. See [ADR 0020](docs/decisions/0020-unanalyzable-is-unknown-not-absent.md)
 and its Amendment 1.
 
+- **A project exposing a GraphQL API is now told that it was not analyzed.**
+  GraphQL stays out of scope
+  ([ADR 0021](docs/decisions/0021-graphql-out-of-scope-but-detected.md)), but a
+  scope boundary the output never mentioned was indistinguishable from having
+  nothing to report. `notiz-dev/nestjs-prisma-starter`'s entire API is 16
+  resolver operations, 10 of them behind `GqlAuthGuard`; Sphinxor reported its
+  two hello-world REST routes with 0 findings and no caveat, because ADR 0019
+  §2's "recognized no endpoints" notice keys on zero endpoints and two is not
+  zero. Resolvers are now detected and the run warns, naming how many
+  operations it did not analyze. No resolver is parsed and no finding changes.
 - **A comment between a decorator and what it decorates no longer deletes
   endpoints.** In tree-sitter-typescript a comment is a named sibling, so for
   shapes as ordinary as `@Post('x') // note` the decorators were attached to

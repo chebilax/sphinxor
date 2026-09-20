@@ -279,6 +279,18 @@ func TestProjectWarnings(t *testing.T) {
 			want: "",
 		},
 		{
+			// ADR 0021 §2. The count is part of the message: "uses
+			// GraphQL" and "16 operations were not analyzed" land
+			// differently on a reader deciding whether to care.
+			name: "graphql resolvers present",
+			build: func(m *model.Model) {
+				guardedEndpoint(m)
+				m.MethodSecurity = model.MethodSecurityStatus{Found: true}
+				m.GraphQL = model.GraphQLStatus{Present: true, Operations: 16}
+			},
+			want: "16 operation(s)",
+		},
+		{
 			// §4/finding E: the inverted default. Here the error runs the
 			// safe way — protection is understated — but an unexplained
 			// wall of unguarded endpoints is its own kind of wrong answer.

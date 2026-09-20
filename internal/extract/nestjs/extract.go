@@ -85,6 +85,7 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	// decorators, and the "zero resolved roles anywhere on this endpoint"
 	// check needs all of them known first.
 	b.model.GlobalGuards = detectGlobalGuards(files)
+	b.model.GraphQL = detectGraphQL(files)
 
 	b.model.AuthenticationRequirements = computeAuthenticationRequirements(&b.model, b.nextID("authreq"))
 
