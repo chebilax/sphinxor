@@ -619,6 +619,16 @@ Two properties of the real code decide the shape of the fix:
   must handle a version that is present and unreadable, which is this ADR's own
   central case.
 
+**How long this sat unread, measured on this project's own fixtures**: both NestJS
+fixtures vendored since v0.1 already declare versions — `nestjs-boilerplate` uses
+`@Controller({ path, version: '1' })` on *every* controller, and
+`awesome-nest-boilerplate` carries a `@Version('1')` on `GET /auth/me`. Neither was
+noticed, by extraction or by any test, until §7's control test asserted their absence
+and failed. A readable route discriminator sat in the validation corpus, unread, for
+the project's whole life. It is recorded because it says something about the class of
+defect: unlike a global guard or a composite decorator, nothing about this one is
+hard to see — it is one object key beside a key already being read.
+
 Spring has the same mechanism, already present in the corpus:
 `spring-boot-modules/spring-boot-5/.../apiversions/header/ProductController.java`
 declares `@GetMapping(value = "/{id}", version = "1.0")` and
@@ -706,19 +716,46 @@ and is coverage work, not this fix — the same separation Amendment 1 drew betw
 displayed as declared and is *incomplete*, and must be marked as such rather than
 presented as the whole route.
 
-**The exporter omits version-bearing endpoints.** Cerbos resource and action names
-derive from the path (ADR 0009). Two readable versions of one path would produce two
-policies with the same resource and action, and the alternative — putting the version
-into the resource name — would invent a URL structure that may not exist: cal.com's
-`VersioningType.CUSTOM` keeps the version in a header and out of the URL entirely,
-while novu's URI mode puts it in the path, and Sphinxor cannot tell which without
-parsing `bootstrap.ts`. So a version-bearing endpoint is omitted and flagged, exactly
-as §2 and §5 already omit unknowns.
+**The exporter omits an endpoint whose version could not be read, and only that.**
+An unreadable version is unknown, and §2 and §5 already settled that an unknown is not
+exportable — a policy must not be named after something Sphinxor could not read. A
+*readable* version exports exactly as it does today.
 
 This is the lint/export asymmetry [ADR 0012](0012-securityfilterchain-effective-policy.md)
 established and §2 restated: the matrix is an inventory and may show what it found
 with a caveat, while the exported policy is a deployable artifact, and a warning in a
 companion report does not make a wrong policy less wrong.
+
+#### Correction: this clause originally omitted *every* version-bearing endpoint
+
+It was accepted in that broader form on a premise stated in review and not checked:
+that "Cerbos resource and action names derive from the path." **They do not.**
+`ResourceKind` derives the resource from the **controller class name**, and the action
+is the lowercased **HTTP method** ([ADR 0009](0009-cerbos-exporter.md) §2). The path is
+used in the exporter only to decide that an endpoint with an unreadable path cannot be
+named at all; it never appears in a resource or an action.
+
+Everything the broad clause was meant to prevent therefore had nothing to attach to:
+
+- Two versions declared in **different controllers** — novu's topics pair, cal.com's
+  event-types pair, which is the shape the survey actually found — already produce
+  **different resource kinds**. There was never a collision to prevent.
+- Two versions in the **same controller and the same HTTP method** is the only real
+  collision, and the exporter has handled it since ADR 0009: `ReasonActionCollision`
+  omits every endpoint in a group whose grants disagree, and emits one correct rule
+  where they agree. No over-grant is reachable from a collapsed version in either
+  case.
+
+The cost, measured rather than argued: implemented in the accepted form, the clause
+emptied `nestjs-boilerplate`'s entire Cerbos export — all seven rules, across both its
+controllers — because every controller in it declares `version: '1'`. Any project
+using NestJS versioning uniformly would have exported nothing. That is a severe
+regression bought for no safety gain, and the narrowing above keeps the principle
+("don't export what you could not read") while dropping it.
+
+Recorded here rather than silently revised, because the premise is the part worth
+remembering: the argument was sound given what it assumed, and what it assumed was
+never verified against `translate.go`.
 
 ### §8 Two controllers declaring the same path is unknown-whether-distinct, never silently one
 
