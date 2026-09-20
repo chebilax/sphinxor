@@ -116,7 +116,7 @@ The pattern is real — 7 of the 17 measurable repositories — and in every pro
 
 A fourth shape, recorded without a verdict: **conditional controller registration**. `novu`'s `organization.module.ts` returns `[EEOrganizationController]` or `[OrganizationController]` depending on a runtime check, so only one is ever mounted. Three collisions, identical class-level guards, no bleed observed.
 
-**Status of a fix**: [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) Amendment 2 proposes reading the version into endpoint identity, and treating a same-path collision as unknown-whether-distinct rather than silently keeping one side. It is **Proposed**, not accepted, and nothing described on this page has changed yet.
+**Status of a fix**: [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) Amendment 2 is **Accepted** and covers both causes — reading the version into endpoint identity (§7), and treating a same-path collision as unknown-whether-distinct rather than silently keeping one side, with a warning conditioned on the colliding endpoints' guards actually differing (§8). It is not implemented yet, so everything described on this page is still current behaviour.
 
 **What to do about it today**: treat two matrix rows sharing a method and path as a signal that neither row's guards can be trusted — and, in Spring, that one of the two may be missing from the report entirely rather than duplicated in it. Pointing `sphinxor` at a single application's source root helps with the multi-application case, but not with the two causes above, which occur inside one application.
 

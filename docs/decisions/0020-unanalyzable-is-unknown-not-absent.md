@@ -8,7 +8,7 @@ Accepted (§1–§4, implemented).
 is unchanged; the amendment extends its reach to two mechanisms the original text
 did not examine.
 
-**Amendment 2 (§7–§8): Proposed.** See *Amendment 2* below. Same principle again,
+**Amendment 2 (§7–§8): Accepted.** See *Amendment 2* below. Same principle again,
 at a seventh and eighth mechanism — a route-discriminating `version` that is read
 past, and a path prefix applied by runtime configuration. Both were found by
 measuring the duplicate-route limitation across 17 real repositories.
@@ -489,7 +489,11 @@ project-level warning, not a GraphQL parser. It gets its own small ADR once §5 
 
 ## Status
 
-Proposed.
+Accepted.
+
+§8's warning criterion was narrowed during review, from every same-path collision to
+only those whose guards differ. The reasoning is recorded in §8 and in
+*Alternatives considered*; the measurement that motivated it is unchanged.
 
 ## Context
 
@@ -702,14 +706,19 @@ and is coverage work, not this fix — the same separation Amendment 1 drew betw
 displayed as declared and is *incomplete*, and must be marked as such rather than
 presented as the whole route.
 
-**Open decision for the exporter, deliberately not settled here.** Cerbos resource
-and action names derive from the path (ADR 0009). Two readable versions of one path
-would produce two policies with the same resource and action. The options are to
-include the version in the resource name, or to omit version-bearing endpoints as
-§2 and §5 already omit unknown ones. The recommendation is **omission**, because a
-resource name containing a version that Sphinxor could not confirm reaches the URL
-(see the paragraph above) is a name it has not earned — but this is a public-format
-question and it is flagged for decision rather than chosen in passing.
+**The exporter omits version-bearing endpoints.** Cerbos resource and action names
+derive from the path (ADR 0009). Two readable versions of one path would produce two
+policies with the same resource and action, and the alternative — putting the version
+into the resource name — would invent a URL structure that may not exist: cal.com's
+`VersioningType.CUSTOM` keeps the version in a header and out of the URL entirely,
+while novu's URI mode puts it in the path, and Sphinxor cannot tell which without
+parsing `bootstrap.ts`. So a version-bearing endpoint is omitted and flagged, exactly
+as §2 and §5 already omit unknowns.
+
+This is the lint/export asymmetry [ADR 0012](0012-securityfilterchain-effective-policy.md)
+established and §2 restated: the matrix is an inventory and may show what it found
+with a caveat, while the exported policy is a deployable artifact, and a warning in a
+companion report does not make a wrong policy less wrong.
 
 ### §8 Two controllers declaring the same path is unknown-whether-distinct, never silently one
 
@@ -718,28 +727,67 @@ When two controllers in one analyzed tree declare the same absolute route — af
 whether a runtime prefix, a conditional registration, or a separate application
 mount separates them.
 
-- **Neither endpoint is dropped and neither is merged.** Both are extracted, both
-  keep an identity (synthesized per §5 where the path-derived one would collide),
-  and each keeps only its own guards. This is what restores
-  `mutating-endpoint-without-access-control` on yudao's `AppMemberUserController`.
-- **The run says so**, at project level, naming the colliding paths and the
-  controllers that declare them, and stating that the tool cannot tell whether they
-  are the same endpoint.
-- **`sphinxor export cerbos` omits them**, per ADR 0009 §3: a policy must not be
-  named after a route whose real prefix is unknown.
+The section has two halves, and they are conditioned differently. Keeping the
+endpoints apart is **unconditional**, because it is the correctness fix. Telling the
+user about it is **conditional**, because the measurement says most collisions have
+nothing to tell.
+
+**Unconditionally — neither endpoint is dropped and neither is merged.** Both are
+extracted, both keep an identity (synthesized per §5 where the path-derived one would
+collide), and each keeps only its own guards. This is what restores
+`mutating-endpoint-without-access-control` on yudao's `AppMemberUserController`, and
+it must not be made conditional on anything: a collision whose guards look identical
+today because none were recognized is exactly the case where an endpoint would
+silently disappear, which is the defect being fixed.
+
+**Conditionally — the run warns only when the colliding endpoints' guards differ.**
+Same guards on both sides means there is nothing to bleed and the warning would carry
+no information. Differing guards — yudao's `@PreAuthorize` on one side and nothing on
+the other — is the dangerous case, and there the warning is essential. It names the
+colliding paths and the controllers that declare them, and states that the tool
+cannot tell whether they are the same endpoint.
+
+**`sphinxor export cerbos` omits a colliding endpoint** regardless of the warning
+criterion, per ADR 0009 §3: a policy must not be named after a route whose real
+prefix is unknown, and whether the two sides' guards happen to match says nothing
+about whether the path is right.
 
 This is deliberately *not* framed as per-application scoping. The measurement says
 application boundaries are neither necessary nor sufficient: yudao's colliding pair
 is in one application and one Maven module, and petclinic's four applications
 collide on nothing.
 
-**The cost, stated plainly, because it is the argument against this section**: the
-warning will fire on benign collisions, which the measurement says are the common
-ones. After §7 removes the version pairs, it would still fire on immich (11),
-`shenyu` (43, all in example applications), `amplication` (2), `ever-gauzy` (1),
-novu (6), and `tutorials` (204 — a corpus nobody lints whole). It is a warning about
-the model's uncertainty, not a finding against an endpoint, and it does not gate CI;
-that is the proportion this choice rests on.
+### Why the criterion is guard difference, and the objection to it
+
+Warning on every collision was the first draft of this section, and it does not
+survive the measurement it was written from. After §7 removes the version pairs it
+would fire on `tutorials` (202), `shenyu` (43, all in example applications), immich
+(11), novu (6), `amplication` (2) and `ever-gauzy` (1) — every one of them a category
+the same survey proved benign, with zero guard bleed in every production instance.
+That is not a loud failure, it is a wall nobody reads, and it lands on the noise floor
+this project pins deliberately (`TestAnalyzeDirectory_RealProjectStaysQuiet`,
+`internal/cli/analyze_test.go`, which exists to catch §1–§4's caveats becoming
+meaningless through overuse). A caveat that fires mostly where nothing is wrong
+teaches the reader to skip it, and then it is not there when yudao needs it.
+
+Conditioned on guard difference, the same survey leaves **47 warnings in
+`ruoyi-vue-pro` and 13 in `tutorials`, and none anywhere else** — which is, precisely,
+the set of collisions where an endpoint is reported carrying protection it does not
+have.
+
+**The obvious objection, stated rather than left implicit**: for immich and novu,
+"the guards are the same" currently means "no guards were recognized on either side",
+because their authorization runs through composite decorators extraction cannot read
+at all. The equality is a measurement artifact, not a fact about those applications.
+
+This is accepted, and it is arguably the right behaviour rather than a tolerated
+weakness. The criterion tracks *what the tool actually knows*, which is the only
+honest basis available to it: Sphinxor warns when it can see a difference that would
+bleed, and stays quiet when it cannot see one. If composite-decorator support
+improves and real differences surface in those repositories, the warning wakes up on
+its own, without this decision being revisited. The failure mode is a warning that
+arrives late, never one that asserts safety — and the endpoints stay separated
+throughout, by the unconditional half above, so nothing is hidden in the meantime.
 
 ## Alternatives considered
 
@@ -760,6 +808,17 @@ that is the proportion this choice rests on.
   out of scope, with ADR 0012's custom `AuthorizationManager`. The predicate is
   arbitrary Java over package names and the prefixes come from configuration
   properties.
+- **Warn on every same-path collision, not only guard-differing ones** — rejected
+  during review; see §8. It fires on 324 collisions across the survey, essentially
+  all of them in the category the same survey proved benign, against 60 under the
+  accepted criterion. The cost is not noise in the abstract: it is the caveat
+  mechanism losing its meaning, which `TestAnalyzeDirectory_RealProjectStaysQuiet`
+  exists to prevent.
+- **Condition the *structural* fix on guards differing too** — rejected, and this is
+  the line that matters in §8. Only the warning is conditioned. Splitting the
+  endpoints only when a difference is visible would leave an endpoint silently
+  dropped in exactly the case where extraction sees no guards — which is immich's
+  and novu's situation today, and which is the defect, not a safe state.
 - **Treat a same-path collision as a `High`-confidence finding rather than a
   project-level warning** — rejected. `High` gates CI, and the measurement says the
   common case is benign; a gate that fires on immich's maintenance worker and
@@ -778,12 +837,22 @@ that is the proportion this choice rests on.
   in the shape §5 already established for paths. `internal/model` gains the identity
   constructor taking it. Both extractors gain version reading. Additive.
 - **Endpoint counts rise again**, as in Amendment 1: cal.com gains 15 endpoints,
-  novu 11, yudao 59, none of which exist in today's reports. Any project whose count
-  rises was being under-reported silently.
-- **Findings appear that did not before**, and they are true: yudao's three
-  unguarded mutating endpoints are the concrete ones.
+  novu 19, yudao 59, shenyu 75, `tutorials` 481, none of which exist in today's
+  reports. Any project whose count rises was being under-reported silently.
+- **Findings appear that did not before**, and they are true: yudao's three unguarded
+  mutating endpoints are the concrete ones. Stated honestly, because §8's conditional
+  warning does not remove it: the Spring un-drop also surfaces genuinely-unguarded
+  mutating endpoints that a same-path sibling was shadowing — up to 18 in `shenyu`
+  and 64 in `tutorials`, all `Low` and non-gating. They are correct, they are what
+  linting those applications separately already reports, and suppressing them would
+  reintroduce the silent drop. The noise floor is defended by the warning criterion,
+  not by keeping real endpoints out of the report.
+- **The §8 warning fires on 47 collisions in `ruoyi-vue-pro` and 13 in `tutorials`
+  across the whole survey, and nowhere else** — the measured effect of the criterion,
+  and the number to re-check if the criterion is ever revisited.
 - §7 must land before §8, or §8's warning fires on every version pair — 26 of the
   survey's collisions are version pairs that stop being collisions once §7 exists.
+  This ordering is a requirement, not a preference.
 - Regression tests, at the bar set in ADR 0014 and reaffirmed above — each confirmed
   to fail against current behavior before being kept, with fixtures vendored per
   ADR 0005:
@@ -801,6 +870,11 @@ that is the proportion this choice rests on.
     `PUT /member/user/update`. Today the app-side endpoint is absent from the report.
   - §8, NestJS: the immich shape — both endpoints survive, neither carries the
     other's guards.
+  - §8, warning criterion, both directions: a collision whose two sides carry the
+    same guards produces no warning; yudao's `@PreAuthorize`-versus-nothing pair
+    produces one. And `TestAnalyzeDirectory_RealProjectStaysQuiet` must still pass
+    unchanged — the existing pin on the noise floor is the regression test for this
+    criterion, not a separate one.
 - `docs/limitations.md`'s duplicate-route entry is rewritten to name these two
   causes instead of multi-application, to keep multi-application as an
   observed-but-benign case with the evidence, and to carry the measurement-limited
