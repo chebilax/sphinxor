@@ -82,7 +82,7 @@ Spring's version of "requirement as metadata" is a permission string in an annot
 | Repository | How authorization is declared | Uses | What the model records |
 |---|---|---:|---|
 | `thingsboard/thingsboard` | `@PreAuthorize("hasAnyAuthority('TENANT_ADMIN','CUSTOMER_USER')")` | 536 | **439 endpoints, 5 roles** — works |
-| `alibaba/nacos` | `@Secured(resource=…, action=ActionTypes.WRITE)` — alibaba's own annotation, not Spring's | 419 | 392 guards named `Secured`, zero roles |
+| `alibaba/nacos` | `@Secured(resource=…, action=ActionTypes.WRITE)` — alibaba's own annotation, not Spring's | 419 | 392 unrecognized annotations, no guard, zero roles |
 | `jeecgboot/JeecgBoot` | Shiro `@RequiresPermissions("airag:knowledge:add")`, `@RequiresRoles("admin")` | 223 + 27 | nothing |
 | `apolloconfig/apollo` | `@PreAuthorize(value = "@unifiedPermissionValidator.hasCreateNamespacePermission(#appId)")` | 140 | 68 guards, zero roles |
 | `yangzongzhuan/RuoYi-Vue` | `@PreAuthorize("@ss.hasPermi('system:user:edit')")` | 116 | 116 guards, zero roles |
@@ -100,7 +100,7 @@ Three things this table is saying:
 
 - **It is the same gap, not an analogous one.** `system:user:edit`, `yarnQueue:create`, and `resource=…, action=WRITE` are immich's `@Authenticated({ permission: Permission.AssetUpdate })` in Java. A requirement is named at the endpoint; something the extractor does not read enforces it; `GuardApplication{GuardName}` + `RoleReference{RawLiteral}` has no field that means "requires permission P". Counted across the Spring corpus: **1,133 permission declarations with nowhere in the model to go** — 416 Shiro permission literals, 27 Shiro role literals, 205 permission literals inside bean-call SpEL, 419 nacos `resource`/`action` pairs, 66 SCDF YAML rules.
 - **Extraction is the easy half here too.** `@ss.hasPermi('system:user:edit')` and `@RequiresPermissions("system:pluginHandler:edit")` are quoted literals in fixed positions — a dozen lines of pattern-matching each, no dataflow. What stops them is the absence of a slot, exactly as on the NestJS side. The one Spring shape where extraction is *not* the easy half is apollo's: its 140 bean calls carry no literal at all, the requirement being encoded in the method name and its arguments (`hasCreateNamespacePermission(#appId)`), which is also ABAC rather than RBAC.
-- **A guard count is not understanding, again.** nacos reports a guard on 392 of its 422 endpoints. All 392 are the `Secured` name; all 419 `resource`/`action` pairs those annotations carry are invisible. RuoYi-Vue, eladmin and apollo are the same story in miniature.
+- **A guard count is not understanding, again.** RuoYi-Vue, eladmin and apollo each report a guard on most of their endpoints — 116, 99 and 68 respectively — and a role on none. The enforcer is visible, the requirement it enforces is not. nacos used to be the extreme version of this, reporting a guard on 392 of its 422 endpoints; since [ADR 0022](decisions/0022-annotation-identity-and-unrecognized-authorization.md) it reports those as *unrecognized annotations* rather than as guards, because they are not Spring's at all — see the entry below.
 
 **The URL layer contributed roles in zero of the fourteen.** Nine projects had a `SecurityFilterChain` that [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) §2 correctly suppressed and warned about: six for declaring more than one chain (apollo, fineract, microcks, nacos, `spring-cloud-dataflow`, thingsboard), two for a single chain whose rules would not parse (dolphinscheduler, eladmin), and one for being reactive (JeecgBoot). Four had no chain this extractor recognizes at all, and warn about nothing — conductor, plus nakadi's pre-5.7 `WebSecurityConfigurerAdapter` and Shiro's `ShiroFilterFactoryBean` in shenyu and streampark. The fourteenth, RuoYi-Vue, is the one URL-layer result in the corpus that is right rather than absent: exactly one chain, parsed correctly, and it genuinely grants no roles (`permitAll` plus `anyRequest().authenticated()`).
 
@@ -170,6 +170,24 @@ A negative result from the same survey, worth recording because it was specifica
 **What to do about it today**: check the endpoint count against what the application actually serves before trusting a matrix as complete. Nothing in the current output will tell you that most of a module is missing.
 
 **Status**: measured, recorded, not fixed. No ADR proposes a change yet.
+
+## An authorization annotation this extractor cannot identify
+
+A project can declare its own annotation whose simple name is one Spring Security also uses. [`alibaba/nacos`](https://github.com/alibaba/nacos) does: `com.alibaba.nacos.auth.annotation.Secured`, carrying `resource`, `action`, `signType` and a pluggable `parser`, enforced by nacos's own `AuthFilter` and unrelated to `org.springframework.security.access.annotation.Secured`. 108 non-test files import it, 428 uses.
+
+Extraction used to match on the simple name alone and read no imports at all, so it recorded **392 Spring method-security guards** from it — and `mutating-endpoint-without-access-control` was suppressed on **242 of nacos's 245 mutating endpoints** on that basis, none of which carries any other guard. The endpoints really are protected, so the outcome was safe; it was safe by luck, on the strength of a nine-letter word. [ADR 0015](decisions/0015-inert-method-security-guard.md)'s warning also fired, advising that annotations which are not Spring's might be inert for want of `@EnableMethodSecurity`.
+
+Since [ADR 0022](decisions/0022-annotation-identity-and-unrecognized-authorization.md), a recognized name counts as a Spring annotation only when the same file's imports bind it to an accepted package. An annotation that fails that test is recorded as an **unrecognized authorization annotation** — not as a guard, and not as nothing. The scan behind that decision covered 20 real Java repositories: **every** use of `@PreAuthorize`/`@Secured`/`@RolesAllowed` has a binding import in its own file, with no same-package declarations, no wildcards standing in and no fully-qualified inline uses, so per-file extraction answers the question without a classpath.
+
+**Consequence**: an endpoint carrying one is neither confirmed protected nor confirmed unprotected. `mutating-endpoint-without-access-control` deliberately does **not** fire on it — its message, "has no detected guard or role decorator", would be false with an authorization annotation one line above the handler — so the Guards column shows `?` and the run warns, naming the package it actually resolved to and how many endpoints depend on it. Naming the package rather than the simple name is the point: `@Secured` alone reads as Spring's.
+
+**What is still unknown, and it is the important part**: *what that annotation requires*. nacos's 419 `resource`/`action` pairs remain unextracted, for the reason given in *Permissions as metadata* above — the model has no field for a permission. ADR 0022 changed what Sphinxor claims, not what it understands.
+
+**The accepted risk, stated rather than buried**: if such an annotation is decorative — declared but never enforced — Sphinxor now stays quiet where it previously accused. That is a real lost finding, traded deliberately: a false negative on a rare case (a home-grown authorization annotation that enforces nothing) against a false positive on a common one (a home-grown authorization annotation that works), 242 times on nacos alone. It is not silence — the annotation is recorded, the row is marked, and the warning names the package so a reader can check the one thing the tool cannot.
+
+**One cosmetic gap, unexercised and deliberately not fixed**: `sphinxor export cerbos` omits such an endpoint under the `no-guard` reason, which understates what is known about it. No project in the corpus reaches that path — nacos's export is already omitted wholesale for its unreadable URL layer — and inventing a reason code for a case no measured project exhibits would be building ahead of evidence, which this project declines to do elsewhere for the same reason.
+
+**What to do about it today**: read the annotation the warning names. If it genuinely enforces authorization, the affected endpoints are protected and Sphinxor simply cannot say by what; if it does not, they are unprotected and nothing in the report will tell you so.
 
 ## Spring: `SecurityFilterChain` beyond simple, single-chain patterns
 

@@ -20,12 +20,18 @@ import (
 //
 //   - @Secured({}) was read, and is empty. empty-role must fire — this is
 //     the case the rule exists for.
-//   - @Secured(resource = ..., action = ...) was not read at all. It is
-//     alibaba/nacos's own same-named annotation (392 of the 675), and
-//     empty-role must not fire, because nothing is known about what it
-//     requires.
+//   - @Secured(Roles.ADMIN) was not read at all — a constant reference,
+//     which Spring accepts and this extractor cannot resolve. empty-role
+//     must not fire, because nothing is known about what it requires.
+//
+// The nacos shape that supplied 392 of the 675 — @Secured(resource = ...,
+// action = ...) from com.alibaba.nacos.auth.annotation — is deliberately
+// NOT tested here. Under ADR 0022 it is not a Spring annotation at all
+// and never reaches this code path; it is covered in imports_test.go.
 func TestRolesUnresolved_DeclaredEmptyVersusUnread(t *testing.T) {
 	src := `
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.access.annotation.Secured;
 @RestController
 @RequestMapping("/api")
 public class ThingController {
@@ -33,9 +39,9 @@ public class ThingController {
     @PostMapping("/declared-empty")
     public void declaredEmpty() {}
 
-    @Secured(resource = "nacos/thing", action = ActionTypes.WRITE)
-    @PostMapping("/unread-named-attributes")
-    public void unreadNamedAttributes() {}
+    @Secured(Roles.ADMIN)
+    @PostMapping("/unread-constant-reference")
+    public void unreadConstantReference() {}
 
     @PreAuthorize("@ss.hasPermi('system:user:edit')")
     @PostMapping("/unread-bean-call")
@@ -68,7 +74,7 @@ public class ThingController {
 		why            string
 	}{
 		{"declaredEmpty", false, "@Secured({}) is an empty array literal: read, and genuinely empty"},
-		{"unreadNamedAttributes", true, "@Secured(resource=..., action=...) carries no string array to read"},
+		{"unreadConstantReference", true, "@Secured(Roles.ADMIN) is a constant reference, not a readable string array"},
 		{"unreadBeanCall", true, "a bean-call SpEL expression is outside the recognized subset"},
 		{"resolved", false, "@Secured({\"ROLE_ADMIN\"}) resolves normally"},
 	} {
@@ -100,6 +106,7 @@ public class ThingController {
 // so a later change to §9's classification cannot quietly retire it.
 func TestRolesUnresolved_PermitAllStillFires(t *testing.T) {
 	src := `
+import org.springframework.security.access.prepost.PreAuthorize;
 @RestController
 public class ThingController {
     @PreAuthorize("permitAll()")

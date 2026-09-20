@@ -52,6 +52,11 @@ var httpMappingAnnotations = map[string]model.HTTPMethod{
 // `produces`) are two real places in the source a developer could put a
 // marker above, and either should exempt the endpoint they share.
 func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID) {
+	// ADR 0022 §1: annotation identity is a per-file question, answered
+	// from this file's own imports. Parsed once per file rather than per
+	// annotation.
+	imports := parseImports(root, src)
+
 	for _, decl := range namedChildren(root) {
 		if decl.Type() != "class_declaration" {
 			continue
@@ -95,7 +100,7 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			Line:     int(decl.StartPoint().Row) + 1,
 		})
 
-		classGuards := pendingGuardsFromAnnotations(classAnns, src, file, roleByName)
+		classGuards, classUnrecognized := pendingGuardsFromAnnotations(classAnns, src, file, roleByName, imports)
 
 		body := decl.ChildByFieldName("body")
 		for _, member := range namedChildren(body) {
@@ -203,12 +208,14 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 				// exact same class-level annotations by construction).
 				b.curEndpoint = idx
 				b.applyGuards(endpointID, classGuards, model.ScopeClass)
+				b.applyUnrecognized(endpointID, classUnrecognized, model.ScopeClass)
 			}
 			b.anchorOwner = append(b.anchorOwner, idx)
 			b.curEndpoint = idx
 
-			methodGuards := pendingGuardsFromAnnotations(methodAnns, src, file, roleByName)
+			methodGuards, methodUnrecognized := pendingGuardsFromAnnotations(methodAnns, src, file, roleByName, imports)
 			b.applyGuards(endpointID, methodGuards, model.ScopeMethod)
+			b.applyUnrecognized(endpointID, methodUnrecognized, model.ScopeMethod)
 		}
 	}
 }

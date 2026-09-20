@@ -54,6 +54,48 @@ type Model struct {
 	// RouteCollisions records every route declared by more than one
 	// controller in the analyzed tree — ADR 0020 Amendment 2 §8.
 	RouteCollisions []RouteCollision
+	// UnrecognizedAuthAnnotations records access-control annotations that
+	// were found on an endpoint and could not be identified — ADR 0022.
+	UnrecognizedAuthAnnotations []UnrecognizedAuthAnnotation
+}
+
+// UnrecognizedAuthAnnotation is an annotation that carries a recognized
+// method-security name but is not bound to a package that makes it the
+// real thing — docs/decisions/0022-annotation-identity-and-unrecognized-authorization.md
+// §2. alibaba/nacos's com.alibaba.nacos.auth.annotation.Secured is the
+// case that produced this type: 428 uses of a name Spring also uses, for
+// an unrelated annotation enforced by nacos's own filter.
+//
+// It is deliberately NOT a GuardApplication with a "recognized" flag.
+// ADR 0011 §1 found two consumers silently depending on a GuardApplication
+// convention they did not check; a flag here would repeat that exactly,
+// since every rule, exporter and report that did not know to test it would
+// count the annotation as protection — which is the defect ADR 0022 fixes.
+// A separate collection cannot be mistaken for a guard by code that has
+// never heard of it.
+//
+// What it means: an endpoint carrying one is neither confirmed protected
+// nor confirmed unprotected. It is specifically NOT the same state as an
+// endpoint with nothing on it, which is why
+// internal/lint/mutating_endpoint.go skips these (ADR 0022 §3) — that
+// rule's message would be false on its face.
+type UnrecognizedAuthAnnotation struct {
+	ID         ID
+	EndpointID ID
+	// Name is the annotation's simple name as written, e.g. "Secured".
+	Name string
+	// BoundTo is the fully-qualified name this file's imports bound Name
+	// to, e.g. "com.alibaba.nacos.auth.annotation.Secured". Empty when
+	// nothing in the file bound it at all, which is itself a reason not
+	// to treat it as Spring's.
+	//
+	// The warning names this rather than Name, deliberately: "@Secured"
+	// alone reads as Spring's, which is the confusion this whole decision
+	// exists to remove (ADR 0022 §3a).
+	BoundTo   string
+	AppliedAt GuardScope
+	File      string
+	Line      int
 }
 
 // RouteCollision is one route declared by two or more different

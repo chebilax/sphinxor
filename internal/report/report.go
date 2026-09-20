@@ -57,8 +57,14 @@ type Row struct {
 	// since "-" reads as "no role required"; JSON consumers get the flag.
 	// Roles already listed are still real — they are just not known to be
 	// the whole requirement.
-	RolesUnresolved bool            `json:"rolesUnresolved,omitempty"`
-	Findings        []model.Finding `json:"findings,omitempty"`
+	RolesUnresolved bool `json:"rolesUnresolved,omitempty"`
+	// UnrecognizedAuth marks an endpoint carrying an access-control
+	// annotation this tool could not identify (ADR 0022 §2). Markdown
+	// renders the Guards cell "?" rather than "-": "-" says nothing
+	// guards this endpoint, which is the false claim that decision
+	// exists to stop.
+	UnrecognizedAuth bool            `json:"unrecognizedAuth,omitempty"`
+	Findings         []model.Finding `json:"findings,omitempty"`
 }
 
 // Matrix is the full RBAC matrix: one row per endpoint, plus every
@@ -80,6 +86,11 @@ func BuildMatrix(m *model.Model, findings []model.Finding) Matrix {
 
 	guardsByEndpoint := make(map[model.ID][]string)
 	guardAppByID := make(map[model.ID]model.GuardApplication, len(m.GuardApplications))
+	unrecognizedByEndpoint := make(map[model.ID]bool, len(m.UnrecognizedAuthAnnotations))
+	for _, a := range m.UnrecognizedAuthAnnotations {
+		unrecognizedByEndpoint[a.EndpointID] = true
+	}
+
 	rolesUnresolvedByEndpoint := make(map[model.ID]bool)
 	for _, g := range m.GuardApplications {
 		guardAppByID[g.ID] = g
@@ -123,6 +134,7 @@ func BuildMatrix(m *model.Model, findings []model.Finding) Matrix {
 			Guards:            guardsByEndpoint[e.ID],
 			Roles:             rolesByEndpoint[e.ID],
 			RolesUnresolved:   rolesUnresolvedByEndpoint[e.ID],
+			UnrecognizedAuth:  unrecognizedByEndpoint[e.ID],
 			Findings:          findingsByEndpoint[e.ID],
 		})
 	}

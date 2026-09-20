@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A Spring method-security annotation is now identified by its import, not
+  just its name.** `@PreAuthorize`, `@Secured` and `@RolesAllowed` were
+  matched on simple name alone, so any annotation spelled that way — from
+  any package — became a Spring Security guard. `alibaba/nacos` declares its
+  own `com.alibaba.nacos.auth.annotation.Secured` (108 non-test files, 428
+  uses), and Sphinxor recorded **392 Spring guards** from it, suppressing
+  `mutating-endpoint-without-access-control` on **242 of nacos's 245
+  mutating endpoints**. Those endpoints are genuinely protected — by nacos's
+  own filter — so the result was right for a reason the tool never
+  established.
+
+  A recognized name now counts only when the same file's imports bind it to
+  an accepted package. Scanned across 20 real Java repositories, every use
+  has such an import in its own file, so this needs no classpath.
+
+  An annotation that fails the test is **not** discarded: it is recorded as
+  an unrecognized authorization annotation, the Guards column shows `?`, and
+  the run warns naming the package it actually came from and how many
+  endpoints carry it. `mutating-endpoint-without-access-control` does not
+  fire on those endpoints — its message would be false with an authorization
+  annotation one line above the handler — so nacos stays at 3 findings
+  rather than jumping to 245. ADR 0015's "these may be inert" warning also
+  stops firing on annotations that were never Spring's.
+
+  Exactly one repository in the corpus changed. See
+  [ADR 0022](docs/decisions/0022-annotation-identity-and-unrecognized-authorization.md).
+
 - **`empty-role` no longer fails the build on a role requirement Sphinxor
   could not read.** On Spring, presence and role-check are fused into one
   annotation (ADR 0011 §1), so an annotation whose content was outside the

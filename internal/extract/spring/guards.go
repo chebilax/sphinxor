@@ -6,6 +6,12 @@ import (
 
 // methodSecurityAnnotations are the recognized method-security annotation
 // names, per docs/decisions/0011-spring-second-framework.md §1.
+//
+// A name here is necessary but NOT sufficient: ADR 0022 §1 requires the
+// file's imports to bind the name to a package that makes it the real
+// Spring (or JSR-250) annotation. Matching on the name alone treated
+// alibaba/nacos's own @Secured as Spring method security, 392 times. See
+// acceptedAnnotationPackages in imports.go for the bindings.
 var methodSecurityAnnotations = map[string]bool{
 	"PreAuthorize": true,
 	"Secured":      true,
@@ -37,20 +43,49 @@ type pendingGuard struct {
 	line            int
 }
 
+// pendingUnrecognized is one annotation that carried a recognized name
+// without a binding that makes it Spring's — ADR 0022 §2. It is kept
+// apart from pendingGuard all the way through so that no code path can
+// turn it into a GuardApplication by accident.
+type pendingUnrecognized struct {
+	name    string
+	boundTo string
+	file    string
+	line    int
+}
+
 type roleArg struct {
 	raw    string
 	declID *model.ID
 }
 
 // pendingGuardsFromAnnotations builds one pendingGuard per recognized
-// method-security annotation found in anns.
-func pendingGuardsFromAnnotations(anns []annotationCall, src []byte, file string, roleByName map[string]model.ID) []pendingGuard {
+// method-security annotation found in anns, and one pendingUnrecognized
+// per annotation whose name is recognized but whose import binding is not
+// (ADR 0022 §1/§2).
+//
+// The two are returned separately rather than as one list with a flag, so
+// that a caller cannot treat an unidentified annotation as a guard by
+// forgetting to check a field — the failure mode ADR 0011 §1 documented
+// and ADR 0022 §2 refuses to repeat.
+func pendingGuardsFromAnnotations(anns []annotationCall, src []byte, file string, roleByName map[string]model.ID, imports importTable) ([]pendingGuard, []pendingUnrecognized) {
 	var out []pendingGuard
+	var unknown []pendingUnrecognized
 	for _, ann := range anns {
 		if !methodSecurityAnnotations[ann.Name] {
 			continue
 		}
 		line := int(ann.Node.StartPoint().Row) + 1
+
+		// ADR 0022 §1: the name is not the annotation. Without a binding
+		// to an accepted package this is someone else's annotation that
+		// happens to share a word, and recording it as a Spring guard
+		// would assert protection this extractor never established.
+		boundTo, accepted := imports.resolveAnnotation(ann.Name)
+		if !accepted {
+			unknown = append(unknown, pendingUnrecognized{name: ann.Name, boundTo: boundTo, file: file, line: line})
+			continue
+		}
 
 		if ann.Name == "PreAuthorize" {
 			lit, ok := stringLiteralValue(soleStringLiteralArg(ann.Args), src)
@@ -96,7 +131,25 @@ func pendingGuardsFromAnnotations(anns []annotationCall, src []byte, file string
 			line:            line,
 		})
 	}
-	return out
+	return out, unknown
+}
+
+// applyUnrecognized materializes unidentified access-control annotations
+// against endpointID (ADR 0022 §2). Nothing here touches
+// GuardApplications: these are evidence that something protects the
+// endpoint, not a claim about what.
+func (b *builder) applyUnrecognized(endpointID model.ID, anns []pendingUnrecognized, scope model.GuardScope) {
+	for _, a := range anns {
+		b.model.UnrecognizedAuthAnnotations = append(b.model.UnrecognizedAuthAnnotations, model.UnrecognizedAuthAnnotation{
+			ID:         b.nextIDFor("unrecognizedauth"),
+			EndpointID: endpointID,
+			Name:       a.name,
+			BoundTo:    a.boundTo,
+			AppliedAt:  scope,
+			File:       a.file,
+			Line:       a.line,
+		})
+	}
 }
 
 func resolveRoleArgs(literals []string, roleByName map[string]model.ID) []roleArg {

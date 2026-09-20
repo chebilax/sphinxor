@@ -195,6 +195,15 @@ func projectWarnings(m *model.Model) []string {
 			"         rather than merged; `sphinxor export cerbos` omits them.")
 	}
 
+	// ADR 0022 §3a: an access-control annotation that could not be
+	// identified. Named by the package it actually resolved to, not by
+	// its simple name — "@Secured" alone reads as Spring's, which is the
+	// confusion that decision exists to remove — and with a count, so the
+	// reader knows how much of the report leans on it.
+	for _, u := range unrecognizedAuthSummary(m) {
+		out = append(out, u)
+	}
+
 	// Amendment 3 §11: annotations whose role requirement could not be
 	// read. Suppressing the empty-role finding alone would satisfy that
 	// amendment's letter and break its spirit — a silently empty Roles
@@ -303,4 +312,44 @@ func unresolvedRoleEndpoints(m *model.Model) int {
 		}
 	}
 	return len(affected)
+}
+
+// unrecognizedAuthSummary builds one warning per distinct unidentified
+// access-control annotation (ADR 0022 §3a), naming the package it
+// actually bound to and how many endpoints carry it.
+//
+// Grouped by binding rather than emitted per endpoint: 392 identical
+// lines would bury every other caveat in the run, and the actionable
+// facts are which annotation and how much of the report depends on it.
+func unrecognizedAuthSummary(m *model.Model) []string {
+	endpointsBy := make(map[string]map[model.ID]bool)
+	for _, a := range m.UnrecognizedAuthAnnotations {
+		key := a.BoundTo
+		if key == "" {
+			// Nothing in the file bound the name at all, which is itself
+			// why it could not be accepted. Say that rather than printing
+			// an empty package.
+			key = "@" + a.Name + " (no import binds this name in the file where it is used)"
+		}
+		if endpointsBy[key] == nil {
+			endpointsBy[key] = make(map[model.ID]bool)
+		}
+		endpointsBy[key][a.EndpointID] = true
+	}
+
+	keys := make([]string, 0, len(endpointsBy))
+	for k := range endpointsBy {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, strconv.Itoa(len(endpointsBy[k]))+" endpoint(s) carry "+k+", which is not a\n"+
+			"         Spring Security method-security annotation this tool recognizes. They are NEITHER\n"+
+			"         confirmed protected NOR confirmed unprotected: something is guarding them and\n"+
+			"         Sphinxor cannot say what it requires. `mutating-endpoint-without-access-control` is\n"+
+			"         deliberately not reported for them, and their Guards column is marked ?.")
+	}
+	return out
 }
