@@ -38,7 +38,7 @@ A composite outside this bounded shape isn't guessed at — it falls back to exa
 
 ## Permissions as metadata: the model has no concept for how production code actually authorizes
 
-This is the largest gap recorded in this file, and it is **not an extraction gap**. Extending composite-decorator resolution cannot close it at any depth. It is a question about [ADR 0002](decisions/0002-intermediate-model-structure.md)'s model, and it is deliberately left open here rather than answered — no ADR has been written, and nothing below proposes one.
+This is the largest gap recorded in this file, and it is **not an extraction gap**. Extending composite-decorator resolution cannot close it at any depth. It is a question about [ADR 0002](decisions/0002-intermediate-model-structure.md)'s model, and it is deliberately left open here rather than answered — **no ADR closes it, and nothing below proposes one.** [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) Amendment 3, referenced under *Consequence today*, fixed how one consequence of this gap was *reported*; it did not make the tool understand a permission, and it was never meant to.
 
 It was first found on NestJS and recorded here as a NestJS finding, with whether it generalized left explicitly unanswered. It has since been surveyed on Spring as well. **It generalizes**: the same model gap, under syntax that looks nothing alike. Both surveys are below, along with the one place the two frameworks genuinely differ, which is not smoothed over.
 
@@ -133,7 +133,7 @@ So any future answer has at least three parts, and only the first is extraction:
 
 Every endpoint in every one of these projects is reported with an empty `Roles` column. On NestJS the mutating ones among them are flagged by `mutating-endpoint-without-access-control` at Low confidence — the safe direction, and the [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) §4 global-guard warning fires on the projects that register one, so a run does not present these results as a complete picture.
 
-**On Spring the consequence is worse, and it is not hedged.** ADR 0011 §1 fuses guard and role-carrier — `@PreAuthorize`/`@Secured` is simultaneously "this endpoint is protected" and "this is what it requires" — so a recognized-but-unresolved annotation is recorded with `DeclaresRoles: true` and zero `RoleReference`s, which is precisely `empty-role`'s trigger, at **High** confidence, which gates CI. The survey measured **675 High-confidence findings across four repositories** (nacos 392, RuoYi-Vue 116, eladmin 99, apollo 68), every one of them invented:
+**On Spring this gap used to do something worse than under-report — it broke the build, and that is fixed.** ADR 0011 §1 fuses guard and role-carrier — `@PreAuthorize`/`@Secured` is simultaneously "this endpoint is protected" and "this is what it requires" — so a recognized-but-unresolved annotation was recorded with `DeclaresRoles: true` and zero `RoleReference`s, which is precisely `empty-role`'s trigger, at **High** confidence, which gates CI. The survey measured **675 High-confidence findings across four repositories** (nacos 392, RuoYi-Vue 116, eladmin 99, apollo 68), every one invented:
 
 ```
 @PreAuthorize() on GET /monitor/cache declares no roles      # really: @ss.hasPermi('monitor:cache:list')
@@ -141,9 +141,11 @@ Every endpoint in every one of these projects is reported with an empty `Roles` 
 @Secured() on POST / declares no roles                       # really: resource=…, action=WRITE
 ```
 
-A user pointing Sphinxor at RuoYi-Vue today gets a failing build on 116 findings that describe nothing real. Where NestJS's version of this gap produces a hedged Low-confidence flag worth a human look, Spring's breaks the build.
+Since [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) Amendment 3, a role list that could not be *read* is distinguished from one the source declares *empty*. `empty-role` fires only on the latter — `@Secured({})`, NestJS's `@Roles()` — so all 675 are gone and all four projects exit zero. What replaces them is a warning naming the count and a `?` in the Roles cell, because suppressing the finding without saying anything would leave the same absent-looking output that ADR 0020 exists to stop. A `-` there would claim no role is required; `?` says the requirement exists and was not recovered.
 
-But the scale should be stated plainly for both: on a production application in either framework, the RBAC matrix this tool exists to produce currently has **no role data in it at all** — with `thingsboard` as the single surveyed exception.
+The gap itself is unchanged, and that is the point: the tool now under-reports honestly instead of accusing the code of something the file in front of you disproves. The same fix removed 5 instances of that false positive from this repository's own vendored `ruoyi-vue-pro` fixture, where they had sat unnoticed since it was added for an unrelated decision.
+
+But the scale should be stated plainly for both: on a production application in either framework, the RBAC matrix this tool exists to produce currently has **no role data in it at all** — with `thingsboard` as the single surveyed exception. Amendment 3 changed how honestly that emptiness is presented, not how empty it is.
 
 **What to do about it today**: nothing at the endpoint level recovers the permission — `sphinxor-allow` marks an endpoint as reviewed, it does not read what the endpoint requires. Treat the matrix for such a project as a route inventory with authentication hints, not as an authorization model.
 

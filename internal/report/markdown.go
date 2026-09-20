@@ -27,7 +27,7 @@ func writeMarkdown(w io.Writer, matrix Matrix) error {
 			row.Handler,
 			row.Controller,
 			joinOrDash(row.Guards),
-			joinOrDash(row.Roles),
+			renderRoles(row),
 			findingSummaries(row.Findings),
 		)
 	}
@@ -64,6 +64,22 @@ func countByStatus(findings []model.Finding) (blocking, warnings, allowlisted in
 		}
 	}
 	return blocking, warnings, allowlisted
+}
+
+// renderRoles shows an endpoint's role requirement, marking the case
+// where part or all of it could not be read (ADR 0020 Amendment 3 §11).
+// "-" means "no role required" and would be a claim; "?" says the
+// requirement exists and was not recovered. An endpoint with some roles
+// read and another annotation unread gets both, since the roles shown are
+// real but are not known to be the whole list.
+func renderRoles(row Row) string {
+	if !row.RolesUnresolved {
+		return joinOrDash(row.Roles)
+	}
+	if len(row.Roles) == 0 {
+		return "?"
+	}
+	return strings.Join(row.Roles, ", ") + ", ?"
 }
 
 func joinOrDash(items []string) string {

@@ -13,6 +13,13 @@ at a seventh and eighth mechanism — a route-discriminating `version` that is r
 past, and a path prefix applied by runtime configuration. Both were found by
 measuring the duplicate-route limitation across 17 real repositories.
 
+**Amendment 3 (§9–§11): Accepted.** See *Amendment 3* below. A ninth mechanism — a
+role list that could not be read, recorded as a role list declared empty. Found by
+surveying 14 production Spring repositories, where it was producing 675
+High-confidence, CI-gating false positives across four of them. This is the first
+member of the family to reach a **blocking** finding, and the first to require a
+lint rule's stated rationale be rewritten rather than only its behaviour changed.
+
 ## Context
 
 A blind-spot audit across the documented limitations and several new real
@@ -932,3 +939,271 @@ throughout, by the unconditional half above, so nothing is hidden in the meantim
   check, so only one is ever mounted. Three collisions, identical class-level guards,
   no bleed observed. §8 covers it correctly by treating it as unknown; nothing
   further is proposed for it here.
+
+---
+
+# Amendment 3 — an **unresolved role list** recorded as an empty one
+
+## Status
+
+Accepted and implemented.
+
+§10 was confirmed during review rather than changed: `permitAll()`/`denyAll()` keep
+ADR 0017's behaviour, on the grounds that a settled decision should not be reversed
+as a side effect of an unrelated fix, and that whether `empty-role` should fire on
+`permitAll()` deserves its own ADR and its own measurement.
+
+## Why this is an amendment to 0020 and not a new ADR, or an amendment to 0011
+
+The mechanism corrected here was created by [ADR 0011](0011-spring-second-framework.md)
+§1's guard/role fusion, and [ADR 0017](0017-declaresroles-excludes-isauthenticated.md)
+already corrected that same fusion once. So there are three plausible homes, and the
+choice is argued rather than assumed.
+
+It belongs here because **the principle being applied is this ADR's, and this ADR
+claimed the case in advance.** *The principle* above says a thing Sphinxor could not
+analyze is recorded as *unknown*, never as *absent*, and states that it "is intended to
+pre-decide the next member of this family rather than waiting for it to be found in
+an audit." This is that next member, arriving exactly as predicted: an
+*unreadable role list* recorded as an *empty role list*. The family's previous
+members were a matcher, a layer, a path and a version; the only new thing here is
+which field it happens to.
+
+It does not belong in ADR 0011 because 0011 decides which framework is supported and
+how its syntax maps to the model; it does not own what an unreadable thing means, and
+the fix reaches into a framework-independent lint rule (`internal/lint/empty_role.go`)
+that 0011 has no jurisdiction over. It does not deserve a new number because a new
+number would restate this ADR's principle in order to apply it, which is what
+amendments exist to avoid.
+
+**How this differs from ADR 0017, which corrected the same fusion.** ADR 0017 moved
+one SpEL shape out of `DeclaresRoles` because that shape has a *positive* meaning the
+model can express: `isAuthenticated()` means "authenticated, any role", and
+`AuthenticationRequirement` exists to say so. This amendment is the opposite case:
+these shapes have no known meaning at all, because they were not read. ADR 0017 was
+about a misclassification; this is about a missing distinction. That is why it does
+not extend 0017's carve-out list — adding shapes to `DeclaresRoles: false` would
+assert they require no role, which is precisely what is not known.
+
+## Context
+
+### I. A role list that could not be read is indistinguishable from one declared empty
+
+`GuardApplication.DeclaresRoles` says "this guard carries the endpoint's role
+requirement as a `RoleReference` list." The model records the list. It does not record
+whether the list is empty *because the source says so* or *because extraction could
+not read the source*. `internal/lint/empty_role.go` fires on the conjunction
+`DeclaresRoles && zero RoleReferences`, which both states satisfy.
+
+ADR 0011 §1 makes this collision far more likely on Spring than on NestJS, by design:
+presence and role-check are fused, so *every* recognized `@PreAuthorize`/`@Secured`/
+`@RolesAllowed` sets `DeclaresRoles: true` — including the ones whose content ADR 0011
+§1 deliberately declines to parse. That same section is explicit that the narrow SpEL
+subset will leave bean method calls and boolean combinations unresolved, and says they
+land "in exactly the existing 'guarded, no role' bucket ADR 0010 already defined."
+What it did not trace is that this bucket is also `empty-role`'s trigger.
+
+### The rule's stated rationale is falsified, not merely incomplete
+
+`internal/lint/empty_role.go` grades itself High on this reasoning:
+
+> Confidence: High. Unlike the other two v0.1 rules, this doesn't depend on
+> assumptions about code this extractor can't see: whether a specific role-declaring
+> construct resolved zero roles is a syntactic fact, verifiable by reading that one
+> location. There's no global-guard or missed-reference scenario that could fool it.
+
+Every clause of that is wrong for this shape. It *does* depend on code this extractor
+cannot see — the SpEL inside the string. "Resolved zero roles" is a fact about
+Sphinxor's parser, not about the source. Reading that one location **disproves** the
+finding rather than confirming it, since the requirement is sitting there in plain
+text. And there is a scenario that fools it, now measured on four real projects.
+
+This matters beyond the fix: a rule whose rationale has been disproved needs its
+rationale rewritten, not just its behaviour patched. §9 requires both.
+
+### What was measured
+
+The Spring survey recorded in `docs/limitations.md` — 14 production repositories,
+2,959 endpoints — produced **675 `empty-role` findings at High confidence, all false**,
+concentrated in four projects:
+
+| Repository | Findings | The shape that produced them |
+|---|---:|---|
+| `alibaba/nacos` | 392 | `@Secured(resource = …, action = ActionTypes.WRITE)` — named attributes, no string array |
+| `yangzongzhuan/RuoYi-Vue` | 116 | `@PreAuthorize("@ss.hasPermi('system:user:edit')")` — bean method call |
+| `elunez/eladmin` | 99 | `@PreAuthorize("@el.check('deploy:edit')")` — bean method call |
+| `apolloconfig/apollo` | 68 | `@PreAuthorize(value = "@unifiedPermissionValidator.hasCreateNamespacePermission(#appId)")` — bean method call |
+
+High confidence gates CI. **A user pointing `sphinxor lint` at RuoYi-Vue today gets a
+failing build on 116 findings, every one of which names a permission the source states
+plainly.** This is the reassuring-false-negative failure class inverted: not a missed
+risk, but a confident accusation that the code disproves on sight — and the fastest
+possible route to the tool being switched off, which `vision.md` names as the trap
+that limited adoption of general-purpose SAST in this space.
+
+Counted the other way: across all 14 repositories the run produced exactly two kinds
+of finding — `mutating-endpoint-without-access-control` at Low, and this at High. So
+this is the only unanalyzable construct in the corpus that **blocks**, where every
+other gap in `docs/limitations.md` degrades to a Low-confidence flag or a
+project-level warning.
+
+The one other place a limitation yields a blocking finding is the block-comment entry
+in `docs/limitations.md`, where a `sphinxor-allow` marker extraction cannot associate
+produces `stale-allow-marker` at High. That one is *correct*: the exemption genuinely
+did not apply, and the build failing is the intended self-announcing refusal. The
+difference is the whole point — there, a High finding tells the developer something
+true they need to act on; here, it tells them something the file in front of them
+disproves.
+
+### What is not affected, verified rather than assumed
+
+- **`sphinxor export cerbos` is already correct here** and needs no change.
+  `ReasonNoRole` already omits every endpoint that has a guard but no resolved role.
+  Confirmed by running the exporter on RuoYi-Vue: **0 rules exported, 146 omissions**.
+  The export side never trusted this state; only the lint rule did.
+- **`mutating-endpoint-without-access-control` is unaffected.** It keys on the
+  existence of a `GuardApplication`, not on its role list, and these guards are real.
+- **NestJS is unaffected.** `@Roles()` with no arguments is a genuinely empty list and
+  remains the rule's intended target, as does ADR 0006's composite exclusion.
+
+## Decision
+
+### §9 A role list that could not be read is unknown, not empty
+
+**Add `GuardApplication.RolesUnresolved bool`.** It is `true` when a guard sets
+`DeclaresRoles: true` and extraction could not resolve its role list to a set of role
+literals — as distinct from resolving it to the empty set. It is a statement about
+what extraction could read, never about what the application requires.
+
+Set `true` for:
+
+- `@PreAuthorize` whose argument is not a single string literal — a constant
+  reference, a concatenation, anything the SpEL text cannot be recovered from.
+- `@PreAuthorize` whose SpEL content is recognized as neither a role call
+  (`hasRole`/`hasAnyRole`/`hasAuthority`/`hasAnyAuthority`), nor `isAuthenticated()`,
+  nor `permitAll()`/`denyAll()` — that is, bean method calls, boolean combinations,
+  and comparisons against `#parameter` or `authentication.name`.
+- `@Secured`/`@RolesAllowed` whose arguments exist but yield no string literals —
+  named attributes (nacos's `resource = …, action = …`), a constant reference, or an
+  array none of whose elements are readable.
+
+Set `false` — so `empty-role` still fires — for:
+
+- `@Secured({})` / `@RolesAllowed({})`: an empty array literal is a role list the
+  source genuinely declares empty. **This is the case the rule exists for, and it must
+  keep firing.**
+- A bare `@Secured` / `@RolesAllowed` marker annotation with no arguments at all.
+- NestJS's `@Roles()` — unchanged in every respect.
+
+**`empty-role` skips any `GuardApplication` with `RolesUnresolved`**, and its doc
+comment is rewritten: the High grade is re-justified on the narrowed trigger (an
+empty list the source states, which reading that one location does confirm), and the
+falsification above is recorded there so the rationale cannot quietly drift back.
+
+### §10 `permitAll()` / `denyAll()` keep their current treatment, deliberately
+
+ADR 0017 drew a boundary and `TestExtractControllers_PermitAllStillDeclaresRoles`
+pins it: `permitAll()` keeps `DeclaresRoles: true` and "still surfaces through
+empty-role", on the audit's reasoning that a developer's `permitAll()` could itself
+be the mistake. Folding it into §9 would overturn a settled decision as a side effect
+of fixing an unrelated one.
+
+It is therefore **excluded from §9**: `permitAll()` and `denyAll()` are recognized as
+resolving to no role list rather than falling through as unreadable, which requires
+naming them in the SpEL parser instead of letting them land in the unrecognized
+bucket. Their behaviour does not change, and the existing test passes unmodified.
+
+**This costs nothing, which was measured, not assumed**: across the four affected
+repositories there are **zero** `@PreAuthorize("permitAll()")` or `denyAll()`
+occurrences, so the 675 still go to zero with the boundary intact. Whether firing
+`empty-role` on `permitAll()` is right at all is a live question and is left open
+here rather than answered in passing.
+
+### §11 The unknown is announced, not merely silenced
+
+Suppressing the finding alone would satisfy this ADR's letter and break its spirit:
+"unanalyzable is unknown, not absent" requires the run to *say* the picture is
+incomplete, which is what §4 established for project-level uncertainty. A silently
+empty `Roles` column is exactly the absent-looking output this ADR exists to stop.
+
+So a run whose model contains any `RolesUnresolved` guard emits a project-level
+warning in the established shape, naming the count and what it means: these endpoints
+carry an access-control annotation whose requirement Sphinxor could not read, so the
+`Roles` column **understates** them, and their emptiness is not evidence of anything.
+
+The matrix additionally marks such a row's `Roles` cell `?` rather than `-`, following
+the `…` and `@?` precedents from Amendments 1 and 2 — `-` reads as "none required",
+which is the wrong claim.
+
+## Alternatives considered
+
+- **Downgrade `empty-role` to Low.** Rejected. It would unblock CI while leaving 675
+  wrong findings in the report, and it would weaken the rule on the genuine
+  `@Roles()`/`@Secured({})` case it was built for and is correct about. The problem is
+  the trigger, not the grade.
+- **Stop setting `DeclaresRoles: true` for unresolved annotations.** Rejected, and it
+  is the tempting one. It would fix `empty-role` for free, but `DeclaresRoles` also
+  drives the RBAC matrix's Guards/Roles split (ADR 0011 §1), so these annotations
+  would migrate into the Guards column and read as protection-only guards carrying no
+  role requirement — asserting something false instead of admitting something unknown.
+  It would also silently change what ADR 0017 fixed.
+- **Extend the SpEL subset to read the permission strings.** Rejected here as the
+  wrong scope: `@ss.hasPermi('system:user:edit')` is mechanically trivial to read, but
+  there is nowhere in ADR 0002's model to put a permission, which is the open question
+  `docs/limitations.md` records and deliberately does not answer. This amendment must
+  not depend on that being settled; it makes the tool honest about the gap, and closing
+  the gap stays a separate decision.
+- **Suppress the finding without warning.** Rejected — see §11.
+
+## Consequences
+
+- `GuardApplication` gains one boolean. No entity, no relationship, no export format
+  changes. ADR 0002's model is untouched in shape.
+- Four real projects stop failing CI for the wrong reason, and start carrying a
+  warning that states the real one.
+- One new way for the tool to be wrong, stated plainly: if extraction later learns to
+  read a shape that currently sets `RolesUnresolved`, a genuinely empty role list
+  inside that shape would begin firing `empty-role` where it previously did not. That
+  is the safe direction — a finding appearing late rather than a wrong one appearing
+  early — and it is the same late-but-never-wrong property Amendment 2 §8 accepted.
+### Validation — measured, not predicted
+
+Run against the real 14-repository Spring corpus rather than synthetic cases, per
+`docs/testing.md`:
+
+- **675 → 0** across nacos (392), RuoYi-Vue (116), eladmin (99) and apollo (68).
+  All four went from exit code 1 to exit code 0: they no longer fail CI.
+- Each of the four emits the §11 warning naming exactly the count it previously
+  mis-reported, and the ten unaffected repositories stay silent.
+- **No other repository changed in any respect** — endpoint counts, roles and every
+  other finding are identical across all 14. thingsboard still records its 439
+  role-carrying endpoints.
+- `Pharmacy` and `blog-api` produce **byte-identical output** before and after.
+- Every existing test passes **unmodified**, including the NestJS `@Roles()` case
+  and `TestExtractControllers_PermitAllStillDeclaresRoles`.
+
+**One vendored fixture did change, and it is confirmation rather than regression.**
+`ruoyi-vue-pro` — vendored for Amendment 2's duplicate-route work, for reasons having
+nothing to do with this — was itself carrying **5 instances of this false positive**,
+all `@PreAuthorize("@ss.hasPermission('member:user:update')")`, and that fixture was
+failing CI on them. No test asserted those findings, so nothing caught it. The shape
+was sitting inside this repository's own corpus for as long as the fixture has
+existed.
+
+### On the regression test's form
+
+The ADR draft called for a *fixture-backed* test. It is instead a unit test over
+inline Java (`internal/extract/spring/roles_unresolved_test.go`), matching the
+established pattern in `guards_test.go`, and this is a deliberate departure worth
+recording. [ADR 0005](0005-test-fixture-provenance.md) notes the vendored corpus has
+reached roughly 2,500 lines against a stated re-evaluation threshold of 3,000;
+vendoring a new repository to pin a two-line syntactic distinction would spend that
+budget badly. The empirical backing that a fixture would have provided is supplied by
+the 14-repository corpus run above and by `ruoyi-vue-pro`, which already contains the
+real shape.
+
+The test keeps both halves of §9 in **one source file** — `@Secured({})` fires,
+`@Secured(resource = …, action = …)` does not — because the failure being guarded
+against is not "empty-role fires too often" but "the two cases get conflated again",
+and a test covering only the unread side would pass just as happily if the fix
+silenced both.

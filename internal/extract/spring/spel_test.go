@@ -21,8 +21,16 @@ func TestParseSpEL(t *testing.T) {
 		{"hasAnyAuthority two", `hasAnyAuthority('A', 'B')`, spelResult{Kind: spelRoles, Roles: []string{"A", "B"}}},
 		{"isAuthenticated", `isAuthenticated()`, spelResult{Kind: spelAuthenticated}},
 		{"isAuthenticated with whitespace", `  isAuthenticated()  `, spelResult{Kind: spelAuthenticated}},
-		{"permitAll", `permitAll()`, spelResult{Kind: spelUnrecognized}},
-		{"denyAll", `denyAll()`, spelResult{Kind: spelUnrecognized}},
+		// permitAll()/denyAll() moved from spelUnrecognized to spelNoRole
+		// under ADR 0020 Amendment 3 §10. Their *behaviour* is unchanged
+		// — DeclaresRoles stays true and empty-role still fires, pinned
+		// by TestExtractControllers_PermitAllStillDeclaresRoles — but
+		// they now have to be named rather than falling through, so that
+		// §9's RolesUnresolved does not sweep them up and silently
+		// reverse ADR 0017's boundary.
+		{"permitAll", `permitAll()`, spelResult{Kind: spelNoRole}},
+		{"denyAll", `denyAll()`, spelResult{Kind: spelNoRole}},
+		{"permitAll with stray arg is unrecognized", `permitAll(true)`, spelResult{Kind: spelUnrecognized}},
 		{"boolean combination not matched whole", `hasRole('ADMIN') and #id == authentication.name`, spelResult{Kind: spelUnrecognized}},
 		{"or combination", `hasRole('A') || hasAuthority('B')`, spelResult{Kind: spelUnrecognized}},
 		{"bean method call", `@authService.check(#id)`, spelResult{Kind: spelUnrecognized}},

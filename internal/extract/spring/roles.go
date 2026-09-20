@@ -52,7 +52,10 @@ func roleLiteralsOf(ann annotationCall, src []byte) []string {
 		}
 		return result.Roles
 	case "Secured", "RolesAllowed":
-		return stringArrayValues(ann.Args, src)
+		// Role *declaration* usage scanning only cares which literals
+		// appear, not whether the list was complete.
+		values, _ := stringArrayValues(ann.Args, src)
+		return values
 	default:
 		return nil
 	}
@@ -76,29 +79,56 @@ func soleStringLiteralArg(args *sitter.Node) *sitter.Node {
 // array shorthand) or an element_value_array_initializer of string_literals
 // (`@Secured({"ROLE_ADMIN", "ROLE_MANAGER"})`) — confirmed against a real
 // tree-sitter-java parse before writing this, not assumed from the
-// annotation's Java API shape alone. Any element that isn't a plain string
-// literal is skipped, not guessed at.
-func stringArrayValues(args *sitter.Node, src []byte) []string {
-	if args == nil || args.NamedChildCount() != 1 {
-		return nil
+// annotation's Java API shape alone.
+//
+// resolved reports whether the argument was *read*, which is a different
+// question from whether it yielded any roles
+// (docs/decisions/0020-unanalyzable-is-unknown-not-absent.md Amendment 3
+// §9). The two states this separates used to be one:
+//
+//   - `@Secured({})` — an empty array literal. Read successfully; the role
+//     list really is empty. resolved=true, and empty-role fires, which is
+//     the case that rule exists for.
+//   - `@Secured(resource = ..., action = ActionTypes.WRITE)` — alibaba's
+//     own annotation of the same simple name, carrying named attributes
+//     rather than a string array. Nothing was read. resolved=false, and
+//     empty-role must not fire, because nothing is known about what it
+//     requires.
+//
+// A partially readable array (`{"ROLE_A", SOME_CONSTANT}`) is also
+// unresolved: the roles recovered are a subset, and reporting a subset as
+// though it were the list would understate the requirement.
+func stringArrayValues(args *sitter.Node, src []byte) (values []string, resolved bool) {
+	// A marker annotation with no argument list at all. Degenerate in
+	// Java (@Secured's value() has no default), but it is an absence in
+	// the source rather than something unread, so it stays resolved and
+	// keeps its existing behavior.
+	if args == nil {
+		return nil, true
+	}
+	if args.NamedChildCount() != 1 {
+		return nil, false
 	}
 	arg := args.NamedChild(0)
 	switch arg.Type() {
 	case "string_literal":
 		if v, ok := stringLiteralValue(arg, src); ok {
-			return []string{v}
+			return []string{v}, true
 		}
-		return nil
+		return nil, false
 	case "element_value_array_initializer":
 		var out []string
 		for _, elem := range namedChildren(arg) {
-			if v, ok := stringLiteralValue(elem, src); ok {
-				out = append(out, v)
+			v, ok := stringLiteralValue(elem, src)
+			if !ok {
+				return nil, false
 			}
+			out = append(out, v)
 		}
-		return out
+		// Zero elements here means `{}` — read, and genuinely empty.
+		return out, true
 	default:
-		return nil
+		return nil, false
 	}
 }
 

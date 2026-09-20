@@ -44,13 +44,21 @@ type Row struct {
 	// VersionUnresolved marks a route that declares a version whose value
 	// could not be read. Markdown renders it as "?"; JSON consumers get
 	// the flag.
-	VersionUnresolved bool            `json:"versionUnresolved,omitempty"`
-	Handler           string          `json:"handler"`
-	File              string          `json:"file"`
-	Line              int             `json:"line"`
-	Guards            []string        `json:"guards"`
-	Roles             []string        `json:"roles"`
-	Findings          []model.Finding `json:"findings,omitempty"`
+	VersionUnresolved bool     `json:"versionUnresolved,omitempty"`
+	Handler           string   `json:"handler"`
+	File              string   `json:"file"`
+	Line              int      `json:"line"`
+	Guards            []string `json:"guards"`
+	Roles             []string `json:"roles"`
+	// RolesUnresolved marks an endpoint carrying at least one
+	// access-control annotation whose role list could not be read
+	// (docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
+	// Amendment 3). Markdown renders the Roles cell "?" rather than "-",
+	// since "-" reads as "no role required"; JSON consumers get the flag.
+	// Roles already listed are still real — they are just not known to be
+	// the whole requirement.
+	RolesUnresolved bool            `json:"rolesUnresolved,omitempty"`
+	Findings        []model.Finding `json:"findings,omitempty"`
 }
 
 // Matrix is the full RBAC matrix: one row per endpoint, plus every
@@ -72,8 +80,12 @@ func BuildMatrix(m *model.Model, findings []model.Finding) Matrix {
 
 	guardsByEndpoint := make(map[model.ID][]string)
 	guardAppByID := make(map[model.ID]model.GuardApplication, len(m.GuardApplications))
+	rolesUnresolvedByEndpoint := make(map[model.ID]bool)
 	for _, g := range m.GuardApplications {
 		guardAppByID[g.ID] = g
+		if g.RolesUnresolved {
+			rolesUnresolvedByEndpoint[g.EndpointID] = true
+		}
 		if g.DeclaresRoles {
 			continue // surfaced under Roles below, not Guards
 		}
@@ -110,6 +122,7 @@ func BuildMatrix(m *model.Model, findings []model.Finding) Matrix {
 			Line:              e.Line,
 			Guards:            guardsByEndpoint[e.ID],
 			Roles:             rolesByEndpoint[e.ID],
+			RolesUnresolved:   rolesUnresolvedByEndpoint[e.ID],
 			Findings:          findingsByEndpoint[e.ID],
 		})
 	}

@@ -28,8 +28,13 @@ type pendingGuard struct {
 	// the signal authentication.go's final pass consumes to decide
 	// whether this endpoint gets an AuthenticationRequirement.
 	authCandidate bool
-	file          string
-	line          int
+	// rolesUnresolved is true when this annotation declares a role
+	// requirement whose list could not be read — docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
+	// Amendment 3 §9. It is never true together with a non-empty roles
+	// slice: either the list was read, or it was not.
+	rolesUnresolved bool
+	file            string
+	line            int
 }
 
 type roleArg struct {
@@ -52,11 +57,10 @@ func pendingGuardsFromAnnotations(anns []annotationCall, src []byte, file string
 			if !ok {
 				// Not the recognized single-string shape at all (e.g. a
 				// SpEL expression built from a constant reference rather
-				// than a literal) — still a real guard, just with
-				// nothing further to recognize; declaresRoles stays true,
-				// the same "guarded, no role" default as unrecognized
-				// SpEL content.
-				out = append(out, pendingGuard{guardName: ann.Name, declaresRoles: true, file: file, line: line})
+				// than a literal) — still a real guard, but its role
+				// list was not read, so it is unknown rather than empty
+				// (Amendment 3 §9).
+				out = append(out, pendingGuard{guardName: ann.Name, declaresRoles: true, rolesUnresolved: true, file: file, line: line})
 				continue
 			}
 			result := parseSpEL(lit)
@@ -65,15 +69,32 @@ func pendingGuardsFromAnnotations(anns []annotationCall, src []byte, file string
 				out = append(out, pendingGuard{guardName: ann.Name, declaresRoles: false, authCandidate: true, file: file, line: line})
 			case spelRoles:
 				out = append(out, pendingGuard{guardName: ann.Name, roles: resolveRoleArgs(result.Roles, roleByName), declaresRoles: true, file: file, line: line})
-			default: // spelUnrecognized, including permitAll()/denyAll()
+			case spelNoRole:
+				// permitAll()/denyAll(): read, and resolving to no role
+				// list. ADR 0017 decided these keep DeclaresRoles: true
+				// and keep surfacing through empty-role; Amendment 3 §10
+				// preserves that deliberately rather than reversing it as
+				// a side effect, so rolesUnresolved stays false.
 				out = append(out, pendingGuard{guardName: ann.Name, declaresRoles: true, file: file, line: line})
+			default: // spelUnrecognized: a bean call, a boolean combination, ...
+				out = append(out, pendingGuard{guardName: ann.Name, declaresRoles: true, rolesUnresolved: true, file: file, line: line})
 			}
 			continue
 		}
 
 		// Secured / RolesAllowed: plain string-array arguments, no SpEL.
-		literals := stringArrayValues(ann.Args, src)
-		out = append(out, pendingGuard{guardName: ann.Name, roles: resolveRoleArgs(literals, roleByName), declaresRoles: true, file: file, line: line})
+		// resolved distinguishes @Secured({}) — genuinely empty — from an
+		// argument shape that was never read, such as the named
+		// attributes on alibaba's same-named @Secured (Amendment 3 §9).
+		literals, resolved := stringArrayValues(ann.Args, src)
+		out = append(out, pendingGuard{
+			guardName:       ann.Name,
+			roles:           resolveRoleArgs(literals, roleByName),
+			declaresRoles:   true,
+			rolesUnresolved: !resolved,
+			file:            file,
+			line:            line,
+		})
 	}
 	return out
 }
@@ -100,13 +121,14 @@ func (b *builder) applyGuards(endpointID model.ID, guards []pendingGuard, scope 
 		appID := b.nextIDFor("guardapp")
 		b.guardOwner = append(b.guardOwner, b.curEndpoint)
 		b.model.GuardApplications = append(b.model.GuardApplications, model.GuardApplication{
-			ID:            appID,
-			EndpointID:    endpointID,
-			GuardName:     g.guardName,
-			AppliedAt:     scope,
-			File:          g.file,
-			Line:          g.line,
-			DeclaresRoles: g.declaresRoles,
+			ID:              appID,
+			EndpointID:      endpointID,
+			GuardName:       g.guardName,
+			AppliedAt:       scope,
+			File:            g.file,
+			Line:            g.line,
+			DeclaresRoles:   g.declaresRoles,
+			RolesUnresolved: g.rolesUnresolved,
 		})
 		for _, r := range g.roles {
 			b.model.RoleReferences = append(b.model.RoleReferences, model.RoleReference{
