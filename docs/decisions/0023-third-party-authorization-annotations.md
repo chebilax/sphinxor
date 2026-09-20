@@ -2,7 +2,13 @@
 
 ## Status
 
-Proposed.
+Accepted.
+
+§3 was added during review. The draft suppressed 907 findings on the unstated
+assumption that Shiro's annotations are wired up, having just demonstrated with
+`@DePermit` that an authorization-looking annotation can do nothing. ADR 0015 already
+answers that shape for Spring, and §3 applies the same treatment rather than
+inventing a new one.
 
 ## Context
 
@@ -117,7 +123,36 @@ unflagged. It is the same lopsided trade — a false negative on a misconfigured
 project against a false positive on 907 correctly configured routes — and the warning
 names the package so a reader can check.
 
-### §3 The list grows on measured evidence, one framework at a time
+### §3 Whether Shiro's annotations are switched on is located and reported
+
+Shiro annotations do nothing at runtime unless the framework's annotation support is
+wired in — `AuthorizationAttributeSourceAdvisor`, the exact counterpart of Spring's
+`@EnableMethodSecurity`. §2 suppresses a finding on 907 routes; this section bounds
+what that suppression rests on.
+
+This is [ADR 0015](0015-inert-method-security-guard.md)'s treatment, applied
+unchanged rather than reinvented. The annotations are **not** downgraded when the
+wiring is not found — absence is not evidence, for the same reasons ADR 0015 gives
+and one more that is specific here: Shiro's `shiro-spring-boot-web-starter` enables
+annotation support by auto-configuration, with no Java bean to find at all, and a
+build file is not something this extractor parses. Guessing "inert" would invent
+findings; the run says what it found instead.
+
+So a project carrying Shiro annotations is scanned for
+`AuthorizationAttributeSourceAdvisor`, and §3a's warning states whether it was
+located. Found: the suppression rests on wiring that is present in the analyzed
+source. Not found: the annotations may be inert, in which case those endpoints are
+not protected and the suppressed findings were real — and the reader is told exactly
+that, with the same "absence of evidence is not evidence" caveat ADR 0015 carries.
+
+**Measured**: all six repositories in the corpus that use Shiro annotations declare
+`AuthorizationAttributeSourceAdvisor` in Java source (8 files across the corpus,
+`org.apache.shiro.spring.security.interceptor`). So in every case measured, the
+check confirms the suppression rather than qualifying it — which is the outcome that
+makes the suppression defensible, and a fact that could only be established by
+looking.
+
+### §4 The list grows on measured evidence, one framework at a time
 
 A package joins the table when it has been seen in a real repository, not because it
 is popular or plausible. Sa-Token (`cn.dev33.satoken.annotation`) is the obvious next
@@ -207,3 +242,7 @@ project declines elsewhere for the same reason.
   - A test that `@IgnoreAuth` — an annotation in a package named `...config.shiro`
     that is *not* `org.apache.shiro.authz.annotation` — does **not** suppress, which
     is the rejected alternative's failure mode pinned as a regression.
+  - §3 both ways: a project with Shiro annotations and an
+    `AuthorizationAttributeSourceAdvisor` bean reports the wiring as located; the
+    same project without one reports that it was not, without changing which
+    findings are suppressed.
