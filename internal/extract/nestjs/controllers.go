@@ -61,6 +61,12 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 
 		controllerID := b.nextIDFor("controller")
 		basePath, basePathResolved := controllerBasePath(controllerCall.Args, src)
+		// A class-level @Version(...) beats the object form's version key,
+		// and both are overridden by a method-level one below.
+		classVersion := controllerVersion(controllerCall.Args, src)
+		if v := decoratorVersion(group.decorators, src); v.declared {
+			classVersion = v
+		}
 		b.model.Controllers = append(b.model.Controllers, model.Controller{
 			ID:       controllerID,
 			Name:     nameNode.Content(src),
@@ -101,25 +107,43 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			path := joinPath(basePath, subPath)
 			pathUnresolved := !basePathResolved || !subPathResolved
 
-			// An unreadable path cannot key an identity: two endpoints
-			// whose prefixes both went missing would otherwise collide on
-			// one ID and be merged, reporting one's guards against the
-			// other (ADR 0020 Amendment 1 §5).
+			version := classVersion
+			if v := decoratorVersion(methodGroup.decorators, src); v.declared {
+				version = v
+			}
+
+			// Identity, in order of what is least knowable. An unreadable
+			// path cannot key an identity at all: two endpoints whose
+			// prefixes both went missing would otherwise collide on one ID
+			// and be merged, reporting one's guards against the other (ADR
+			// 0020 Amendment 1 §5). An unreadable *version* is the same
+			// problem one step in — the path is fine, but the thing that
+			// tells the two routes apart is not (Amendment 2 §7). A
+			// readable version joins the key; no version at all leaves the
+			// key exactly as it was before §7, which is what keeps existing
+			// allowlist anchors and diff baselines working.
 			endpointID := model.NewEndpointID(httpMethod, path)
-			if pathUnresolved {
+			switch {
+			case pathUnresolved:
 				endpointID = model.NewUnresolvedPathEndpointID(httpMethod, nameNode.Content(src), handlerName)
+			case version.unknownVersion():
+				endpointID = model.NewUnresolvedVersionEndpointID(httpMethod, nameNode.Content(src), handlerName)
+			case version.declared:
+				endpointID = model.NewVersionedEndpointID(httpMethod, path, version.value)
 			}
 			anchorLine := anchorLineOf(methodGroup)
 
 			b.model.Endpoints = append(b.model.Endpoints, model.Endpoint{
-				ID:             endpointID,
-				HTTPMethod:     httpMethod,
-				Path:           path,
-				HandlerName:    handlerName,
-				PathUnresolved: pathUnresolved,
-				ControllerID:   controllerID,
-				File:           file,
-				Line:           anchorLine,
+				ID:                endpointID,
+				HTTPMethod:        httpMethod,
+				Path:              path,
+				HandlerName:       handlerName,
+				PathUnresolved:    pathUnresolved,
+				Version:           version.value,
+				VersionUnresolved: version.unknownVersion(),
+				ControllerID:      controllerID,
+				File:              file,
+				Line:              anchorLine,
 			})
 			anchors = append(anchors, allowlist.Anchor{EndpointID: endpointID, File: file, Line: anchorLine})
 

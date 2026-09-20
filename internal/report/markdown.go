@@ -93,8 +93,19 @@ func findingSummaries(findings []model.Finding) string {
 // The leading ellipsis is explained by the run's project-level warning;
 // printing the fragment bare would present it as a route that exists.
 func renderPath(row Row) string {
+	path := row.Path
 	if row.PathUnresolved {
-		return "\u2026" + row.Path
+		path = "\u2026" + path
 	}
-	return row.Path
+	// A declared version is part of what tells two same-path routes apart
+	// (ADR 0020 Amendment 2 §7), so it is shown beside the path rather
+	// than left to make the two rows look like duplicates. "?" is a
+	// version that was declared but could not be read.
+	switch {
+	case row.VersionUnresolved:
+		path += " @?"
+	case row.Version != "":
+		path += " @" + row.Version
+	}
+	return path
 }

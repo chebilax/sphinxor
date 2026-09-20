@@ -17,6 +17,23 @@ construct Sphinxor could not analyze was recorded as *absent* rather than
 earned. See [ADR 0020](docs/decisions/0020-unanalyzable-is-unknown-not-absent.md)
 and its Amendment 1.
 
+- **A route's declared API version is now part of its identity.** NestJS's
+  `@Controller({ path, version })` and `@Version()`, and Spring's `version`
+  attribute on a mapping annotation, are route discriminators: two handlers
+  sharing a path and differing only in version are two endpoints the running
+  application routes separately. Extraction read the `path` key and stepped
+  over `version`, so they collapsed onto one identity — NestJS merging them,
+  so each was reported carrying the other's guards, and Spring dropping one
+  outright. Found by measuring `docs/limitations.md`'s duplicate-route gap
+  across 17 real repositories; hand-verified on cal.com, where one
+  `GET /v2/event-types` requires authentication (`ApiAuthGuard`) and the other
+  makes it optional (`OptionalApiAuthGuard`), and the merge misreported both.
+  A version that cannot be read — a constant reference, or an array of them,
+  which is the majority shape in real code — is treated as *unknown* rather
+  than assumed equal to another unknown. An endpoint declaring no version
+  keeps exactly the identity it had before, so existing allowlist anchors and
+  diff baselines are untouched. See ADR 0020 Amendment 2 §7.
+
 - **A project exposing a GraphQL API is now told that it was not analyzed.**
   GraphQL stays out of scope
   ([ADR 0021](docs/decisions/0021-graphql-out-of-scope-but-detected.md)), but a

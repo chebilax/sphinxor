@@ -75,12 +75,16 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 		// @RequestMapping genuinely has no prefix and stays resolved.
 		basePath := ""
 		basePathResolved := true
+		classVersion := versionDecl{}
 		if reqMapping, ok := findAnnotation(classAnns, "RequestMapping"); ok {
 			if p, ok := pathAttributeValue(reqMapping.Args, src); ok {
 				basePath = p
 			} else if reqMapping.Args != nil {
 				basePathResolved = false
 			}
+			// A class-level version applies to every handler that does not
+			// declare its own (ADR 0020 Amendment 2 §7).
+			classVersion = versionAttributeValue(reqMapping.Args, src)
 		}
 
 		controllerID := b.nextIDFor("controller")
@@ -117,9 +121,24 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			path := joinPath(basePath, subPath)
 			pathUnresolved := !basePathResolved || !subPathResolved
 
+			version := classVersion
+			if v := versionAttributeValue(mapping.Args, src); v.declared {
+				version = v
+			}
+
+			// Identity, in order of what is least knowable — the same
+			// ordering and the same reasoning as the NestJS extractor's
+			// (ADR 0020 Amendment 1 §5, Amendment 2 §7). Java's failure
+			// mode differs — a colliding endpoint is dropped below rather
+			// than merged — but the cause and the fix are identical.
 			endpointID := model.NewEndpointID(httpMethod, path)
-			if pathUnresolved {
+			switch {
+			case pathUnresolved:
 				endpointID = model.NewUnresolvedPathEndpointID(httpMethod, nameNode.Content(src), handlerName)
+			case version.unknownVersion():
+				endpointID = model.NewUnresolvedVersionEndpointID(httpMethod, nameNode.Content(src), handlerName)
+			case version.declared:
+				endpointID = model.NewVersionedEndpointID(httpMethod, path, version.value)
 			}
 
 			// The handler's own starting line. In Java, annotations are
@@ -160,14 +179,16 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			if !b.seenEndpoints[endpointID] {
 				b.seenEndpoints[endpointID] = true
 				b.model.Endpoints = append(b.model.Endpoints, model.Endpoint{
-					ID:             endpointID,
-					HTTPMethod:     httpMethod,
-					Path:           path,
-					HandlerName:    handlerName,
-					PathUnresolved: pathUnresolved,
-					ControllerID:   controllerID,
-					File:           file,
-					Line:           int(member.StartPoint().Row) + 1,
+					ID:                endpointID,
+					HTTPMethod:        httpMethod,
+					Path:              path,
+					HandlerName:       handlerName,
+					PathUnresolved:    pathUnresolved,
+					Version:           version.value,
+					VersionUnresolved: version.unknownVersion(),
+					ControllerID:      controllerID,
+					File:              file,
+					Line:              int(member.StartPoint().Row) + 1,
 				})
 				// Class-level guards apply once per endpoint, not once per
 				// merged handler — attaching them again for a second

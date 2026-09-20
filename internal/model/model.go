@@ -169,9 +169,29 @@ type Endpoint struct {
 	// resolved, which is a fragment of the real route and must never be
 	// presented as the whole of it.
 	PathUnresolved bool
-	ControllerID   ID
-	File           string
-	Line           int
+	// Version is the route's declared API version — NestJS's
+	// @Controller({ version }) / @Version(), Spring's `version` attribute
+	// on a mapping annotation — per
+	// docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
+	// Amendment 2 §7. Empty means no version was declared, which is
+	// *absent*, not unknown: such an endpoint keeps exactly the identity
+	// it had before that amendment.
+	//
+	// It is deliberately not folded into Path. Whether a version reaches
+	// the URL depends on how the application configures versioning, which
+	// is declared away from the endpoint (NestJS's enableVersioning) and
+	// is not read here — URI versioning puts it in the path, header and
+	// media-type versioning do not.
+	Version string
+	// VersionUnresolved marks a route that declares a version whose value
+	// could not be read — a constant reference, an array of them, a
+	// computed value. Two such endpoints must never be assumed equal, so
+	// identity falls back to the controller-and-handler synthesis
+	// Amendment 1 §5 introduced.
+	VersionUnresolved bool
+	ControllerID      ID
+	File              string
+	Line              int
 }
 
 // NewEndpointID derives an Endpoint's stable ID from its method and path,
@@ -212,6 +232,39 @@ func NewEndpointID(method HTTPMethod, path string) ID {
 // path is always normalized to a leading "/".
 func NewUnresolvedPathEndpointID(method HTTPMethod, controllerName, handlerName string) ID {
 	return ID(string(method) + " ?unresolved-path " + controllerName + "." + handlerName)
+}
+
+// NewVersionedEndpointID derives an Endpoint's ID from its method, path,
+// and declared API version, per
+// docs/decisions/0020-unanalyzable-is-unknown-not-absent.md Amendment 2 §7.
+//
+// It is used only when a version is declared *and* readable. An endpoint
+// declaring no version keeps NewEndpointID, unchanged — that is the
+// bounding rule the amendment rests on, and it is what leaves existing
+// allowlist anchors and stored diff baselines untouched.
+//
+// An endpoint declaring a version that could not be read does not come
+// here: an unreadable version is unknown, and two unknowns must not
+// collapse onto one key, so those fall back to
+// NewUnresolvedVersionEndpointID.
+//
+// The "@" separator cannot collide with a plain path-derived ID, since a
+// bare NewEndpointID never contains one.
+func NewVersionedEndpointID(method HTTPMethod, path, version string) ID {
+	return ID(string(method) + " " + path + " @" + version)
+}
+
+// NewUnresolvedVersionEndpointID derives an Endpoint's ID from its
+// controller and handler for the case where a version is declared but its
+// value could not be read — the cal.com shape, where the version is a
+// constant reference or an array of them.
+//
+// It is the same synthesis NewUnresolvedPathEndpointID performs, under a
+// distinct marker so the two causes stay distinguishable in output and in
+// a diff. The reasoning for structure-derived identity is identical, and
+// recorded there.
+func NewUnresolvedVersionEndpointID(method HTTPMethod, controllerName, handlerName string) ID {
+	return ID(string(method) + " ?unresolved-version " + controllerName + "." + handlerName)
 }
 
 // GuardScope records where a GuardApplication's evidence was found in
