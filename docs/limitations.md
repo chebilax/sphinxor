@@ -72,6 +72,22 @@ Those endpoints now keep an identity synthesized from their controller and handl
 
 **What to do about it today**: nothing is required — the analysis is sound. If you want these endpoints exportable, use a string literal in the decorator. Resolving constants to their declarations is a possible future improvement, recorded as the rejected-for-now alternative in that ADR.
 
+## Two controllers declaring the same route — silent, over-reports access, uncharacterized
+
+**This is the one silent, access-over-reporting gap still open in the tool.** Everything else on this page either fails loudly or errs toward under-reporting protection; this one reports an endpoint as protected when it is not, and says nothing. It is documented rather than fixed — see the last paragraph for why — but it should be read as the outstanding item on this page, not as one entry among equals.
+
+Endpoint identity is `(method, path)`. If two controllers in the same analyzed tree declare the same absolute route, they share one identity, and the same damage follows as in the unreadable-path case above — except here nothing is unanalyzable. Both paths are read perfectly. The assumption that fails is a different one: that one analyzed tree is one application.
+
+Observed on [`immich-app/immich`](https://github.com/immich-app/immich), whose `MaintenanceWorkerController` is a bare `@Controller()` that deliberately re-declares `/server/version`, `/server/ping`, `/admin/maintenance` and others, for a separate maintenance worker process that is never mounted alongside the main application. 11 of immich's endpoints pair up this way.
+
+**Consequence**, reproduced on a minimal case rather than inferred from the immich sighting: in NestJS the two endpoints merge, so an unguarded route shows the other's guards and roles — a `DELETE` with no guard at all reported as `ADMIN`-protected, with `mutating-endpoint-without-access-control` suppressed. In Spring one of the pair is dropped from the report entirely, and the survivor is whichever was extracted first.
+
+**On immich specifically this is latent, by accident rather than by design**: its authorization uses a composite decorator this extractor doesn't recognize at all (see the composite-decorator entry above), so there are no guards to bleed across the pair. The precondition is real in production code and the damage is merely unrealized there — that is luck, not protection, and it would stop being luck the moment composite-decorator support improved.
+
+**Not characterized, deliberately**: one repository is not enough to know whether a multi-application tree is a pattern worth handling or an immich quirk. Whether the right answer is per-application scoping, an analyzed-root option, or simply detecting the collision and warning, depends on how the pattern actually occurs — and that question has not been answered. It is recorded here so it is not lost, not as a commitment to fix it.
+
+**What to do about it today**: point `sphinxor` at a single application's source root rather than a tree containing several. Where that isn't possible, treat two matrix rows sharing a method and path as a signal that neither row's guards can be trusted.
+
 ## A `sphinxor-allow` marker separated from its endpoint by a block comment
 
 The allowlist matcher (`internal/allowlist`, shared by both extractors since the Spring port) skips blank lines and `//` line comments between a marker and the endpoint it exempts, but not `/* */` blocks. So a marker placed above a Javadoc/JSDoc block, rather than directly above the endpoint's first decorator/annotation, exempts nothing.
