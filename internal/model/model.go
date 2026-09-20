@@ -57,6 +57,43 @@ type Model struct {
 	// UnrecognizedAuthAnnotations records access-control annotations that
 	// were found on an endpoint and could not be identified — ADR 0022.
 	UnrecognizedAuthAnnotations []UnrecognizedAuthAnnotation
+	// ThirdPartyAuth records, per third-party authorization framework
+	// actually seen in this project, whether the wiring that switches its
+	// annotations on was located — ADR 0023 §3.
+	ThirdPartyAuth []ThirdPartyAuthStatus
+}
+
+// ThirdPartyAuthStatus says whether a third-party authorization
+// framework's annotations are actually switched on, for a framework whose
+// annotations were found in this project —
+// docs/decisions/0023-third-party-authorization-annotations.md §3.
+//
+// It exists because ADR 0023 §2 suppresses
+// mutating-endpoint-without-access-control on every endpoint carrying one
+// of those annotations, and an annotation only protects anything if its
+// framework's interceptor is wired in. Shiro's
+// AuthorizationAttributeSourceAdvisor is the exact counterpart of Spring's
+// @EnableMethodSecurity, and this is ADR 0015's treatment of that
+// question applied unchanged.
+//
+// EnablerFound == false is "not located", never "confirmed off" — the
+// same distinction MethodSecurityStatus.Found draws, and for a stronger
+// reason here: Shiro's spring-boot starter switches annotation support on
+// by auto-configuration, leaving no Java bean to find, and this extractor
+// does not read build files.
+type ThirdPartyAuthStatus struct {
+	// Framework is the human name, e.g. "Apache Shiro".
+	Framework string
+	// Package is the annotation package that was seen, e.g.
+	// "org.apache.shiro.authz.annotation".
+	Package string
+	// Enabler names the wiring looked for, e.g.
+	// "AuthorizationAttributeSourceAdvisor", so the warning can tell a
+	// reader what to search for.
+	Enabler string
+	// EnablerFound is true when that wiring was located in the analyzed
+	// source.
+	EnablerFound bool
 }
 
 // UnrecognizedAuthAnnotation is an annotation that carries a recognized

@@ -345,11 +345,38 @@ func unrecognizedAuthSummary(m *model.Model) []string {
 
 	out := make([]string, 0, len(keys))
 	for _, k := range keys {
-		out = append(out, strconv.Itoa(len(endpointsBy[k]))+" endpoint(s) carry "+k+", which is not a\n"+
-			"         Spring Security method-security annotation this tool recognizes. They are NEITHER\n"+
-			"         confirmed protected NOR confirmed unprotected: something is guarding them and\n"+
-			"         Sphinxor cannot say what it requires. `mutating-endpoint-without-access-control` is\n"+
-			"         deliberately not reported for them, and their Guards column is marked ?.")
+		msg := strconv.Itoa(len(endpointsBy[k])) + " endpoint(s) carry " + k + ", which is not a\n" +
+			"         Spring Security method-security annotation this tool recognizes. They are NEITHER\n" +
+			"         confirmed protected NOR confirmed unprotected: something is guarding them and\n" +
+			"         Sphinxor cannot say what it requires. `mutating-endpoint-without-access-control` is\n" +
+			"         deliberately not reported for them, and their Guards column is marked ?."
+		// ADR 0023 §3: say what that suppression rests on. An annotation
+		// only protects anything if its framework's interceptor is wired
+		// in, and the run should not stay silent about whether it found
+		// the wiring.
+		if st, ok := thirdPartyStatusFor(m, k); ok {
+			if st.EnablerFound {
+				msg += "\n         " + st.Framework + "'s annotation wiring (" + st.Enabler + ") WAS located in the\n" +
+					"         analyzed source, so those annotations are active."
+			} else {
+				msg += "\n         " + st.Framework + "'s annotation wiring (" + st.Enabler + ") was NOT located in the\n" +
+					"         analyzed source. If it is not configured elsewhere (a parent module, or Shiro's\n" +
+					"         spring-boot starter, which enables it by auto-configuration), those annotations are\n" +
+					"         inert and those endpoints are NOT protected."
+			}
+		}
+		out = append(out, msg)
 	}
 	return out
+}
+
+// thirdPartyStatusFor finds the enabling-wiring status for the framework
+// whose annotation package boundTo belongs to (ADR 0023 §3).
+func thirdPartyStatusFor(m *model.Model, boundTo string) (model.ThirdPartyAuthStatus, bool) {
+	for _, st := range m.ThirdPartyAuth {
+		if strings.HasPrefix(boundTo, st.Package+".") {
+			return st, true
+		}
+	}
+	return model.ThirdPartyAuthStatus{}, false
 }

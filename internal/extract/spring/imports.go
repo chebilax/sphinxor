@@ -1,9 +1,12 @@
 package spring
 
 import (
+	"bytes"
 	"strings"
 
 	sitter "github.com/smacker/go-tree-sitter"
+
+	"github.com/chebilax/sphinxor/internal/model"
 )
 
 // acceptedAnnotationPackages maps each recognized method-security
@@ -30,6 +33,39 @@ var acceptedAnnotationPackages = map[string][]string{
 	"Secured":      {"org.springframework.security.access.annotation"},
 	"RolesAllowed": {"javax.annotation.security", "jakarta.annotation.security"},
 }
+
+// thirdPartyAuthPackages are packages whose annotations are authorization
+// annotations from a framework this extractor does not interpret, per
+// docs/decisions/0023-third-party-authorization-annotations.md §1.
+//
+// Keyed by package, not by annotation name, and that is the decision
+// rather than a convenience: the package IS Shiro's authorization
+// annotation package, so everything in it qualifies, whereas a name list
+// would assert five names the corpus exercises only three of. It also
+// keeps ADR 0022 §1's discipline — identity comes from the import, never
+// the spelling.
+//
+// A name heuristic was measured and rejected. Against the 20-repository
+// corpus it captured 1,615 mutating routes to this rule's 907, but the
+// excess included @IgnoreAuth (an annotation that *skips* authentication,
+// so matching it would suppress the finding exactly where it is correct),
+// @RequiresPermissionsDesc (admin-console metadata declaring menu() and
+// button()), and 576 already-handled @PreAuthorize/@Secured — while still
+// missing @CheckOwner, the corpus's largest project-local authorization
+// annotation at 515 uses.
+//
+// The list grows only on measured evidence (ADR 0023 §4). Sa-Token is the
+// obvious next candidate and is deliberately absent: zero occurrences
+// across the 20 repositories scanned.
+var thirdPartyAuthPackages = map[string]string{
+	"org.apache.shiro.authz.annotation": "Apache Shiro",
+}
+
+// shiroAnnotationAdvisor is the type whose presence wires Shiro's
+// annotations into a Spring application — the counterpart of Spring's
+// @EnableMethodSecurity, and what ADR 0023 §3 looks for so a run can say
+// what its suppression rests on.
+const shiroAnnotationAdvisor = "AuthorizationAttributeSourceAdvisor"
 
 // importTable is one file's import declarations, indexed the two ways a
 // Java simple name can be bound: a single-type import naming it directly,
@@ -106,6 +142,46 @@ func isStaticImport(n *sitter.Node) bool {
 // with no import cannot be picking Spring's up by same-package
 // resolution — it is either a wildcard (handled here) or a project-local
 // annotation, which is the foreign case this ADR exists to catch.
+// resolveThirdPartyAuth reports whether simpleName is bound, in this file,
+// to a package of authorization annotations from a framework this
+// extractor does not interpret (ADR 0023 §1), and what it was bound to.
+//
+// Only a binding counts. A project-local annotation that happens to be
+// called @RequiresPermissions is not assumed to be Shiro's, for the same
+// reason ADR 0022 refuses to assume an unbound @Secured is Spring's.
+func (t importTable) resolveThirdPartyAuth(simpleName string) (boundTo, framework string, ok bool) {
+	if fqn, found := t.exact[simpleName]; found {
+		if i := strings.LastIndexByte(fqn, '.'); i >= 0 {
+			if fw, known := thirdPartyAuthPackages[fqn[:i]]; known {
+				return fqn, fw, true
+			}
+		}
+		return "", "", false
+	}
+	// An on-demand import is deliberately NOT honored here, and the
+	// asymmetry with resolveAnnotation below is the point.
+	//
+	// A wildcard tells you a package is in scope; it does not tell you
+	// which simple names come from it. resolveAnnotation can accept one
+	// because its caller has already restricted the question to three
+	// known names — "is THIS name Spring's @Secured?" is answerable from
+	// a wildcard. Here the rule is package membership itself, asked of
+	// every annotation in the file, so honoring a wildcard would bind
+	// every otherwise-unimported name to it: a first cut of this code did
+	// exactly that, and recorded @RestController and @PostMapping as
+	// Shiro authorization annotations. That is the same over-capture
+	// ADR 0023 rejects the name heuristic for, reintroduced from the
+	// other side.
+	//
+	// Resolving it properly would need a list of Shiro's annotation
+	// names, which §1 exists to avoid. Measured, the trade is lopsided:
+	// 274 of the corpus's 275 Shiro imports are single-type, and the one
+	// on-demand file (litemall's AdminIndexController) contains a single
+	// mutating route. One missed route, in the safe direction — it keeps
+	// the finding it has today — against a name list and an unsound rule.
+	return "", "", false
+}
+
 func (t importTable) resolveAnnotation(simpleName string) (boundTo string, accepted bool) {
 	acceptedPkgs, recognized := acceptedAnnotationPackages[simpleName]
 	if !recognized {
@@ -136,4 +212,41 @@ func (t importTable) resolveAnnotation(simpleName string) (boundTo string, accep
 	}
 
 	return "", false
+}
+
+// scanThirdPartyAuthStatus records, for each third-party authorization
+// framework whose annotations were actually found on an endpoint, whether
+// the wiring that activates them is present in the analyzed source —
+// docs/decisions/0023-third-party-authorization-annotations.md §3.
+//
+// Only frameworks that were seen are reported. A project with no Shiro
+// annotations has nothing to say about Shiro's wiring, and saying it
+// anyway would be the kind of caveat-on-healthy-code that trains people
+// to skip warnings.
+func scanThirdPartyAuthStatus(files []parsedFile, b *builder) {
+	seen := make(map[string]bool)
+	for _, u := range b.model.UnrecognizedAuthAnnotations {
+		if i := strings.LastIndexByte(u.BoundTo, '.'); i >= 0 {
+			if fw, known := thirdPartyAuthPackages[u.BoundTo[:i]]; known {
+				seen[fw] = true
+			}
+		}
+	}
+	if !seen["Apache Shiro"] {
+		return
+	}
+
+	found := false
+	for _, f := range files {
+		if bytes.Contains(f.src, []byte(shiroAnnotationAdvisor)) {
+			found = true
+			break
+		}
+	}
+	b.model.ThirdPartyAuth = append(b.model.ThirdPartyAuth, model.ThirdPartyAuthStatus{
+		Framework:    "Apache Shiro",
+		Package:      "org.apache.shiro.authz.annotation",
+		Enabler:      shiroAnnotationAdvisor,
+		EnablerFound: found,
+	})
 }

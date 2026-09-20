@@ -83,11 +83,11 @@ Spring's version of "requirement as metadata" is a permission string in an annot
 |---|---|---:|---|
 | `thingsboard/thingsboard` | `@PreAuthorize("hasAnyAuthority('TENANT_ADMIN','CUSTOMER_USER')")` | 536 | **439 endpoints, 5 roles** — works |
 | `alibaba/nacos` | `@Secured(resource=…, action=ActionTypes.WRITE)` — alibaba's own annotation, not Spring's | 419 | 392 unrecognized annotations, no guard, zero roles |
-| `jeecgboot/JeecgBoot` | Shiro `@RequiresPermissions("airag:knowledge:add")`, `@RequiresRoles("admin")` | 223 + 27 | nothing |
+| `jeecgboot/JeecgBoot` | Shiro `@RequiresPermissions("airag:knowledge:add")`, `@RequiresRoles("admin")` | 223 + 27 | recorded as unrecognized (ADR 0023); no permission read |
 | `apolloconfig/apollo` | `@PreAuthorize(value = "@unifiedPermissionValidator.hasCreateNamespacePermission(#appId)")` | 140 | 68 guards, zero roles |
 | `yangzongzhuan/RuoYi-Vue` | `@PreAuthorize("@ss.hasPermi('system:user:edit')")` | 116 | 116 guards, zero roles |
-| `apache/streampark` | Shiro `@RequiresPermissions("yarnQueue:create")` | 101 | nothing |
-| `apache/shenyu` | Shiro `@RequiresPermissions("system:pluginHandler:edit")` | 100 | nothing — all 100 sit in controllers extraction never recognizes |
+| `apache/streampark` | Shiro `@RequiresPermissions("yarnQueue:create")` | 101 | recorded as unrecognized (ADR 0023); no permission read |
+| `apache/shenyu` | Shiro `@RequiresPermissions("system:pluginHandler:edit")` | 100 | nothing — all 100 sit in controllers extraction never recognizes, so even ADR 0023 cannot see them |
 | `elunez/eladmin` | `@PreAuthorize("@el.check('deploy:edit')")` | 99 | 99 guards, zero roles |
 | `spring-cloud/spring-cloud-dataflow` | YAML: `- POST /apps => hasRole('ROLE_CREATE')` | 66 | nothing — it is not a `.java` file |
 | `apache/fineract` | in-handler `context.authenticatedUser().validateHasReadPermission("LOAN")` | 389 | nothing — and only 1 of its ~966 routes is even seen (JAX-RS) |
@@ -188,6 +188,36 @@ Since [ADR 0022](decisions/0022-annotation-identity-and-unrecognized-authorizati
 **One cosmetic gap, unexercised and deliberately not fixed**: `sphinxor export cerbos` omits such an endpoint under the `no-guard` reason, which understates what is known about it. No project in the corpus reaches that path — nacos's export is already omitted wholesale for its unreadable URL layer — and inventing a reason code for a case no measured project exhibits would be building ahead of evidence, which this project declines to do elsewhere for the same reason.
 
 **What to do about it today**: read the annotation the warning names. If it genuinely enforces authorization, the affected endpoints are protected and Sphinxor simply cannot say by what; if it does not, they are unprotected and nothing in the report will tell you so.
+
+## Authorization by a framework other than Spring Security — Apache Shiro
+
+Apache Shiro is a different authorization framework, and `@RequiresPermissions("system:user:edit")` is how a large amount of real Java declares access control. It shares no name with anything Spring Security uses, so before [ADR 0023](decisions/0023-third-party-authorization-annotations.md) it never entered any recognized set and the endpoint fell straight through to *no access control found* — the state [ADR 0022](decisions/0022-annotation-identity-and-unrecognized-authorization.md) §3 had already established is the wrong thing to report about an endpoint that has some. nacos was caught only because its annotation happened to be spelled like Spring's.
+
+Measured across the 20-repository Java corpus: **907 mutating routes carried a Shiro annotation and were reported as having no access control** — around a fifth of all `mutating-endpoint-without-access-control` findings in the Spring corpus.
+
+Since ADR 0023, an annotation bound by import to `org.apache.shiro.authz.annotation` is recorded as an unrecognized authorization annotation, exactly as nacos's `@Secured` is: no guard, no role, `?` in the Guards column, the mutating-endpoint finding suppressed, and a warning naming the package and the endpoint count. **845 findings disappeared across the corpus** — metersphere 555, streampark 101, JeecgBoot 81, litemall 65, inlong 43 — with no other repository changing in any respect.
+
+**This does not mean Shiro is supported.** Nothing reads what it requires. `"system:user:edit"` is not extracted, modelled or reported, for the same reason nacos's `resource`/`action` pairs are not — the model has no field for a permission (*Permissions as metadata* above). Shiro's URL layer (`ShiroFilterFactoryBean`, in shenyu and streampark) is not parsed either. One claim was withdrawn: that these endpoints have no access control.
+
+**Whether the annotations are switched on is now reported.** Shiro annotations do nothing unless `AuthorizationAttributeSourceAdvisor` is wired in — the counterpart of Spring's `@EnableMethodSecurity` — and the run says whether it was located, per [ADR 0015](decisions/0015-inert-method-security-guard.md)'s treatment applied unchanged. It is not downgraded when absent: Shiro's spring-boot starter enables annotation support by auto-configuration, leaving no Java bean to find, and build files are not parsed. In all six corpus repositories using Shiro the wiring *was* located.
+
+**What remains, and it is substantial: project-local authorization annotations.** No package list can enumerate an annotation a project invented. Checked individually rather than assumed:
+
+- metersphere's `@CheckOwner` (515 uses) — enforcement, read by `CheckOwnerAspect`, `CheckProjectOwnerAspect` and `CheckOrgOwnerAspect`.
+- streampark's `@Permission` (78) — enforcement, read by `PermissionAspect`.
+- `@AuthAction` (28, Sentinel vendored inside JeecgBoot) — reader lives in the dependency; not confirmable from source.
+- dataease's `@DePermit` (97) — **no reader anywhere in the analyzed source**, only its own declaration. It may be enforced outside the tree, or it may be dead.
+
+Endpoints carrying these keep their findings. That is the status quo, not a regression — and `@DePermit` is why the obvious shortcut was rejected: a rule matching annotation *names* would have suppressed 97 findings on the strength of a word, with no more evidence of protection than the word itself.
+
+**Two further shapes deliberately excluded**, both measured:
+
+- **A name heuristic** would capture 1,615 mutating routes to the package rule's 907, but it catches JeecgBoot's `@IgnoreAuth` — an annotation that *skips* authentication — and so would suppress the finding precisely where it is correct, on genuinely public endpoints. It also catches litemall's `@RequiresPermissionsDesc`, which declares `menu()` and `button()` for an admin console, and still misses `@CheckOwner`.
+- **An on-demand (`.*`) import** of the Shiro package binds nothing here. A wildcard says a package is in scope, not which names come from it, and honoring one bound every unimported annotation in the file to Shiro — an early implementation recorded `@RestController` as a Shiro authorization annotation. 274 of the corpus's 275 Shiro imports are single-type, and the one on-demand file has a single mutating route, so the exclusion costs one route in the safe direction.
+
+**Other frameworks are not covered.** Sa-Token (`cn.dev33.satoken.annotation`) is the obvious next candidate and is deliberately absent: zero occurrences across the 20 repositories scanned, and adding a package the corpus does not exercise would be guessing.
+
+**What to do about it today**: the warning names the package. Confirm the framework is wired up — for Shiro, that `AuthorizationAttributeSourceAdvisor` or the spring-boot starter is present — and read the annotations themselves for what they require, which Sphinxor will not tell you.
 
 ## Spring: `SecurityFilterChain` beyond simple, single-chain patterns
 

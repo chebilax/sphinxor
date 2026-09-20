@@ -4,6 +4,11 @@
 
 Accepted.
 
+§1's on-demand-import clause was reversed during implementation: a test showed that
+honoring a wildcard bound every unimported annotation in the file to the Shiro
+package, including `@RestController`. The reasoning and the measurement that make
+excluding it the cheaper error are in §1.
+
 §3 was added during review. The draft suppressed 907 findings on the unstated
 assumption that Shiro's annotations are wired up, having just demonstrated with
 `@DePermit` that an authorization-looking annotation can do nothing. ADR 0015 already
@@ -89,10 +94,26 @@ package in the **known authorization-annotation packages** list is recorded as a
 |---|---|
 | `org.apache.shiro.authz.annotation` | Apache Shiro |
 
-Binding is resolved by ADR 0022 §1's existing per-file `importTable`, including the
-on-demand form — `import org.apache.shiro.authz.annotation.*;` occurs once in the
-corpus (litemall's `AdminIndexController`) and must bind, or that file's `@RequiresPermissions`
-would be missed.
+Binding is resolved by ADR 0022 §1's existing per-file `importTable`, and requires a
+**single-type import**. The on-demand form is deliberately not honored — a change
+from this section as first accepted, made during implementation because a test
+proved the original text wrong. It is recorded here rather than quietly applied:
+
+> A wildcard says a package is in scope; it does not say which simple names come
+> from it. ADR 0022 can honor one because its caller has already narrowed the
+> question to three known names — *"is this `@Secured` Spring's?"* is answerable
+> from a wildcard. Here the rule is package membership itself, asked of **every**
+> annotation in the file, so honoring a wildcard binds every otherwise-unimported
+> name to that package. The first implementation did exactly that and recorded
+> `@RestController` and `@PostMapping` as Shiro authorization annotations — the
+> over-capture this ADR rejects the name heuristic for, reached from the other side.
+
+Resolving it soundly would require a list of Shiro's annotation names, which is
+precisely what §1 exists to avoid. The measured trade is lopsided: **274 of the
+corpus's 275 Shiro imports are single-type**, and the one on-demand file (litemall's
+`AdminIndexController`) contains a single mutating route. One missed route in 20
+repositories, in the safe direction — it keeps the finding it has today — against a
+name list and an unsound rule.
 
 **By package rather than by name, deliberately.** The package *is* Shiro's
 authorization-annotation package; every annotation in it is one. Enumerating names
@@ -225,20 +246,50 @@ project declines elsewhere for the same reason.
 - Shiro's URL layer (`ShiroFilterFactoryBean`, seen in shenyu and streampark) stays
   entirely unread, as does everything Shiro requires. This decision changes one
   claim: that these endpoints have no access control.
-- **Validation before this is Accepted**, against the real corpus per `docs/testing.md`:
-  - The three 14-corpus repositories drop the predicted findings and nothing else:
-    JeecgBoot and streampark lose their Shiro-covered mutating findings, each gains
-    the §3a warning naming `org.apache.shiro.authz.annotation`, and shenyu is
-    unchanged in count (its Shiro annotations sit in controllers not yet recognized)
-    while gaining the warning for the ones that are.
+### Validation — measured after implementation
+
+**845 `mutating-endpoint-without-access-control` findings removed across the 20
+repositories, every one on an endpoint carrying a readable authorization
+annotation**:
+
+| Repository | findings before | after | removed |
+|---|---:|---:|---:|
+| `metersphere/metersphere` | 639 | 84 | **555** |
+| `apache/streampark` | 227 | 126 | **101** |
+| `jeecgboot/JeecgBoot` | 251 | 170 | **81** |
+| `linlinjava/litemall` | 104 | 39 | **65** |
+| `apache/inlong` | 117 | 74 | **43** |
+| `apache/shenyu` | 87 | 87 | **0** |
+
+**shenyu's zero is the sequencing argument confirmed empirically.** All 100 of its
+Shiro annotations sit inside `@RestApi` controllers extraction does not recognize, so
+no *visible* endpoint carries one and the project gains nothing here — and would have
+gained 101 new false findings had the route-shape fix landed first.
+
+Every other repository is unchanged in every respect: endpoint counts, findings of
+every rule, and the vendored `Pharmacy`, `blog-api`, `ruoyi-vue-pro` and `tutorials`
+fixtures are byte-identical. dataease, halo and hertzbeat — no Shiro — do not move.
+
+The §3a warnings name the bound package and the count (JeecgBoot: 104 endpoints on
+`@RequiresPermissions`, 8 on `@RequiresRoles`; streampark: 102), and §3 reports
+Shiro's wiring as **located** in every case, which is what makes the suppression
+defensible rather than assumed.
+
+The 845 is against the 907 source-level routes this ADR predicted. The difference is
+shenyu's 66 invisible ones and a handful already suppressed by another guard; the
+figures above are what the tool actually does, and supersede the prediction.
+
+- **Original validation bar**, against the real corpus per `docs/testing.md`:
+  - The three 14-corpus repositories drop the predicted findings and nothing else.
   - **No repository without a Shiro import changes in any respect** — in particular
     thingsboard, nacos, apollo, RuoYi-Vue and eladmin, and both vendored fixtures.
   - A test that an annotation bound to the Shiro package becomes an
     `UnrecognizedAuthAnnotation` while a project-local annotation of the *same simple
     name* does not, in one file — the ADR 0022 §1 discipline, re-verified here
     because this decision is the first to apply it to a name Spring does not use.
-  - A test that the on-demand import form binds, since exactly one file in 20
-    repositories relies on it and nothing else in the suite would catch its loss.
+  - A test that the on-demand import form binds **nothing**, and specifically that
+    no ordinary Spring annotation is swept up by one — the bug that reversed §1's
+    original clause, pinned so it cannot return.
   - A test that `@IgnoreAuth` — an annotation in a package named `...config.shiro`
     that is *not* `org.apache.shiro.authz.annotation` — does **not** suppress, which
     is the rejected alternative's failure mode pinned as a regression.
