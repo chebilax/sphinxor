@@ -18,10 +18,12 @@ Since [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) §4 it do
 
 Confirmed common in real code, not a hypothetical edge case: a project can define its own decorator (e.g. `@Auth(roles)`) that internally calls NestJS's `applyDecorators()` to bundle `UseGuards(...)`, `Roles(...)`, and other decorators together into one. Found and hand-verified on [`NarHakobyan/awesome-nest-boilerplate`](https://github.com/NarHakobyan/awesome-nest-boilerplate): `POST /posts` is genuinely guarded via `@Auth([RoleType.USER])`, confirmed no global guard was doing the protection instead.
 
-As of [ADR 0006](decisions/0006-composite-decorator-resolution.md), extraction follows **one level** of this indirection: a composite matching a specific, bounded shape (a single, unconditional return path calling `applyDecorators(...)`, plain identifier parameters, direct pass-through argument substitution) is resolved, and `POST /posts` above no longer produces a false positive. What's still invisible, deliberately, per that ADR's stated non-goals:
+As of [ADR 0006](decisions/0006-composite-decorator-resolution.md), extraction follows **one level** of this indirection: a composite matching a specific, bounded shape (a single, unconditional return path calling `applyDecorators(...)`, undestructured parameters, direct pass-through argument substitution) is resolved, and `POST /posts` above no longer produces a false positive. What's still invisible, deliberately, per that ADR's stated non-goals:
 
 - **Multi-level composite chains** — a composite calling another composite that calls `applyDecorators(...)`.
 - **Composites built by assembling an array imperatively**, rather than by a single flat `applyDecorators(...)` call. Confirmed on [`immich-app/immich`](https://github.com/immich-app/immich), which authorizes with `@Authenticated({ permission: Permission.AssetUpdate })`: the decorator pushes onto a `MethodDecorator[]` through a series of `if` branches, and enforcement happens in a global guard reading the metadata it sets. Extraction recognizes none of it, so a 302-endpoint production application reports 170 findings, every one a Low-confidence false positive in the safe direction, with no permission extracted. The [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) §4 global-guard warning does fire on it, so the run says endpoint-level results understate protection.
+
+  **Measured, and deliberately not fixed.** A survey of 11 production repositories found this shape in exactly one other project (`amplication`, on its GraphQL side), and found something more decisive about immich itself: the words `UseGuards` and `Roles(` do not occur **anywhere** in its source tree (re-measured at a later upstream commit than the figures above: 444 files, 303 endpoints, 171 findings — the drift is upstream's, not a correction). Since ADR 0006 extracts only nested calls by those two names, a perfect array-push extension would walk immich's arrays and build zero guards. The shape is not what hides immich's authorization — see *Permissions as metadata* below, which is.
 - **Conditional or branching decorator construction** — a composite with more than one `return` path (e.g. `if (...) return SkipAuth(); return applyDecorators(...)`).
 - **Destructured parameters** — `function Auth({ roles }: { roles: RoleType[] })` rather than a plain `roles` parameter.
 - **Non-trivial dataflow** — a parameter transformed before being passed to the inner `Roles`/`UseGuards` call (e.g. `Roles(roles.map(...))`), or passed via spread (`Roles(...roles)`).
@@ -30,7 +32,56 @@ A composite outside this bounded shape isn't guessed at — it falls back to exa
 
 **Consequence for what's still invisible**: same as the global-guard case — a Low-confidence, hedged false positive rather than a confident wrong claim. A connected, secondary consequence: a role enum referenced *only* through a wrapped decorator outside this bounded shape is invisible to the role-declaration usage filter (`internal/extract/nestjs/roles.go`), so `permission-declared-but-unreferenced` and `empty-role` cannot fire on those roles either.
 
+**One item that was on this list by accident, and has been removed.** A **rest parameter in the composite's own signature** — `function RequiresScope(...requiredScopes: Scope[])` — used to disqualify the whole composite, not by decision but because tree-sitter models it as a `required_parameter` whose `pattern` is a `rest_pattern`, so it failed the check written to exclude *destructuring*. `ghostfolio/ghostfolio` declares precisely ADR 0006's bounded shape this way, wrapping `UseGuards(AuthGuard('jwt'), HasPermissionGuard, ImpersonationGuard, ScopeGuard)`, and none of it resolved; the cause was isolated to the single `...`. Fixed under [ADR 0006](decisions/0006-composite-decorator-resolution.md) Amendment 1: ghostfolio's guarded endpoints rise 78 → 105 and its `mutating-endpoint-without-access-control` findings fall 13 → 0, with no change to any other repository in the corpus. What that amendment still does not do, now stated rather than incidental, is resolve a rest parameter's *value*: an inner `Roles(roles)` referencing it resolves to nothing rather than to a wrong subset.
+
 **What to do about it today**: for anything outside the resolved shape, same as above — `sphinxor-allow` on endpoints known to be protected this way. There is no plan to extend beyond one level of indirection or direct pass-through substitution in v0.1; whether it's worth the extraction complexity in a later version is an open question, not a commitment made here.
+
+## Permissions as metadata: the model has no concept for how production NestJS actually authorizes
+
+This is the largest gap recorded in this file, and it is **not an extraction gap**. Extending composite-decorator resolution cannot close it at any depth. It is a question about [ADR 0002](decisions/0002-intermediate-model-structure.md)'s model, and it is deliberately left open here rather than answered — no ADR has been written, and nothing below proposes one.
+
+### The number
+
+A survey of 11 production NestJS repositories — 2,435 endpoints — produced this:
+
+> **The model records zero roles, on zero endpoints, in all 11 repositories.**
+
+Not "few". None. The positive control is the vendored `awesome-nest-boilerplate` fixture, which the same binary reports three role-carrying endpoints for, so this is a fact about the corpus and not an artifact of the harness.
+
+### Why
+
+Production NestJS does not authorize with `@UseGuards(RolesGuard)` + `@Roles(Role.Admin)`, which is the pair this extractor is built to read. It declares a **requirement as metadata** and lets a globally registered guard enforce it. The decorator does not say *"this guard protects this endpoint"*; it says *"this endpoint requires permission X"* — and the model has no field that means that.
+
+| Repository | How authorization is declared | Uses | What the model records |
+|---|---|---:|---|
+| `immich-app/immich` | `@Authenticated({ permission: Permission.AssetUpdate })` → `SetMetadata` | 292 | nothing |
+| `vendure-ecommerce/vendure` | `@Allow(Permission.ReadProduct)` → `SetMetadata` | 363 | nothing |
+| `teableio/teable` | `@Permissions(Action.TableRead)` → `SetMetadata` | 296 | `PermissionGuard` |
+| `nocodb/nocodb` | `@Acl(name, { allowedRoles })` → hand-written `MethodDecorator` | 279 | `GlobalGuard` + rate limiters |
+| `ToolJet/ToolJet` | `@InitFeature(featureId)` → `SetMetadata` | 73 | `FeatureAbilityGuard` |
+| `calcom/cal.com` | `@Permissions([...])` via `Reflector.createDecorator()` | 54 | `PermissionsGuard` |
+| `ghostfolio/ghostfolio` | `@RequiresScope(...scopes)` → `SetMetadata` + `UseGuards` | 33 | the four guard names, not the scopes |
+| `amplication/amplication` | `AUTHORIZE_CONTEXT` `requiredPermissions` → `SetMetadata` | 157 | nothing |
+
+Three things this table is saying, each of which matters on its own:
+
+- **Only two of the eight route through `applyDecorators` at all.** The others are a bare `SetMetadata` arrow, a hand-written `(target, key, descriptor) => {…}`, or NestJS's own `Reflector.createDecorator()` factory. Composite-decorator resolution cannot reach most of them by construction — it is the wrong instrument, not an insufficiently powerful one.
+- **A high guard count is not understanding.** `nocodb` reports guards on 339 of 344 endpoints, which looks like near-total coverage; those guards are `GlobalGuard` and three rate limiters applied at class level, while all 279 `@Acl` permissions — *including their `allowedRoles` lists* — are invisible. `teable`, `ToolJet`, `cal.com` and `ghostfolio` are the same story: the enforcer is visible, the requirement it enforces is not.
+- **Extraction is the easy half.** immich's `SetMetadata(MetadataKey.AuthRoute, options)` passes the composite's bare parameter, so ADR 0006's existing positional pass-through would already hand back the call site's `{ permission: Permission.AssetUpdate }` literal. The value is mechanically reachable today. There is nowhere in the model to put it: `GuardApplication{GuardName}` plus `RoleReference{RawLiteral}` has no slot for a permission, and immich's option object carries `permission`, `admin`, `sharedLink`, `public` and `setup`, of which only `admin` is even role-shaped.
+
+### Why an extraction answer could not be complete anyway
+
+Even granted a model concept, the link from a metadata key to the guard that enforces it is **module wiring, not decorator syntax**. immich registers two different `APP_GUARD` providers in two different modules — `AuthGuard` for the API, `MaintenanceAuthGuard` for the maintenance worker — and **both read the same key**, `MetadataKey.AuthRoute`. The same decorator on the same handler therefore means two different things depending on which module mounted the controller. No decorator-level analysis resolves that, and this extractor does not parse module provider wiring at all (see the global-guard entry above).
+
+So any future answer has at least three parts, and only the first is extraction: read the requirement; represent it in the model; and know, or honestly refuse to know, which guard enforces it.
+
+### Consequence today
+
+Every endpoint in every one of these projects is reported with an empty `Roles` column, and the mutating ones among them are flagged by `mutating-endpoint-without-access-control` at Low confidence. The direction is the safe one and the [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) §4 global-guard warning fires on the projects that register one, so a run does not present these results as a complete picture. But the scale should be stated plainly: on a production NestJS application, the RBAC matrix this tool exists to produce currently has **no role data in it at all**.
+
+**What to do about it today**: nothing at the endpoint level makes this better — `sphinxor-allow` marks an endpoint as reviewed, it does not recover the permission. Treat the matrix for such a project as a route inventory with authentication hints, not as an authorization model.
+
+**Status**: open, and framed here rather than decided. Closing it means amending ADR 0002 to carry a requirement that is neither a guard nor a role. That amendment has not been written.
 
 ## Spring: `SecurityFilterChain` beyond simple, single-chain patterns
 
@@ -116,7 +167,9 @@ The pattern is real — 7 of the 17 measurable repositories — and in every pro
 - `apache/shenyu`'s 43 collisions are entirely inside `shenyu-examples/`, each its own `@SpringBootApplication`; `shenyu-admin` has none.
 - `spring-petclinic-microservices` is a four-service tree with zero collisions: a multi-application tree does not even imply a collision.
 
-**This is not the same as "safe", and the difference matters.** For immich and novu, the absence of bleed is measurement-limited: their authorization runs through composite decorators this extractor does not recognize at all (see the composite-decorator entry above), so there are no guards available to bleed. That is *nothing to bleed*, not *protected* — and it would stop being true the moment composite-decorator support improved.
+**The "no bleed" here is measurement-limited, but the safety is not.** For immich and novu, extraction recognizes no guards at all on either side of the pair — their authorization runs through decorators it cannot read (see the composite-decorator entry above) — so "the guards are the same" means "none were seen". The equality is an artifact, and Amendment 2 §8 says so itself.
+
+What does *not* follow, and what an earlier version of this entry wrongly implied, is that danger is queued up behind better extraction. §8 has two halves and only the warning is conditional: **keeping the colliding endpoints apart is unconditional**, so neither one is merged into the other, neither is dropped, and neither can report the other's protection — whatever extraction can or cannot see. Verified on real immich rather than reasoned about: all 11 pairs are present in the report today, each with its own identity, and `sphinxor export cerbos` omits all 11. The same run with immich's `@Authenticated({...})` options rewritten into literal guards — a stand-in for extraction learning to read them — raises the §8 warning on all 11, naming each route, because all 11 genuinely differ (the worker side carries `@MaintenanceRoute()` or nothing; the main-app side carries `permission: …, admin: true` or `public: true`). That is the warning waking up on its own, which is what §8 predicted, and it arrives in the safe direction: late, never wrong.
 
 A fourth shape, recorded without a verdict: **conditional controller registration**. `novu`'s `organization.module.ts` returns `[EEOrganizationController]` or `[OrganizationController]` depending on a runtime check, so only one is ever mounted. Three collisions, identical class-level guards, no bleed observed.
 
