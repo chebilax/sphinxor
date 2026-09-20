@@ -261,10 +261,14 @@ annotation**:
 | `apache/inlong` | 117 | 74 | **43** |
 | `apache/shenyu` | 87 | 87 | **0** |
 
-**shenyu's zero is the sequencing argument confirmed empirically.** All 100 of its
-Shiro annotations sit inside `@RestApi` controllers extraction does not recognize, so
-no *visible* endpoint carries one and the project gains nothing here — and would have
-gained 101 new false findings had the route-shape fix landed first.
+**shenyu's zero turns this ADR's sequencing argument from a prediction into a
+measurement.** The Context above argued that fixing shenyu's `@RestApi` route shape
+first would surface 179 routes whose only protection is Shiro and generate ~101
+findings against protected code. The run confirms the premise directly: all 100 of
+shenyu's Shiro annotations sit inside `@RestApi` controllers extraction does not
+recognize, so **no visible endpoint carries one** and the project gains exactly
+nothing here. Those 101 findings were avoided by doing this decision first, and they
+are what the other order would have produced.
 
 Every other repository is unchanged in every respect: endpoint counts, findings of
 every rule, and the vendored `Pharmacy`, `blog-api`, `ruoyi-vue-pro` and `tutorials`
