@@ -16,6 +16,8 @@ import (
 // disabled).
 func TestExtractControllers_SecuredArrayAndSingleValueShorthand(t *testing.T) {
 	src := `
+import org.springframework.security.access.annotation.Secured;
+import jakarta.annotation.security.RolesAllowed;
 @RestController
 public class ThingController {
     @Secured({"ROLE_ADMIN", "ROLE_MANAGER"})
@@ -85,6 +87,7 @@ public class ThingController {
 // an annotation that's intentionally role-less.
 func TestExtractControllers_IsAuthenticatedDeclaresNoRoles(t *testing.T) {
 	src := `
+import org.springframework.security.access.prepost.PreAuthorize;
 @RestController
 public class ThingController {
     @PreAuthorize("isAuthenticated()")
@@ -126,6 +129,7 @@ public class ThingController {
 // only it has a positive non-role representation to move to.
 func TestExtractControllers_PermitAllStillDeclaresRoles(t *testing.T) {
 	src := `
+import org.springframework.security.access.prepost.PreAuthorize;
 @RestController
 public class ThingController {
     @PreAuthorize("permitAll()")
@@ -196,6 +200,7 @@ enum RoleB { ADMIN, GUEST }
 // specifically exercises the merged-away handler's own annotation.
 func TestExtractControllers_MergedHandlerRetainsOwnGuard(t *testing.T) {
 	src := `
+import org.springframework.security.access.prepost.PreAuthorize;
 @RestController
 public class ThingController {
     @GetMapping(path = "/x")

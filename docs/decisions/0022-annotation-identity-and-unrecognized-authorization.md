@@ -2,7 +2,15 @@
 
 ## Status
 
-Proposed.
+Accepted.
+
+§3 was challenged during review on the grounds that [ADR 0015](0015-inert-method-security-guard.md)
+reports-and-caveats where §3 suppresses, and confirmed rather than changed. The
+disanalogy runs the other way: ADR 0015 has content to report — extracted roles, plus
+a doubt about whether they are enforced — whereas here nothing was extracted at all.
+A reworded Low finding would carry exactly what §2's collection records and the §3
+warning states, a second time and in the form of an accusation. The reasoning is
+folded into §3.
 
 ## Context
 
@@ -202,19 +210,45 @@ An endpoint carrying an unrecognized authorization annotation is not in the stat
 rule describes. Its message — "has no detected guard or role decorator" — would be
 false on its face, disprovable by reading the line above the handler.
 
-So the rule skips those endpoints, and the run instead warns at project level, in the
-established shape: an access-control annotation was found that Sphinxor does not
-recognize, naming the count, the annotation and the package it actually came from,
-and saying that those endpoints are neither confirmed protected nor confirmed
-unprotected. The matrix marks the row rather than leaving it looking bare.
+So the rule skips those endpoints, and the run instead warns at project level. The
+matrix marks the row rather than leaving it looking bare.
+
+**Why suppression and not a reworded Low finding.** The obvious middle path — keep a
+finding, change its wording to "carries an authorization annotation Sphinxor does not
+understand" — was considered and rejected. That sentence is precisely what §2's
+collection records and what the warning below says, so the finding would state the
+same fact a third time, and state it as an accusation. There is nothing else for it
+to carry: unlike ADR 0015, where the report holds extracted roles and the caveat adds
+a doubt about whether they are enforced, here **nothing was extracted** — no roles, no
+requirement, no guard. A finding with no content beyond "I did not understand this"
+is noise wearing a finding's clothes.
+
+The stronger reason is that any finding retained on such an endpoint keeps an
+accusation whose premise is untrue. `mutating-endpoint-without-access-control` says
+the endpoint "has no detected guard or role decorator"; an authorization annotation
+is sitting one line above the handler. On nacos that premise would be false 242
+times, against code that is genuinely protected.
 
 **The residual risk, stated rather than buried**: if such an annotation is in fact
-decorative — declared, never enforced — Sphinxor will now stay quiet where it
-previously accused. That is a real loss of a finding, and it is accepted for the same
-reason ADR 0015 accepts the mirror-image risk on inert method security: the alternative
-is 245 accusations that are wrong on every project where the annotation *is* enforced,
-and a caveat nobody reads because it fires on healthy code. The warning names the
-annotation so a reader can check the one thing Sphinxor cannot.
+decorative — declared, never enforced — Sphinxor stays quiet where it previously
+accused. That is a real loss of a finding. It is accepted because the trade is
+structurally lopsided, not merely convenient: a false negative on a rare case (a
+home-grown authorization annotation that enforces nothing) against a false positive
+on a common one (a home-grown authorization annotation that works). And it is not
+silence — §2 records the annotation, the matrix marks the row, and the warning names
+the package, which is the one thing a reader needs to check what Sphinxor cannot.
+
+### §3a The warning names the package and the count, because a bare one is unusable
+
+The warning must be actionable, not merely present. "Unrecognized annotations were
+found" tells a reader nothing they can act on; **"392 endpoints carry
+`com.alibaba.nacos.auth.annotation.Secured`, which Sphinxor does not recognize"**
+tells them exactly what to go and read, and how much of the report depends on it.
+
+So it names, for each distinct unrecognized annotation: the package it was actually
+bound to, and how many endpoints carry it. Naming the *bound package* rather than the
+simple name is the load-bearing part — `@Secured` alone would read as Spring's, which
+is the confusion this whole ADR exists to remove.
 
 ### §4 ADR 0015's inert-method-security warning stops seeing foreign annotations
 
@@ -260,23 +294,46 @@ assumed.
   these too, since they are no longer role-declaring guards — replaced by this ADR's
   own warning, which is the more accurate statement about them.
 - A project using a *correctly imported* Spring annotation sees no change whatsoever.
-- **Validation before this is Accepted**, against the real corpus per `docs/testing.md`:
-  - nacos: guards 392 → 0, unrecognized-annotation records 0 → 392,
-    `mutating-endpoint-without-access-control` stays at **3**, ADR 0015's warning
-    gone, this ADR's warning present and naming `com.alibaba.nacos.auth.annotation.Secured`.
-  - **No other repository in the 20-project corpus changes in any respect** — in
-    particular thingsboard's 439 role-carrying endpoints, and apollo/RuoYi-Vue/eladmin's
-    guard counts, are all bound by correct Spring imports and must be untouched.
-  - `Pharmacy`, `blog-api` and `ruoyi-vue-pro` produce byte-identical output, and the
-    Cerbos export is unchanged everywhere.
-  - A test covering the distinction §1 turns on, with both annotations in one file:
-    the same `@Secured` name, imported from Spring and from another package, is a
-    guard in the first case and an unrecognized annotation in the second.
-  - A test that a recognized name with **no** binding import is unrecognized, since
-    that branch has no coverage in the corpus.
-  - Positive tests that a correctly imported Spring `@Secured` and a correctly
-    imported `@RolesAllowed` (both `javax` and `jakarta`) **are** recognized and
-    yield their roles. Neither name appears with a correct import anywhere in the
-    corpus, so nothing else in the suite would catch a typo in those accepted
-    package strings — and the failure it would cause, silently rejecting the genuine
-    annotation, is exactly this ADR's own defect inverted.
+- **One cosmetic gap, unexercised and deliberately left.** `sphinxor export cerbos`
+  omits an endpoint whose only access control is an unrecognized annotation under
+  `ReasonNoGuard` ("no GuardApplication at all was found"), which understates what is
+  known. Adding a reason code for it would be building ahead of evidence: no project
+  in the corpus reaches that path, since nacos's export is already omitted wholesale
+  for its unreadable URL layer, and its export is byte-identical before and after.
+  Recorded in `docs/limitations.md` rather than fixed.
+
+### Validation — measured, not predicted
+Run against the real corpus per `docs/testing.md`. Every item below was measured
+after implementation:
+
+- **nacos**: guards **392 → 0**, unrecognized-annotation records **0 → 392**, all
+  bound to `com.alibaba.nacos.auth.annotation.Secured`.
+  `mutating-endpoint-without-access-control` stays at **3** — it did not jump to 245.
+  ADR 0015's inert-method-security warning is gone (§4), ADR 0020 Amendment 3 §11's
+  unresolved-roles warning is gone with it, and this ADR's warning is present naming
+  the package and the count.
+- **Exactly one repository in the 14-project Spring corpus changed**, and it is
+  nacos: a file-by-file diff of both stdout and stderr across all 14 shows no other
+  difference of any kind. thingsboard still records 467 guards and 439 role-carrying
+  endpoints; apollo (68), RuoYi-Vue (116) and eladmin (99) keep every guard, all
+  bound by correct Spring imports.
+- `Pharmacy`, `blog-api`, `ruoyi-vue-pro` and `tutorials` produce **byte-identical**
+  output, and nacos's Cerbos export — policies and report — is byte-identical too.
+- Tests, in `internal/extract/spring/imports_test.go`: the same `@Secured` name
+  imported from Spring and from nacos, guard in the first case and unrecognized
+  annotation in the second; a recognized name with no binding import; a wildcard
+  import that does bind; a static import that must not; and §3 end to end, where an
+  endpoint with an unrecognized annotation is skipped while a genuinely bare sibling
+  in the same file is still flagged.
+- Positive tests for the two accepted package strings with **no corpus coverage** —
+  Spring's `@Secured`, and `@RolesAllowed` in both namespaces. Nothing else in the
+  suite would catch a typo there, and the failure it would cause is this ADR's own
+  defect inverted.
+
+**One consequence not anticipated in the draft**: six existing unit tests had Java
+snippets using `@PreAuthorize`/`@Secured` with no import at all — the shorthand a
+hand-written snippet naturally falls into, and a shape §1 now treats as unbound. They
+were corrected by adding the real import rather than by relaxing the rule: an
+annotation with no import would not compile, so the snippets were not valid Java for
+what they claimed to test. Every test that already wrote its imports out in full —
+including both that use the vendored fixtures — passed untouched.

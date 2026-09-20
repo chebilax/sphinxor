@@ -25,6 +25,22 @@ import (
 // human look, not an automatic failure. See docs/limitations.md for the
 // full, current list of what this rule cannot see.
 //
+// An endpoint carrying an unrecognized authorization annotation
+// (model.UnrecognizedAuthAnnotation, docs/decisions/0022-annotation-identity-and-unrecognized-authorization.md
+// §3) is skipped entirely rather than flagged. This rule's message says
+// the endpoint "has no detected guard or role decorator"; when an
+// authorization annotation is sitting one line above the handler, that
+// premise is false on its face, and on alibaba/nacos it would have been
+// false 242 times against genuinely protected code. What such an endpoint
+// carries is recorded in the model and named in a project-level warning
+// instead — the same treatment as a global guard, where protection is
+// known to exist and its requirement is not.
+//
+// The accepted cost: an annotation that is decorative — declared, never
+// enforced — now goes unflagged. That trade is deliberate and lopsided in
+// the right direction, a false negative on a rare case against a false
+// positive on a common one (ADR 0022 §3).
+//
 // A GuardApplication whose annotation family is *confirmed* not enabled
 // project-wide (docs/decisions/0015-inert-method-security-guard.md, e.g. a
 // Spring @Secured method with no securedEnabled = true anywhere) does not
@@ -48,9 +64,17 @@ func (r MutatingEndpointWithoutAccessControl) Check(m *model.Model) []model.Find
 		}
 	}
 
+	// ADR 0022 §3: an endpoint with an access-control annotation this
+	// extractor could not identify is not in the state this rule
+	// describes.
+	unidentified := make(map[model.ID]bool, len(m.UnrecognizedAuthAnnotations))
+	for _, a := range m.UnrecognizedAuthAnnotations {
+		unidentified[a.EndpointID] = true
+	}
+
 	var findings []model.Finding
 	for _, e := range m.Endpoints {
-		if !isMutating(e.HTTPMethod) || guarded[e.ID] {
+		if !isMutating(e.HTTPMethod) || guarded[e.ID] || unidentified[e.ID] {
 			continue
 		}
 		findings = append(findings, model.Finding{

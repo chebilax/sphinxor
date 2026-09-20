@@ -26,7 +26,7 @@ func writeMarkdown(w io.Writer, matrix Matrix) error {
 			renderPath(row),
 			row.Handler,
 			row.Controller,
-			joinOrDash(row.Guards),
+			renderGuards(row),
 			renderRoles(row),
 			findingSummaries(row.Findings),
 		)
@@ -64,6 +64,21 @@ func countByStatus(findings []model.Finding) (blocking, warnings, allowlisted in
 		}
 	}
 	return blocking, warnings, allowlisted
+}
+
+// renderGuards shows what protects an endpoint, marking the case where an
+// access-control annotation was found and could not be identified (ADR
+// 0022 §2). "-" asserts nothing guards this endpoint; "?" says something
+// does and Sphinxor could not say what. The run's warning names the
+// package it actually came from.
+func renderGuards(row Row) string {
+	if !row.UnrecognizedAuth {
+		return joinOrDash(row.Guards)
+	}
+	if len(row.Guards) == 0 {
+		return "?"
+	}
+	return strings.Join(row.Guards, ", ") + ", ?"
 }
 
 // renderRoles shows an endpoint's role requirement, marking the case
