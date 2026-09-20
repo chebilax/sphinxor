@@ -3,6 +3,8 @@ package nestjs
 import (
 	"testing"
 
+	sitter "github.com/smacker/go-tree-sitter"
+
 	"github.com/chebilax/sphinxor/internal/model"
 )
 
@@ -162,4 +164,124 @@ export class ThingsController {
 			t.Errorf("expected zero role references for @Auth([]), got %+v", ref)
 		}
 	}
+}
+
+// TestCollectCompositeDecorators_RestParameterRecognized pins the
+// correction recorded in ADR 0006's amendment: a rest parameter in the
+// composite's OWN signature never disqualified the composite by
+// decision — it shared a tree-sitter code path with destructuring
+// (a rest parameter is a `required_parameter` whose `pattern` is a
+// `rest_pattern`, not an `identifier`), and so was rejected by the check
+// written for destructuring.
+//
+// Measured on ghostfolio, whose `RequiresScope(...requiredScopes: Scope[])`
+// is otherwise exactly ADR 0006's bounded shape — a single return path
+// calling applyDecorators(...) with a literal UseGuards(...) inside — and
+// which carries the real guards of 33 endpoints.
+func TestCollectCompositeDecorators_RestParameterRecognized(t *testing.T) {
+	root, src := parseTS(t, `
+export function RequiresScope(...requiredScopes: Scope[]) {
+  return applyDecorators(
+    SetMetadata(REQUIRES_SCOPE_KEY, requiredScopes),
+    UseGuards(AuthGuard('jwt'), HasPermissionGuard, ImpersonationGuard, ScopeGuard),
+  );
+}
+`)
+	composites := collectCompositeDecorators(root, src)
+	comp, ok := composites["RequiresScope"]
+	if !ok {
+		t.Fatalf("a composite whose only parameter is a rest parameter must be recognized: %+v", composites)
+	}
+	if len(comp.params) != 0 {
+		t.Errorf("a rest parameter must not be bound positionally, got params %v", comp.params)
+	}
+
+	guardArgs, _, _, ok := resolveCompositeArgs(
+		decoratorCall{Name: "RequiresScope"}, src, composites)
+	if !ok {
+		t.Fatalf("resolveCompositeArgs did not resolve a registered composite")
+	}
+	var names []string
+	for _, g := range guardArgs {
+		names = append(names, guardArgName(g.node, g.src))
+	}
+	want := []string{"AuthGuard", "HasPermissionGuard", "ImpersonationGuard", "ScopeGuard"}
+	if len(names) != len(want) {
+		t.Fatalf("got guards %v, want %v", names, want)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("got guards %v, want %v", names, want)
+		}
+	}
+}
+
+// TestResolveCompositeArgs_RestParameterNotSubstituted states the one
+// thing the correction above deliberately does NOT do. A rest parameter
+// binds to the *list* of remaining call-site arguments, not to one of
+// them, so substituting it positionally would silently drop every
+// argument after the first. Recognizing the composite is the fix;
+// guessing at the rest parameter's value is not, and an inner call that
+// references it resolves to nothing rather than to something wrong.
+func TestResolveCompositeArgs_RestParameterNotSubstituted(t *testing.T) {
+	defRoot, defSrc := parseTS(t, `
+export function Auth(...roles: RoleType[]) {
+  return applyDecorators(Roles(roles), UseGuards(RolesGuard));
+}
+`)
+	composites := collectCompositeDecorators(defRoot, defSrc)
+	if _, ok := composites["Auth"]; !ok {
+		t.Fatalf("Auth not recognized as a composite: %+v", composites)
+	}
+
+	callRoot, callSrc := parseTS(t, `
+@Auth(RoleType.User, RoleType.Admin)
+class C {}
+`)
+	call := firstDecoratorCall(t, callRoot, callSrc, "Auth")
+	guardArgs, roleArgs, hasRoles, ok := resolveCompositeArgs(call, callSrc, composites)
+	if !ok {
+		t.Fatalf("resolveCompositeArgs did not resolve a registered composite")
+	}
+	if !hasRoles {
+		t.Errorf("the composite does contain a Roles() call, so hasRoles must stay true")
+	}
+	if len(roleArgs) != 0 {
+		var got []string
+		for _, r := range roleArgs {
+			got = append(got, r.node.Content(r.src))
+		}
+		t.Errorf("a rest parameter must resolve to no role arguments rather than to a wrong subset, got %v", got)
+	}
+	if len(guardArgs) != 1 || guardArgName(guardArgs[0].node, guardArgs[0].src) != "RolesGuard" {
+		t.Errorf("guards referencing no parameter must still resolve, got %d", len(guardArgs))
+	}
+}
+
+// firstDecoratorCall finds the first @Name(...) decorator in a parsed
+// snippet, so a test can hand a real call site to resolveCompositeArgs
+// rather than hand-building one.
+func firstDecoratorCall(t *testing.T, root *sitter.Node, src []byte, name string) decoratorCall {
+	t.Helper()
+	var found *decoratorCall
+	var walk func(n *sitter.Node)
+	walk = func(n *sitter.Node) {
+		if found != nil {
+			return
+		}
+		if n.Type() == "decorator" {
+			if call, ok := parseDecorator(n, src); ok && call.Name == name {
+				found = &call
+				return
+			}
+		}
+		for _, c := range namedChildren(n) {
+			walk(c)
+		}
+	}
+	walk(root)
+	if found == nil {
+		t.Fatalf("no @%s(...) decorator found in snippet", name)
+	}
+	return *found
 }

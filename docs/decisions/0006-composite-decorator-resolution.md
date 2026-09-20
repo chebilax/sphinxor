@@ -4,6 +4,11 @@
 
 Accepted.
 
+**Amendment 1 (a rest parameter is in scope, and always was): Accepted.** See
+*Amendment 1* below. It corrects an exclusion this ADR never decided on — the
+original text names destructured parameters and spread *arguments* as non-goals,
+and a rest parameter in the composite's own signature is neither.
+
 ## Context
 
 `docs/limitations.md` names a confirmed-common, not hypothetical, blind spot: a project-defined decorator built with NestJS's `applyDecorators()` (e.g. `@Auth([RoleType.USER])`, which internally calls `applyDecorators(Roles(roles), UseGuards(AuthGuard(...), RolesGuard), ...)`) is invisible to this extractor. `Roles(roles)` and `UseGuards(...)` are plain function calls inside the composite's own body, not `@Roles()`/`@UseGuards()` decorator syntax at the call site — the extractor only recognizes literal decorator call sites, so an endpoint decorated with `@Auth(...)` looks identical to one with no guard at all. Verified on `internal/extract/nestjs/testdata/awesome-nest-boilerplate`: `POST /posts` is genuinely guarded, and is flagged anyway.
@@ -59,3 +64,102 @@ This is a real, if small, extension of [ADR 0002](0002-intermediate-model-struct
 - `model.GuardApplication` gains `FromComposite bool`.
 - Expected, hand-verifiable effect on the two vendored fixtures once implemented: `POST /posts` in `awesome-nest-boilerplate` stops being flagged by `mutating-endpoint-without-access-control` (the target false positive); `RoleType.USER`/`RoleType.ADMIN` become recognized, referenced role declarations; `GET /posts/:id`'s `@Auth([])` does not newly trigger `empty-role`. `testdata/nestjs-boilerplate` (no composite decorators at all) should be entirely unaffected — its existing test assertions are the regression check.
 - A composite decorator that doesn't fit the bounded shape above remains exactly as invisible as it is today — this ADR narrows the blind spot, it doesn't claim to close it. `docs/limitations.md` gets updated to reflect the new, narrower boundary once this ships, not to declare the problem solved.
+
+---
+
+# Amendment 1 — a rest parameter in the composite's own signature
+
+## Status
+
+Accepted. Recorded before the fix, per this repository's working agreement; the
+owner directed the correction and the fix together, and that direction is the
+confirmation this status rests on.
+
+## Context
+
+The decision above is a *bounded shape*, and the boundary was meant to be a
+decision: every exclusion in "What doesn't get resolved" names a thing that was
+weighed and deliberately left out. One exclusion was never weighed at all.
+
+`simpleParameterNames` requires each parameter's `pattern` to be an `identifier`,
+which was written to exclude destructuring (`function Auth({ roles }: {...})`, an
+explicit non-goal). tree-sitter models a rest parameter, `...requiredScopes:
+Scope[]`, as a `required_parameter` whose `pattern` is a `rest_pattern` — not an
+`identifier`. So a rest parameter failed the destructuring check and disqualified
+the entire composite, silently, in a shape this ADR had otherwise committed to
+resolving.
+
+Nothing in the original text excludes it. "Non-trivial dataflow" excludes a spread
+*argument* passed to an inner call (`Roles(...roles)`); §4 of the decision above
+goes the other way and explicitly anticipates the rest-parameter *convention*,
+reading an array argument as "which roles are named" precisely because
+`Roles(...roles: number[])` is the common shape. The exclusion was a shared code
+path, not a judgement.
+
+**Measured, not hypothesized.** A survey of 11 production NestJS repositories
+(recorded in `docs/limitations.md`) found `ghostfolio/ghostfolio` declaring:
+
+```ts
+export function RequiresScope(...requiredScopes: Scope[]) {
+  return applyDecorators(
+    SetMetadata(REQUIRES_SCOPE_KEY, requiredScopes),
+    UseGuards(AuthGuard('jwt'), HasPermissionGuard, ImpersonationGuard, ScopeGuard),
+  );
+}
+```
+
+That is exactly this ADR's bounded shape — one unconditional return, a direct
+`applyDecorators(...)` call, a literal `UseGuards(...)` inside — carrying the real
+guards of its endpoints. None of them resolved. The cause was isolated to the one
+character: with `...requiredScopes` the endpoints report `guards= None`, and with
+`requiredScopes` the same file reports `guards= [AuthGuard, ScopeGuard]`.
+
+This is therefore a **bug against the stated scope**, not a limitation of it.
+
+## Decision
+
+**A rest parameter no longer disqualifies a composite. It is recognized, and it is
+not substituted.**
+
+- `simpleParameterNames` accepts a `rest_pattern`, returning its name separately
+  from the substitutable parameter names.
+- A rest parameter is kept **out** of `compositeDecorator.params`. It has no
+  position to substitute into — it binds to the *list* of remaining call-site
+  arguments, not to one of them — and keeping it out leaves the remaining
+  parameters' indices aligned with the call site's arguments, since a rest
+  parameter is always last.
+- An inner `UseGuards`/`Roles` argument that references a rest parameter resolves
+  to **nothing**, the same treatment a spread argument already gets. Substituting
+  it positionally would keep the first call-site argument and silently drop every
+  one after it — a wrong subset presented as the endpoint's role list, which is
+  the failure class this project exists to avoid.
+
+### What this deliberately does not do
+
+**Resolve a rest parameter's value.** Binding `...roles` to the full list of
+call-site arguments is a real and reachable extension, and it is not taken here:
+nothing in the surveyed corpus needs it. ghostfolio's rest parameter is passed only
+to `SetMetadata`, which this ADR does not read; no other repository in the survey
+declares a composite with a rest parameter at all. Building the multi-valued
+substitution that would resolve it is capability against zero measured demand.
+
+Unlike the exclusion this amendment corrects, that one is now **stated**, and it is
+covered by a test (`TestResolveCompositeArgs_RestParameterNotSubstituted`) rather
+than left to a code path's incidental behaviour.
+
+## Consequences
+
+- `compositeDecorator` gains `restParams map[string]bool`; `simpleParameterNames`
+  and `resolveAndUnpack` change signature accordingly. No model change: this
+  produces ordinary `GuardApplication` rows through the existing path.
+- Measured effect on real ghostfolio (`apps/api/src`, 118 endpoints): endpoints
+  carrying recognized guards rise **78 → 105**, and
+  `mutating-endpoint-without-access-control` findings fall **13 → 0**. All 13 were
+  false positives on endpoints genuinely guarded by `@RequiresScope`.
+- Measured non-effect: re-running the other ten surveyed repositories (novu,
+  cal.com, vendure, twenty, ToolJet, teable, hoppscotch, nocodb, amplication,
+  immich) changes not one guard and not one finding. ghostfolio is the only
+  repository in the corpus with this shape.
+- This narrows the composite blind spot slightly; it does not touch the far larger
+  one the same survey found, which is a *model* question rather than an extraction
+  one. See `docs/limitations.md`.

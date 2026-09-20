@@ -21,7 +21,14 @@ type sourceNode struct {
 // resolves: a single return path calling applyDecorators(...), containing
 // nested UseGuards()/Roles() calls.
 type compositeDecorator struct {
-	params     []string       // parameter names, in declaration order
+	params []string // substitutable parameter names, in declaration order
+	// restParams holds the names of any rest parameters (`...roles`).
+	// They are deliberately kept OUT of params: a rest parameter binds
+	// to the list of remaining call-site arguments, not to one of them,
+	// so it has no position to substitute into. Keeping it out also
+	// leaves params' indices aligned with the call site's arguments,
+	// since a rest parameter is always last.
+	restParams map[string]bool
 	innerCalls []*sitter.Node // the UseGuards(...)/Roles(...) call_expression nodes inside applyDecorators' arguments
 	src        []byte         // the DEFINING file's source — innerCalls (until substituted) must be read against this
 }
@@ -80,7 +87,7 @@ func parseCompositeArrowVariable(n *sitter.Node, src []byte) (string, compositeD
 }
 
 func buildComposite(name string, paramsNode, bodyNode *sitter.Node, src []byte) (string, compositeDecorator, bool) {
-	params, ok := simpleParameterNames(paramsNode, src)
+	params, restParams, ok := simpleParameterNames(paramsNode, src)
 	if !ok {
 		return "", compositeDecorator{}, false
 	}
@@ -88,27 +95,65 @@ func buildComposite(name string, paramsNode, bodyNode *sitter.Node, src []byte) 
 	if !ok {
 		return "", compositeDecorator{}, false
 	}
-	return name, compositeDecorator{params: params, innerCalls: innerAuthCalls(applyCall, src), src: src}, true
+	return name, compositeDecorator{
+		params:     params,
+		restParams: restParams,
+		innerCalls: innerAuthCalls(applyCall, src),
+		src:        src,
+	}, true
 }
 
-// simpleParameterNames returns each parameter's plain identifier name, or
-// ok=false if any parameter uses a destructuring pattern this resolver
-// doesn't attempt to follow.
-func simpleParameterNames(paramsNode *sitter.Node, src []byte) ([]string, bool) {
+// simpleParameterNames returns each substitutable parameter's plain
+// identifier name, plus the names of any rest parameters, or ok=false if
+// any parameter uses a destructuring pattern this resolver doesn't
+// attempt to follow.
+//
+// A rest parameter is recognized rather than rejected, per ADR 0006's
+// amendment. It had never been decided against: tree-sitter models
+// `...roles: RoleType[]` as a `required_parameter` whose `pattern` is a
+// `rest_pattern`, so it failed the `!= "identifier"` check written for
+// destructuring and disqualified the whole composite — silently, and in
+// a shape the ADR had otherwise committed to resolving. ghostfolio's
+// `RequiresScope(...requiredScopes: Scope[])` is that shape, and the
+// guards of its 33 endpoints were invisible for this reason alone.
+//
+// It is returned separately from names because the two are substituted
+// differently: see compositeDecorator.restParams.
+func simpleParameterNames(paramsNode *sitter.Node, src []byte) ([]string, map[string]bool, bool) {
 	var names []string
+	rest := map[string]bool{}
 	for _, p := range namedChildren(paramsNode) {
 		switch p.Type() {
 		case "required_parameter", "optional_parameter":
 			pattern := p.ChildByFieldName("pattern")
-			if pattern == nil || pattern.Type() != "identifier" {
-				return nil, false
+			if pattern == nil {
+				return nil, nil, false
 			}
-			names = append(names, pattern.Content(src))
+			switch pattern.Type() {
+			case "identifier":
+				names = append(names, pattern.Content(src))
+			case "rest_pattern":
+				id := pattern.ChildByFieldName("name")
+				if id == nil {
+					for _, c := range namedChildren(pattern) {
+						if c.Type() == "identifier" {
+							id = c
+							break
+						}
+					}
+				}
+				if id == nil {
+					return nil, nil, false
+				}
+				rest[id.Content(src)] = true
+			default:
+				return nil, nil, false
+			}
 		default:
-			return nil, false
+			return nil, nil, false
 		}
 	}
-	return names, true
+	return names, rest, true
 }
 
 // singleApplyDecoratorsCall requires exactly one return path — searched
@@ -207,7 +252,7 @@ func resolveCompositeArgs(call decoratorCall, callSrc []byte, composites map[str
 
 	for _, inner := range comp.innerCalls {
 		name := inner.ChildByFieldName("function").Content(comp.src) // validated to be UseGuards or Roles by innerAuthCalls
-		resolved := resolveAndUnpack(argumentNodes(inner.ChildByFieldName("arguments")), comp.src, substitution)
+		resolved := resolveAndUnpack(argumentNodes(inner.ChildByFieldName("arguments")), comp.src, substitution, comp.restParams)
 
 		switch name {
 		case "UseGuards":
@@ -243,7 +288,7 @@ func resolveCompositeArgs(call decoratorCall, callSrc []byte, composites map[str
 // non-goals — and even then, it degrades to an inert, unmatched
 // reference (internal/lint's rules never treat an unresolved reference as
 // evidence of anything), not a wrong claim.
-func resolveAndUnpack(args []*sitter.Node, defSrc []byte, substitution map[string]sourceNode) []sourceNode {
+func resolveAndUnpack(args []*sitter.Node, defSrc []byte, substitution map[string]sourceNode, restParams map[string]bool) []sourceNode {
 	var out []sourceNode
 	for _, a := range args {
 		if a.Type() == "spread_element" {
@@ -252,7 +297,17 @@ func resolveAndUnpack(args []*sitter.Node, defSrc []byte, substitution map[strin
 
 		resolved := sourceNode{node: a, src: defSrc}
 		if a.Type() == "identifier" {
-			if sub, ok := substitution[a.Content(defSrc)]; ok {
+			name := a.Content(defSrc)
+			if restParams[name] {
+				// A rest parameter holds the list of remaining call-site
+				// arguments. Substituting it positionally would silently
+				// keep the first and drop the rest, so it is dropped
+				// entirely instead — the same honest degradation a spread
+				// argument already gets above, rather than a wrong subset
+				// presented as the endpoint's role list.
+				continue
+			}
+			if sub, ok := substitution[name]; ok {
 				resolved = sub
 			}
 		}
