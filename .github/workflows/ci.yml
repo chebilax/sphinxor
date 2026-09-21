@@ -14,6 +14,15 @@ on:
 permissions:
   contents: read
 
+env:
+  # The cerbos CLI used by internal/export/cerbos's real-engine tests.
+  # Version and checksum live together so bumping one without the other
+  # fails the checksum rather than silently installing something else.
+  # The upstream release publishes no checksums file; this value was
+  # computed from two independent downloads of the pinned tag.
+  CERBOS_VERSION: "0.55.0"
+  CERBOS_SHA256: "01cb5ae0b888393219846c1bc43d4ed1a4701a51fb8ae38523d3a378e685efca"
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -38,12 +47,52 @@ jobs:
       # actually runs in the pipeline that gates merges, not only on a
       # machine that happens to have it. Pinned, not @latest, so an
       # unrelated cerbos release can't break this CI run out of nowhere.
+      #
+      # Cached by version so the ordinary run does not download at all.
+      - name: Cache cerbos CLI
+        id: cerbos-cache
+        uses: actions/cache@v4
+        with:
+          # A user-writable path on purpose: actions/cache restores as the
+          # runner user, and /usr/local/bin is root-owned, so caching
+          # there would trade a download flake for a permission one.
+          path: ~/.local/bin/cerbos
+          key: cerbos-${{ env.CERBOS_VERSION }}-linux-x86_64
+
+      # Only on a cache miss. The download is hardened because it has
+      # already failed once in a way that read as a code failure: `curl
+      # -sL` without --fail writes an HTTP error page to the output file
+      # and exits 0, so the next line reported "gzip: stdin: not in gzip
+      # format" and the run went red for a reason that had nothing to do
+      # with the commit.
+      #
+      #   --fail          turn an HTTP 4xx/5xx into a non-zero exit here,
+      #                   where the message names the URL, rather than a
+      #                   confusing tar error one line later
+      #   --retry         ride out the transient case, which is what this
+      #                   actually was
+      #   sha256sum -c    refuse a truncated or substituted artifact; the
+      #                   upstream release publishes no checksums file, so
+      #                   this value was computed from two independent
+      #                   downloads of the pinned tag
       - name: Install cerbos CLI
+        if: steps.cerbos-cache.outputs.cache-hit != 'true'
         run: |
-          curl -sL "https://github.com/cerbos/cerbos/releases/download/v0.55.0/cerbos_0.55.0_Linux_x86_64.tar.gz" -o /tmp/cerbos.tar.gz
-          tar -xzf /tmp/cerbos.tar.gz -C /tmp cerbos
-          sudo mv /tmp/cerbos /usr/local/bin/cerbos
-          cerbos --version
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          url="https://github.com/cerbos/cerbos/releases/download/v${CERBOS_VERSION}/cerbos_${CERBOS_VERSION}_Linux_x86_64.tar.gz"
+          curl -sSL --fail --retry 5 --retry-delay 2 --retry-all-errors "$url" -o /tmp/cerbos.tar.gz
+          echo "${CERBOS_SHA256}  /tmp/cerbos.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/cerbos.tar.gz -C "$HOME/.local/bin" cerbos
+          chmod +x "$HOME/.local/bin/cerbos"
+
+      # Separate from the install so it runs on a cache hit too: a cached
+      # binary that no longer executes should fail here, not silently let
+      # ADR 0009 §5's real-engine validation skip itself.
+      - name: Verify cerbos CLI
+        run: |
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/cerbos" --version
 
       - name: make check
         run: make check
