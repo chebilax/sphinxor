@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Controllers whose routes were not all recovered are now announced.** The matrix
+  reported `N endpoint(s)` with no way to tell whether N covered the application.
+  For four corpus repositories it did not, and dataease reported **16 endpoints
+  from 38 controllers** in silence.
+
+  Two conditions, one warning. A recognized controller that yielded **no**
+  endpoints; or one that implements a route-bearing interface, or an unknown
+  external interface plus unmapped `@Override` handlers. Together they cover
+  routes declared on an inherited interface *and* routes behind a method-level
+  mapping meta-annotation, without diagnosing which — a cause-specific detector
+  would cover the shapes measured today and stay silent on the next one.
+
+  | Repository | Announced |
+  |---|---|
+  | dataease | 31 produced no routes, 1 produced fewer |
+  | apollo | 13 produced no routes, 1 produced fewer |
+  | shenyu | 2 produced no routes, 8 produced fewer |
+  | eladmin | 2 produced no routes |
+
+  The warning says routes were **not recovered**, never that routes exist — a
+  controller of pure `@ExceptionHandler`s is a correct zero. It deliberately
+  reports no count of the missing routes: shenyu's `PagedController` hides two
+  behind classes that override one unrelated method, so any count read off the
+  class is wrong.
+
+  No endpoint, finding or export changes anywhere; the other sixteen repositories
+  are byte-identical. See
+  [ADR 0032](docs/decisions/0032-controllers-that-yield-no-routes.md).
+
 - **A role hierarchy is announced, with the direction of the error.** A project
   declaring one (`@Bean RoleHierarchy`, `RoleHierarchyImpl.fromHierarchy(...)`, or
   `setRoleHierarchy(...)`) now produces a warning saying the roles shown are

@@ -94,6 +94,9 @@ type Model struct {
 	// MethodSecurityFilters counts @PreFilter/@PostFilter, which are
 	// announced and deliberately reach no rule (ADR 0030 §4).
 	MethodSecurityFilters MethodSecurityFilterStatus
+	// UnrecoveredRoutes lists controllers whose routes were not all
+	// recovered (ADR 0032).
+	UnrecoveredRoutes []ControllerWithUnrecoveredRoutes
 	// RoleHierarchy records that the project declares a role hierarchy,
 	// which makes every role shown narrower than what the application
 	// grants (ADR 0031).
@@ -323,6 +326,37 @@ type URLLayerStatus struct {
 // Unknown reports whether a URL layer exists but could not be analyzed —
 // the state in which no consumer may treat the method layer as complete.
 func (s URLLayerStatus) Unknown() bool { return s.Present && !s.Analyzed }
+
+// ControllerWithUnrecoveredRoutes is a recognized controller from which
+// this extractor did not recover every route it declares —
+// docs/decisions/0032-controllers-that-yield-no-routes.md.
+//
+// It records the SYMPTOM, never the cause. ADR 0032 §1 keeps it that way
+// on purpose: "this is a controller and routes did not come out of it"
+// holds for an inherited interface, a method-level meta-annotation, and
+// for whatever shape turns up next, whereas a cause-specific record
+// covers the shapes already measured and stays silent on the rest.
+//
+// It is a warning and nothing more (§3). No rule reads it, the Cerbos
+// exporter does not consult it, and no endpoint is invented for the
+// routes that are missing — they stay missing, and the run says so.
+type ControllerWithUnrecoveredRoutes struct {
+	ControllerID ID
+	Name         string
+	File         string
+	// NoRoutesAtAll distinguishes ADR 0032 §1's two conditions. True for
+	// condition A: nothing at all came out of this controller. False for
+	// condition B: some routes were recovered and others were not, which
+	// is the more misleading case — the controller appears in the matrix
+	// looking complete.
+	//
+	// There is deliberately no count of the MISSING routes. Establishing
+	// one means resolving the interface, which is what this decision does
+	// not do; shenyu's PagedController hides two routes behind a class
+	// that overrides one unrelated method, so any count derived from the
+	// class alone would be wrong.
+	NoRoutesAtAll bool
+}
 
 // RoleHierarchyStatus records that a project declares a Spring Security
 // role hierarchy — docs/decisions/0031-role-hierarchy.md.
