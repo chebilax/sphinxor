@@ -130,20 +130,40 @@ By that definition, **three** items remain, and all three are endpoint discovery
    controller. It is Spring's own routing, not another system, so §1 does not put
    it out of scope the way it does JAX-RS.
 
-   **Added by a check that expected the opposite answer.** ADR 0019 §2 warns when a
-   run parses files and recognizes no endpoints, and on halo — which yields zero
-   endpoints from 1,001 files — that warning does fire, which looks like
-   `RouterFunction` being detected and announced. It is not. The condition is
-   `len(m.Endpoints) == 0` across the whole project, so it announces *emptiness*,
-   not a route shape it failed to read. Adding a single annotated controller to a
-   `RouterFunction` project removes the warning and the functional routes vanish in
-   silence.
+   **Added by a check that expected the opposite answer, and the answer is easy to
+   get backwards — so it is stated outright here rather than left to be inferred
+   from this item's presence on the list.**
 
-   That is the real corpus case, not a hypothetical: of the three repositories using
-   `RouterFunction`, **shenyu** (6 files, 394 recognized endpoints) and
-   **JeecgBoot** (1 file, 931) get no warning at all. shenyu's are real routes —
-   `POST /helloWorld2`, `GET /rewrite`, `GET /pdm`, `GET /oms`, `GET /timeout`.
-   Only halo is announced, and only by accident of having nothing else.
+   **ADR 0019 §2's "recognized no endpoints" warning DOES fire on halo.** Measured,
+   not assumed. Its presence on this list does not mean the warning was silent
+   there.
+
+   Nor do halo's four nested `@RestController`s suppress it, which was the other
+   plausible explanation and is also wrong: a nested `@RestController` yields
+   **zero** endpoints (`extractControllers` walks top-level classes only), so it
+   cannot lift `len(m.Endpoints)` off zero. That is precisely *why* the warning
+   still fires on halo.
+
+   `RouterFunction` is `silent` for a third reason. The warning's condition is
+   `len(m.Endpoints) == 0` across the **whole project**, so it announces
+   *emptiness*, never a route shape that could not be read. halo is announced by
+   accident of having nothing else; a project with functional routes *and*
+   annotated controllers gets nothing. Verified directly: adding a single annotated
+   controller to a `RouterFunction`-only project removes the warning while the
+   functional routes stay invisible.
+
+   That is the real corpus case, not a hypothetical. Measured across the three
+   repositories that use `RouterFunction`:
+
+   | Repository | `RouterFunction` files | Recognized endpoints | ADR 0019 §2 warning |
+   |---|---|---|---|
+   | halo | 151 | 0 | **fires** |
+   | apache/shenyu | 6 | 394 | does not fire |
+   | JeecgBoot | 1 | 931 | does not fire |
+
+   shenyu's are real routes, not scaffolding: `POST /helloWorld2`, `GET /rewrite`,
+   `GET /pdm`, `GET /oms`, `GET /timeout`. Two of three repositories lose them in
+   complete silence, which is what puts this item on the list.
 
 `@EnableReactiveMethodSecurity` was on this list and was the one item where the tool
 did not merely stay quiet but stated something false. [ADR 0015](0015-inert-method-security-guard.md)
