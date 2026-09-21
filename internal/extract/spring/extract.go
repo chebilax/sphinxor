@@ -83,6 +83,10 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	// internal/lint's use, per that ADR's Consequences).
 	for _, f := range files {
 		scanMethodSecurityStatus(f.tree.RootNode(), f.src, &b.model.MethodSecurity)
+		// ADR 0030 §4: @PreFilter/@PostFilter, counted in the same pass.
+		// Announced only — nothing downstream reads this to decide
+		// whether an endpoint is protected.
+		scanMethodSecurityFilters(f.tree.RootNode(), f.src, &b.model.MethodSecurityFilters)
 	}
 
 	// Pass 2: controllers, endpoints, method-security (method-layer)

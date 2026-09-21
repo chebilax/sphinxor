@@ -91,6 +91,9 @@ type Model struct {
 	URLLayer       URLLayerStatus
 	GlobalGuards   GlobalGuardStatus
 	GraphQL        GraphQLStatus
+	// MethodSecurityFilters counts @PreFilter/@PostFilter, which are
+	// announced and deliberately reach no rule (ADR 0030 §4).
+	MethodSecurityFilters MethodSecurityFilterStatus
 	// RouteCollisions records every route declared by more than one
 	// controller in the analyzed tree — ADR 0020 Amendment 2 §8.
 	RouteCollisions []RouteCollision
@@ -136,12 +139,27 @@ type ThirdPartyAuthStatus struct {
 	EnablerFound bool
 }
 
-// UnrecognizedAuthAnnotation is an annotation that carries a recognized
-// method-security name but is not bound to a package that makes it the
-// real thing — docs/decisions/0022-annotation-identity-and-unrecognized-authorization.md
-// §2. alibaba/nacos's com.alibaba.nacos.auth.annotation.Secured is the
-// case that produced this type: 428 uses of a name Spring also uses, for
-// an unrelated annotation enforced by nacos's own filter.
+// UnrecognizedAuthAnnotation is an annotation that authorizes something
+// this extractor does not interpret. Despite the name, that is the whole
+// of the concept — "authorization present, not interpreted", whatever its
+// provenance — and three distinct cases now live here
+// (docs/decisions/0030-post-authorize-and-method-security-filters.md §5):
+//
+//  1. A recognized method-security NAME bound to a package that does not
+//     make it Spring's (ADR 0022 §2). alibaba/nacos's
+//     com.alibaba.nacos.auth.annotation.Secured is the case that produced
+//     this type: 428 uses of a name Spring also uses, for an unrelated
+//     annotation enforced by nacos's own filter.
+//  2. Another framework's authorization annotation (ADR 0023 §1), such as
+//     Shiro's @RequiresPermissions.
+//  3. Spring Security's OWN annotation, correctly imported, that this
+//     extractor deliberately does not read (ADR 0030 §2): @PostAuthorize,
+//     whose expressions reference returnObject, which the RBAC model has
+//     no term for.
+//
+// The name is kept rather than corrected because renaming it would touch
+// ADR 0022's and 0023's vocabulary for a cosmetic gain; this comment is
+// the correction.
 //
 // It is deliberately NOT a GuardApplication with a "recognized" flag.
 // ADR 0011 §1 found two consumers silently depending on a GuardApplication
@@ -156,6 +174,13 @@ type ThirdPartyAuthStatus struct {
 // endpoint with nothing on it, which is why
 // internal/lint/mutating_endpoint.go skips these (ADR 0022 §3) — that
 // rule's message would be false on its face.
+//
+// Case 3 is the one exception, and only on mutating endpoints: a
+// @PostAuthorize is evaluated after the handler runs, so on a POST it
+// authorizes a state change that already happened. That rule flags such an
+// endpoint anyway, with a message saying so (ADR 0030 §1/§3). Consumers
+// reading this collection as "something protects this endpoint" are
+// correct for a read and wrong for a write.
 type UnrecognizedAuthAnnotation struct {
 	ID         ID
 	EndpointID ID
@@ -232,6 +257,29 @@ type GraphQLStatus struct {
 	Present    bool
 	Operations int
 }
+
+// MethodSecurityFilterStatus counts @PreFilter/@PostFilter occurrences —
+// docs/decisions/0030-post-authorize-and-method-security-filters.md §4.
+//
+// Project-level on purpose. Neither annotation ever denies a call: a
+// caller with no matching authority invokes the method successfully and
+// receives a shorter collection. Recording them per endpoint would mark
+// the Guards column ? on an endpoint nothing guards, and would suppress
+// mutating-endpoint-without-access-control on a mutation nothing stops.
+// They are announced and reach no rule.
+type MethodSecurityFilterStatus struct {
+	// PreFilter and PostFilter count annotations, not handlers; one
+	// method can carry both.
+	PreFilter  int
+	PostFilter int
+	// Classes names the declaring classes, for the warning text, so a
+	// reader can go look rather than being told only a number.
+	Classes []string
+}
+
+// Total is the number of filter annotations found, and reports whether
+// anything was found at all.
+func (s MethodSecurityFilterStatus) Total() int { return s.PreFilter + s.PostFilter }
 
 type GlobalGuardStatus struct {
 	Registered bool

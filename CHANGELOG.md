@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`@PostAuthorize` is recognized — and still reported on a write.** Spring
+  evaluates it *after* the handler runs, so on a `POST`/`PUT`/`PATCH`/`DELETE` the
+  state change has already happened when access is denied. Spring's own docs say
+  `@PostAuthorize` "is not recommended for classes that perform database writes".
+
+  So protection is verb-dependent, a first for this model. On any endpoint it is
+  recorded, marks the Guards column `?`, and is omitted from the Cerbos export. On
+  a **mutating** endpoint it does **not** suppress
+  `mutating-endpoint-without-access-control`, which now explains itself:
+
+  > `POST /orders/{id}` has a `@PostAuthorize` but no guard that runs before the
+  > method. `@PostAuthorize` is evaluated after the handler executes, so the state
+  > change has already happened when access is denied — unless an enclosing
+  > transaction rolls it back, which is not visible here.
+
+  When the annotation is confirmed inert the ordinary message is used instead,
+  since nothing evaluates it at all. The carve-out is keyed on the annotation's
+  *binding*, so a project-local `@PostAuthorize` keeps its existing treatment.
+
+- **`@PreFilter`/`@PostFilter` are announced, and authorize nothing.** Neither ever
+  denies a call — a caller without the authority still invokes the handler and
+  receives a shorter collection. They are counted project-wide and named in a
+  warning, deliberately reaching no rule: recording them per endpoint would mark
+  `?` on an endpoint nothing guards.
+
+  See [ADR 0030](docs/decisions/0030-post-authorize-and-method-security-filters.md).
+  Zero corpus occurrences, so `sphinxor lint` is byte-identical across all 20
+  repositories.
+
 - **`@EnableReactiveMethodSecurity` is now read.** Sphinxor scanned for
   `@EnableMethodSecurity` and `@EnableGlobalMethodSecurity` only, so a WebFlux
   project enabling method security the reactive way was told its annotations

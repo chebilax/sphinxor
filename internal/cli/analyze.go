@@ -164,6 +164,21 @@ func projectWarnings(m *model.Model) []string {
 			"         are inert at runtime and the endpoints they appear to protect are NOT protected.")
 	}
 
+	// ADR 0030 §4: @PreFilter/@PostFilter. Announced so the reader knows
+	// the annotations are there, and worded so nobody reads them as
+	// access control — neither ever denies a call, so an endpoint
+	// carrying one is exactly as protected as it would be without it.
+	if f := m.MethodSecurityFilters; f.Total() > 0 {
+		msg := "found " + strconv.Itoa(f.Total()) + " @PreFilter/@PostFilter annotation(s)"
+		if len(f.Classes) > 0 {
+			msg += " in: " + strings.Join(f.Classes, ", ")
+		}
+		out = append(out, msg+".\n"+
+			"         These filter a collection; they never deny a call. A caller without the\n"+
+			"         authority still invokes the handler and receives a shorter result, so they are\n"+
+			"         NOT access control and no endpoint's protection changes because of them.")
+	}
+
 	// Amendment 1 §5: routes whose declared path could not be read. The
 	// matrix marks each one with a leading ellipsis; this says what the
 	// mark means and which controllers to look at, because a fragment
