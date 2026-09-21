@@ -39,9 +39,51 @@ func findChildByType(n *sitter.Node, t string) *sitter.Node {
 // annotationCall describes one `@Name` (marker_annotation, no arguments) or
 // `@Name(...)` (annotation, with an annotation_argument_list) node.
 type annotationCall struct {
+	// Name is always the annotation's SIMPLE name, whether it was
+	// written `@RestController` or
+	// `@org.springframework.web.bind.annotation.RestController` —
+	// docs/decisions/0025-qualified-annotation-names.md §1.
+	//
+	// microcks writes the second form in 13 files, because its own class
+	// in io.github.microcks.web is named RestController and Spring's
+	// cannot be imported there. Matching the text as written meant none
+	// of those classes was a controller.
 	Name string
-	Args *sitter.Node // the `annotation_argument_list` node; nil for a marker annotation
-	Node *sitter.Node
+	// Qualifier is the package part of a fully-qualified use
+	// ("org.springframework.web.bind.annotation"), empty when the
+	// annotation was written unqualified.
+	//
+	// It is kept because the simple name alone cannot say whether a
+	// dotted annotation is Spring's: §4's whole-path rule and §3's
+	// "a qualified use is its own binding" both need it.
+	Qualifier string
+	Args      *sitter.Node // the `annotation_argument_list` node; nil for a marker annotation
+	Node      *sitter.Node
+}
+
+// springWebPackages are the packages that make a qualified controller or
+// mapping annotation Spring's, per ADR 0025 §4.
+//
+// The whole path must match. Accepting any dotted name by its last
+// segment would read `@com.example.RestController` as Spring's — the
+// nacos collision (ADR 0022) reintroduced by the change meant to fix its
+// mirror image.
+var springWebPackages = map[string]bool{
+	"org.springframework.web.bind.annotation": true,
+	"org.springframework.stereotype":          true,
+}
+
+// isSpringWeb reports whether this annotation can be Spring's controller
+// or mapping annotation: either written unqualified, or qualified with a
+// package that really is Spring's.
+//
+// The corpus's only short dotted annotation names are @lombok.Data and
+// @feign.Headers, and those are complete paths rather than truncations —
+// which is exactly why the check is on the whole path. A truncated
+// `@annotation.RestController` and a complete `@lombok.Data` are
+// indistinguishable to a matcher looking at the last segment.
+func (a annotationCall) isSpringWeb() bool {
+	return a.Qualifier == "" || springWebPackages[a.Qualifier]
 }
 
 // parseAnnotation extracts the name and arguments from a `marker_annotation`
@@ -54,11 +96,12 @@ func parseAnnotation(n *sitter.Node, src []byte) (annotationCall, bool) {
 	if nameNode == nil {
 		return annotationCall{}, false
 	}
+	name, qualifier := splitAnnotationName(nameNode.Content(src))
 	switch n.Type() {
 	case "marker_annotation":
-		return annotationCall{Name: nameNode.Content(src), Node: n}, true
+		return annotationCall{Name: name, Qualifier: qualifier, Node: n}, true
 	case "annotation":
-		return annotationCall{Name: nameNode.Content(src), Args: n.ChildByFieldName("arguments"), Node: n}, true
+		return annotationCall{Name: name, Qualifier: qualifier, Args: n.ChildByFieldName("arguments"), Node: n}, true
 	default:
 		return annotationCall{}, false
 	}
@@ -82,9 +125,15 @@ func annotationsOf(decl *sitter.Node, src []byte) []annotationCall {
 }
 
 // findAnnotation returns the first annotation among anns named name.
+//
+// Used for Spring's own @RequestMapping and for @AliasFor, so a qualified
+// use has to be qualified with a Spring package to count (ADR 0025 §4).
+// @AliasFor lives in org.springframework.core.annotation rather than the
+// web packages, and has no qualified use anywhere in the corpus; it is
+// matched unqualified only, which is what isSpringWeb already allows.
 func findAnnotation(anns []annotationCall, name string) (annotationCall, bool) {
 	for _, a := range anns {
-		if a.Name == name {
+		if a.Name == name && a.isSpringWeb() {
 			return a, true
 		}
 	}
@@ -151,4 +200,16 @@ func joinPath(base, sub string) string {
 	default:
 		return "/" + base + "/" + sub
 	}
+}
+
+// splitAnnotationName separates a written annotation name into its simple
+// name and its package qualifier — ADR 0025 §1.
+//
+// tree-sitter-java gives the name node as an `identifier` for `@Name` and
+// a `scoped_identifier` for `@a.b.C`, so the split is on the last dot.
+func splitAnnotationName(written string) (name, qualifier string) {
+	if i := strings.LastIndexByte(written, '.'); i >= 0 {
+		return written[i+1:], written[:i]
+	}
+	return written, ""
 }

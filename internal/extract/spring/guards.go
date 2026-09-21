@@ -74,6 +74,24 @@ func pendingGuardsFromAnnotations(anns []annotationCall, src []byte, file string
 	for _, ann := range anns {
 		line := int(ann.Node.StartPoint().Row) + 1
 
+		// ADR 0025 §3: an annotation written fully qualified carries its
+		// own binding, and a stronger one than an import. Answered here,
+		// before the import-based paths below, because those would find
+		// no import for it and misread Spring's own annotation as
+		// foreign.
+		if ann.Qualifier != "" {
+			if !methodSecurityAnnotations[ann.Name] && !isThirdPartyQualifier(ann.Qualifier) {
+				continue
+			}
+			boundTo, kind := resolveQualifiedAuth(ann.Name, ann.Qualifier)
+			if kind != "spring" {
+				unknown = append(unknown, pendingUnrecognized{name: ann.Name, boundTo: boundTo, file: file, line: line})
+				continue
+			}
+			out = append(out, springGuard(ann, src, file, line, roleByName)...)
+			continue
+		}
+
 		// ADR 0023 §1: an annotation from a third-party authorization
 		// framework. Recognized by the package its import binds it to,
 		// never by its name — Shiro's @RequiresPermissions shares no
@@ -100,51 +118,65 @@ func pendingGuardsFromAnnotations(anns []annotationCall, src []byte, file string
 			continue
 		}
 
-		if ann.Name == "PreAuthorize" {
-			lit, ok := stringLiteralValue(soleStringLiteralArg(ann.Args), src)
-			if !ok {
-				// Not the recognized single-string shape at all (e.g. a
-				// SpEL expression built from a constant reference rather
-				// than a literal) — still a real guard, but its role
-				// list was not read, so it is unknown rather than empty
-				// (Amendment 3 §9).
-				out = append(out, pendingGuard{guardName: ann.Name, declaresRoles: true, rolesUnresolved: true, file: file, line: line})
-				continue
-			}
-			result := parseSpEL(lit)
-			switch result.Kind {
-			case spelAuthenticated:
-				out = append(out, pendingGuard{guardName: ann.Name, declaresRoles: false, authCandidate: true, file: file, line: line})
-			case spelRoles:
-				out = append(out, pendingGuard{guardName: ann.Name, roles: resolveRoleArgs(result.Roles, roleByName), declaresRoles: true, file: file, line: line})
-			case spelNoRole:
-				// permitAll()/denyAll(): read, and resolving to no role
-				// list. ADR 0017 decided these keep DeclaresRoles: true
-				// and keep surfacing through empty-role; Amendment 3 §10
-				// preserves that deliberately rather than reversing it as
-				// a side effect, so rolesUnresolved stays false.
-				out = append(out, pendingGuard{guardName: ann.Name, declaresRoles: true, file: file, line: line})
-			default: // spelUnrecognized: a bean call, a boolean combination, ...
-				out = append(out, pendingGuard{guardName: ann.Name, declaresRoles: true, rolesUnresolved: true, file: file, line: line})
-			}
-			continue
-		}
-
-		// Secured / RolesAllowed: plain string-array arguments, no SpEL.
-		// resolved distinguishes @Secured({}) — genuinely empty — from an
-		// argument shape that was never read, such as the named
-		// attributes on alibaba's same-named @Secured (Amendment 3 §9).
-		literals, resolved := stringArrayValues(ann.Args, src)
-		out = append(out, pendingGuard{
-			guardName:       ann.Name,
-			roles:           resolveRoleArgs(literals, roleByName),
-			declaresRoles:   true,
-			rolesUnresolved: !resolved,
-			file:            file,
-			line:            line,
-		})
+		out = append(out, springGuard(ann, src, file, line, roleByName)...)
 	}
 	return out, unknown
+}
+
+// isThirdPartyQualifier reports whether a fully-qualified annotation's
+// package is a known third-party authorization package (ADR 0023 §1).
+func isThirdPartyQualifier(qualifier string) bool {
+	_, known := thirdPartyAuthPackages[qualifier]
+	return known
+}
+
+// springGuard builds the pendingGuard(s) for an annotation already
+// established to be Spring's own method security — whether that was
+// established by an import (ADR 0022 §1) or by a fully-qualified use
+// (ADR 0025 §3). Both paths must produce identical results, which is why
+// this is one function rather than two.
+func springGuard(ann annotationCall, src []byte, file string, line int, roleByName map[string]model.ID) []pendingGuard {
+	if ann.Name == "PreAuthorize" {
+		lit, ok := stringLiteralValue(soleStringLiteralArg(ann.Args), src)
+		if !ok {
+			// Not the recognized single-string shape at all (e.g. a
+			// SpEL expression built from a constant reference rather
+			// than a literal) — still a real guard, but its role
+			// list was not read, so it is unknown rather than empty
+			// (ADR 0020 Amendment 3 §9).
+			return []pendingGuard{{guardName: ann.Name, declaresRoles: true, rolesUnresolved: true, file: file, line: line}}
+		}
+		result := parseSpEL(lit)
+		switch result.Kind {
+		case spelAuthenticated:
+			return []pendingGuard{{guardName: ann.Name, declaresRoles: false, authCandidate: true, file: file, line: line}}
+		case spelRoles:
+			return []pendingGuard{{guardName: ann.Name, roles: resolveRoleArgs(result.Roles, roleByName), declaresRoles: true, file: file, line: line}}
+		case spelNoRole:
+			// permitAll()/denyAll(): read, and resolving to no role
+			// list. ADR 0017 decided these keep DeclaresRoles: true and
+			// keep surfacing through empty-role; ADR 0020 Amendment 3
+			// §10 preserves that deliberately rather than reversing it
+			// as a side effect, so rolesUnresolved stays false.
+			return []pendingGuard{{guardName: ann.Name, declaresRoles: true, file: file, line: line}}
+		default: // spelUnrecognized: a bean call, a boolean combination, ...
+			return []pendingGuard{{guardName: ann.Name, declaresRoles: true, rolesUnresolved: true, file: file, line: line}}
+		}
+	}
+
+	// Secured / RolesAllowed: plain string-array arguments, no SpEL.
+	// resolved distinguishes @Secured({}) — genuinely empty — from an
+	// argument shape that was never read, such as the named attributes on
+	// alibaba's same-named @Secured (ADR 0020 Amendment 3 §9).
+	literals, resolved := stringArrayValues(ann.Args, src)
+	return []pendingGuard{{
+		guardName:       ann.Name,
+		roles:           resolveRoleArgs(literals, roleByName),
+		declaresRoles:   true,
+		rolesUnresolved: !resolved,
+		file:            file,
+		line:            line,
+	}}
 }
 
 // applyUnrecognized materializes unidentified access-control annotations

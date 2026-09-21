@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Accepted.
 
 ## Context
 
@@ -195,17 +195,45 @@ truncation.
   does not leave the extractor.
 - The `@RequestMapping(method = …)` gap still hides 4 more microcks routes; this
   decision is independent of it and does not touch it.
-- **Validation before this is Accepted**, against the real corpus per `docs/testing.md`:
-  - microcks: 50 → ~80 endpoints, all 13 fully-qualified classes present, 11 new
-    mutating findings, no new roles or guards.
-  - **No other repository in the 20-project corpus changes in any respect** — no
-    other project writes a Spring annotation fully qualified.
-  - All four vendored fixtures byte-identical.
-  - A test that a fully-qualified `@RestController` with fully-qualified mapping
-    annotations yields endpoints — the mapping half has no corpus coverage and would
-    otherwise be untested.
-  - A test that a fully-qualified `@PreAuthorize` is recognized as a Spring guard and
-    **not** as an unrecognized authorization annotation (§3), since getting this
-    wrong turns a fix into a false claim.
-  - A test that `@com.example.RestController` is **not** a controller (§4) — the
-    nacos fault, pinned so this change cannot reintroduce it.
+### Validation — measured after implementation
+
+| | before | after |
+|---|---:|---:|
+| microcks endpoints | 50 | **80** |
+| microcks `mutating-endpoint-without-access-control` | 20 | **31** (+11) |
+| microcks roles / guards | 0 | **0** |
+
+The prediction — 50 → ~80 and 11 new findings — landed exactly, for the reason
+ADR 0024 records about exact predictions: this count came from route declarations
+inside files that either are or are not recognized, the same question the scan and
+the extractor answer.
+
+**No other repository in the 20-project corpus changed in any respect**, and all four
+vendored fixtures are byte-identical. `microcks`'s own `RestController.java` and
+`GraphQLController.java` are still absent, correctly — their routes are
+`@RequestMapping(method = …)`, the separate gap this decision does not touch.
+
+Tests, in `internal/extract/spring/qualified_names_test.go`: a fully-qualified
+controller with fully-qualified mappings; `@com.example.RestController` rejected;
+fully-qualified `@PreAuthorize`, `@Secured` and `@RolesAllowed` in **both**
+namespaces each recognized as Spring's; a fully-qualified nacos `@Secured` and a
+fully-qualified Shiro `@RequiresPermissions` each still landing as unrecognized; the
+name/qualifier split including the `@lombok.Data` shape; and ADR 0024's
+meta-annotation resolution surviving a qualified composed `@RestController`.
+
+### What the call-site audit found
+
+§1 claimed every existing matcher would work unchanged. That was **half right, and
+the half that was wrong is the interesting one.** The matchers do still compare
+simple names — but §4's whole-path rule has to be applied *alongside* each
+comparison, so six of the eight sites gained an `isSpringWeb()` check. §1 and §4
+were consistent as written; §1's "unchanged" was simply loose.
+
+Auditing the sites afterwards for any that still matched a bare name turned up a real
+hole the ADR had not anticipated: **ADR 0024's controller meta-annotation lookup**
+matched `metas[a.Name]` on the simple name alone, so `@other.pkg.RestApi` would have
+resolved to shenyu's `@RestApi`. That is §4's hazard applied to project-declared
+annotations rather than Spring's, and this change would have introduced it. Fixed by
+recording each meta-annotation's declaring package and requiring a qualified use to
+match it, and pinned by a test. No corpus project writes a project meta-annotation
+qualified, so nothing would have caught it.
