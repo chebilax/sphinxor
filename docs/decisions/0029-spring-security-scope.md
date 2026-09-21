@@ -94,6 +94,7 @@ Every Spring Security mechanism, with exactly one status:
 | A **method-level** mapping meta-annotation (`@AnonymousGetMapping`) | **silent** | [0024](0024-controller-meta-annotations.md) §1 excludes it |
 | Routes declared on an **inherited interface** | **silent** | recorded in `docs/limitations.md`, no decision |
 | A **nested** `@RestController` | **silent** | recorded in `docs/limitations.md`, no decision |
+| Functional routing (`RouterFunction`) | **silent** | recorded in `docs/limitations.md`, no decision |
 
 #### Out of scope — other systems (§1)
 
@@ -120,16 +121,35 @@ ADR 0002 model question recorded in `docs/limitations.md`, and it is deliberatel
 part of this definition — otherwise "done" would depend on a decision nobody has
 made.
 
-By that definition, **four** items remain:
+By that definition, **five** items remain:
 
 1. `@PostAuthorize` / `@PreFilter` / `@PostFilter`.
 2. `RoleHierarchy` — roles shown are narrower than what the application grants.
 3. A method-level mapping meta-annotation.
 4. Routes on an inherited interface, and a nested `@RestController`.
+5. Functional routing — `RouterFunction`, the reactive counterpart of an annotated
+   controller. It is Spring's own routing, not another system, so §1 does not put
+   it out of scope the way it does JAX-RS.
 
-`@EnableReactiveMethodSecurity` was the fifth, and was the one item where the tool
+   **Added by a check that expected the opposite answer.** ADR 0019 §2 warns when a
+   run parses files and recognizes no endpoints, and on halo — which yields zero
+   endpoints from 1,001 files — that warning does fire, which looks like
+   `RouterFunction` being detected and announced. It is not. The condition is
+   `len(m.Endpoints) == 0` across the whole project, so it announces *emptiness*,
+   not a route shape it failed to read. Adding a single annotated controller to a
+   `RouterFunction` project removes the warning and the functional routes vanish in
+   silence.
+
+   That is the real corpus case, not a hypothetical: of the three repositories using
+   `RouterFunction`, **shenyu** (6 files, 394 recognized endpoints) and
+   **JeecgBoot** (1 file, 931) get no warning at all. shenyu's are real routes —
+   `POST /helloWorld2`, `GET /rewrite`, `GET /pdm`, `GET /oms`, `GET /timeout`.
+   Only halo is announced, and only by accident of having nothing else.
+
+`@EnableReactiveMethodSecurity` was on this list and was the one item where the tool
 did not merely stay quiet but stated something false. [ADR 0015](0015-inert-method-security-guard.md)
-Amendment 1 closed it; the row above now reads **read**.
+Amendment 1 closed it; the row above now reads **read**. Item 5 replaced it, so the
+count is unchanged — which is the checklist working, not failing.
 
 Items 1 and 2, like the closed reactive one, are named here as `silent` rather than
 `out of scope`, which extends the list beyond the endpoint-discovery gaps. The reasoning: ADR 0011 §1 called them
