@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Accepted.
 
 ## Context
 
@@ -153,6 +153,53 @@ of the 12 repositories affected, the ones gaining most of the findings — Jeecg
 shenyu, inlong, litemall — all have a URL layer this extractor cannot read, and since
 [ADR 0027](0027-unannounced-url-layers.md) every one of them says so.
 
+### §4 Overlap with a verb-specific mapping on the same path
+
+Spring matches the most specific mapping first, so a path can carry both. The corpus
+contains **exactly one instance**, and it is a clean one —
+`spring-cloud-dataflow`'s `TaskSchedulerController`:
+
+```java
+@RequestMapping("/tasks/schedules")                     // class-level base path
+…
+@RequestMapping("/instances/{taskDefinitionName}")      // verb-less
+public PagedModel<ScheduleInfoResource> filteredList(…)
+
+@DeleteMapping("/instances/{taskDefinitionName}")       // DELETE only
+public void deleteSchedulesforDefinition(…)
+```
+
+At runtime `DELETE` reaches `deleteSchedulesforDefinition` and **every other verb**
+reaches `filteredList`. They are two endpoints, not a duplicate.
+
+**The model records them as two endpoints and does not compute the complement.** The
+any-verb endpoint means "all verbs", not "all verbs except those a sibling claims".
+
+Computing the complement was considered and rejected: it makes one endpoint's meaning
+depend on its siblings, and identity, `sphinxor diff` and the exporter all assume an
+endpoint means what its own annotations say. Adding a sibling elsewhere in the class
+would silently change an existing endpoint's identity, which is the order-dependence
+ADR 0020 Amendment 2 spent an amendment removing from route collisions.
+
+**They do not collide, and do not need to.** `ANY /x` and `DELETE /x` are different
+`HTTPMethod`s, so `model.NewEndpointID` already gives them separate identities and
+ADR 0020 Amendment 2 §8's machinery never fires. It does not need to, because §8's
+property is achieved here for free: **each handler's guards attach to its own row**,
+so neither endpoint can report the other's protection — which is the whole thing §8
+exists to prevent.
+
+**What is inaccurate, and in which direction.** The `ANY` row claims to cover
+`DELETE`, which at this path it does not. That over-states *which verbs the row
+covers*, never *what protects them*: the real `DELETE` endpoint is present with its
+own guards and gets its own finding if it has none. So a reader can be misled about
+which handler serves `DELETE`, but not into believing an unguarded route is guarded.
+The error is one-directional and lands on the safe side, which is the same standard
+ADR 0012's intersection and ADR 0026's recovered routes are held to.
+
+Specified although one instance exists, on the same grounds as ADR 0024 §4 and
+ADR 0026 §4: a shape the corpus barely exercises is exactly the one whose behaviour
+should be written down rather than discovered later.
+
 ## Alternatives considered
 
 - **Option A, eight rows per handler.** Rejected above on 504-versus-126.
@@ -186,3 +233,6 @@ shenyu, inlong, litemall — all have a URL layer this extractor cannot read, an
     `GET /x` is a collision rather than a merge.
   - A test that a **class-level** verb-less `@RequestMapping` still contributes only
     a base path and creates no endpoint — the 735, which must not move.
+  - A test for §4's overlap, modelled on `TaskSchedulerController`: a verb-less and a
+    `@DeleteMapping` on one path yield **two** endpoints, `ANY` and `DELETE`, each
+    carrying its own handler's guards and neither merged into the other.
