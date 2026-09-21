@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A controller declared by a meta-annotation is now recognized.** Spring
+  treats an annotation that is itself annotated `@RestController` as
+  composing it; extraction required the literal annotation. `apache/shenyu`
+  declares `@RestApi` — `@RestController` + `@RequestMapping` with an
+  `@AliasFor`'d path — on 35 of shenyu-admin's 41 controller classes,
+  hiding **179 route declarations**. A run reported 192 endpoints, of which
+  155 were demo applications and **11 were the real admin API**, with
+  nothing in the output suggesting the rest existed.
+
+  shenyu now reports **371 endpoints, 190 of them from shenyu-admin**. No
+  other repository in the 20-project corpus changed, since none declares a
+  controller-composing meta-annotation — a census of all 115 project-declared
+  `@Target(TYPE)` annotations in the corpus found exactly one that composes
+  a controller, which is also why a name-based rule was rejected.
+
+  Resolution is **one level**, class-level, and reads only two things: that
+  the class is a controller, and its base path (from the declaration's own
+  `@RequestMapping`, or the use site via `@AliasFor`). A base path that
+  cannot be read is marked unresolved rather than treated as empty. Deeper
+  chains and method-level mapping meta-annotations are deliberately not
+  resolved: every one measured bottoms out at `@RequestMapping(method = …)`,
+  which is not read, so following them surfaces zero endpoints. See
+  [ADR 0024](docs/decisions/0024-controller-meta-annotations.md).
+
+  The 179 new routes brought **35** new `mutating-endpoint-without-access-control`
+  findings rather than ~101, because ADR 0023 recognized their 100 Shiro
+  annotations as soon as the endpoints existed. Those 35 are endpoints with
+  no *method-level* access control in a project whose Shiro URL layer is
+  unparsed — not endpoints established to be unguarded.
+
 ### Fixed
 
 - **An Apache Shiro authorization annotation is no longer reported as no

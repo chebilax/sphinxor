@@ -54,7 +54,7 @@ public class ThingController {
 `
 	root, source := parseJava(t, src)
 	b := newBuilder()
-	extractControllers(root, source, "ThingController.java", b, nil)
+	extractControllers(root, source, "ThingController.java", b, nil, nil)
 
 	byHandler := make(map[string]model.GuardApplication)
 	endpointHandler := make(map[model.ID]string)
@@ -116,7 +116,7 @@ public class ThingController {
 `
 	root, source := parseJava(t, src)
 	b := newBuilder()
-	extractControllers(root, source, "ThingController.java", b, nil)
+	extractControllers(root, source, "ThingController.java", b, nil, nil)
 
 	if len(b.model.GuardApplications) != 1 {
 		t.Fatalf("got %d GuardApplications, want 1", len(b.model.GuardApplications))
