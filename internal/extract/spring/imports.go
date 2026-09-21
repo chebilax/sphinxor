@@ -32,6 +32,16 @@ var acceptedAnnotationPackages = map[string][]string{
 	"PreAuthorize": {"org.springframework.security.access.prepost"},
 	"Secured":      {"org.springframework.security.access.annotation"},
 	"RolesAllowed": {"javax.annotation.security", "jakarta.annotation.security"},
+	// ADR 0030: same package as @PreAuthorize. Recognized so it can be
+	// recorded as authorization-present, never read as a guard.
+	"PostAuthorize": {"org.springframework.security.access.prepost"},
+	// ADR 0030 §4: counted project-wide, never attached to an endpoint.
+	// Listed here so identity stays import-based — "PostFilter" is a
+	// plausible method name (shenyu declares definitionPostFilter), and
+	// the guard dispatch never reaches these because
+	// methodSecurityAnnotations gates it.
+	"PreFilter":  {"org.springframework.security.access.prepost"},
+	"PostFilter": {"org.springframework.security.access.prepost"},
 }
 
 // thirdPartyAuthPackages are packages whose annotations are authorization

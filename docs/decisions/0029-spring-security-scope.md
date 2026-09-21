@@ -66,7 +66,8 @@ Every Spring Security mechanism, with exactly one status:
 | A same-named annotation from another package | detected and announced | [0022](0022-annotation-identity-and-unrecognized-authorization.md) §2/§3a |
 | `@EnableMethodSecurity` / `@EnableGlobalMethodSecurity`, and its absence | read; absence announced | [0015](0015-inert-method-security-guard.md), [0020](0020-unanalyzable-is-unknown-not-absent.md) §4 |
 | `@EnableReactiveMethodSecurity` | read | [0015](0015-inert-method-security-guard.md) Am1 |
-| `@PostAuthorize` / `@PreFilter` / `@PostFilter` | **silent** | [0011](0011-spring-second-framework.md) §1 names them out of scope, but nothing announces them |
+| `@PostAuthorize` | detected and announced (`?`, and the finding still fires on a write) | [0030](0030-post-authorize-and-method-security-filters.md) §1/§2 |
+| `@PreFilter` / `@PostFilter` | detected and announced (project-wide; they authorize nothing) | [0030](0030-post-authorize-and-method-security-filters.md) §4 |
 
 #### The URL layer
 
@@ -121,13 +122,13 @@ ADR 0002 model question recorded in `docs/limitations.md`, and it is deliberatel
 part of this definition — otherwise "done" would depend on a decision nobody has
 made.
 
-By that definition, **five** items remain:
+By that definition, **four** items remain:
 
-1. `@PostAuthorize` / `@PreFilter` / `@PostFilter`.
-2. `RoleHierarchy` — roles shown are narrower than what the application grants.
-3. A method-level mapping meta-annotation.
-4. Routes on an inherited interface, and a nested `@RestController`.
-5. Functional routing — `RouterFunction`, the reactive counterpart of an annotated
+1. `RoleHierarchy` — roles shown are narrower than what the application grants.
+   Decided in [ADR 0031](0031-role-hierarchy.md); this row closes when that lands.
+2. A method-level mapping meta-annotation.
+3. Routes on an inherited interface, and a nested `@RestController`.
+4. Functional routing — `RouterFunction`, the reactive counterpart of an annotated
    controller. It is Spring's own routing, not another system, so §1 does not put
    it out of scope the way it does JAX-RS.
 
@@ -151,8 +152,9 @@ did not merely stay quiet but stated something false. [ADR 0015](0015-inert-meth
 Amendment 1 closed it; the row above now reads **read**. Item 5 replaced it, so the
 count is unchanged — which is the checklist working, not failing.
 
-Items 1 and 2, like the closed reactive one, are named here as `silent` rather than
-`out of scope`, which extends the list beyond the endpoint-discovery gaps. The reasoning: ADR 0011 §1 called them
+Item 1, like the closed reactive one and the `@PostAuthorize` group, is named here
+as `silent` rather than `out of scope`, which extends the list beyond the
+endpoint-discovery gaps. The reasoning: ADR 0011 §1 called them
 out of scope, and §1 above reserves that status for *other systems*. These are Spring
 Security's own mechanisms, so not interpreting them is a gap, and not saying so is
 the defect this project has spent seven decisions removing.
@@ -162,7 +164,7 @@ As accepted, it claimed all of these "measure zero occurrences across the
 20-repository corpus", and offered that as the reason the urgency is low. Working
 the reactive enabler falsified it. **halo** carries `@EnableReactiveMethodSecurity` in
 `WebServerSecurityConfig`, and its only four `@RestController`s are nested classes,
-which is item 4 above. The zero was a count of the *defect* — a project that both
+which is item 3 above. The zero was a count of the *defect* — a project that both
 enables method security reactively and annotates handlers — not a count of the
 *mechanism*, and the paragraph read it as the second. The corpus figures per item
 are now recorded by the amendment that measures them

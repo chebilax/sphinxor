@@ -27,7 +27,8 @@ import (
 //
 // An endpoint carrying an unrecognized authorization annotation
 // (model.UnrecognizedAuthAnnotation, docs/decisions/0022-annotation-identity-and-unrecognized-authorization.md
-// §3) is skipped entirely rather than flagged. This rule's message says
+// §3) is skipped rather than flagged — with one exception, @PostAuthorize,
+// described below. This rule's message says
 // the endpoint "has no detected guard or role decorator"; when an
 // authorization annotation is sitting one line above the handler, that
 // premise is false on its face, and on alibaba/nacos it would have been
@@ -41,6 +42,25 @@ import (
 // the right direction, a false negative on a rare case against a false
 // positive on a common one (ADR 0022 §3).
 //
+// **@PostAuthorize is the exception, and it is verb-dependent**
+// (docs/decisions/0030-post-authorize-and-method-security-filters.md §1/§2).
+// Spring evaluates it AFTER the handler runs: AuthorizationManagerAfter-
+// MethodInterceptor calls mi.proceed() and only then authorizes the value
+// it returned. On a read that prevents disclosure, so the annotation
+// genuinely protects the endpoint. On a POST/PUT/PATCH/DELETE the state
+// change has already happened when AccessDeniedException is thrown, so
+// nothing stopped the mutation. An enclosing transaction can roll it back,
+// but only when @EnableTransactionManagement is ordered ahead of
+// @EnableMethodSecurity — advisor ordering this extractor cannot see, and
+// something Spring's own documentation presents as a deliberate
+// arrangement rather than the default.
+//
+// So a @PostAuthorize does NOT suppress this finding on a mutating
+// endpoint. It is still recorded, still marks the Guards column ?, and
+// still omits the endpoint from the Cerbos export. Suppressing the finding
+// too would assert that nothing needs looking at, on an endpoint whose
+// mutation Spring does not stop.
+//
 // A GuardApplication whose annotation family is *confirmed* not enabled
 // project-wide (docs/decisions/0015-inert-method-security-guard.md, e.g. a
 // Spring @Secured method with no securedEnabled = true anywhere) does not
@@ -51,6 +71,17 @@ import (
 // only Spring's own documented defaults, positively located, downgrade a
 // guard this way.
 type MutatingEndpointWithoutAccessControl struct{}
+
+// springPostAuthorize is the ONLY annotation this rule's carve-out
+// applies to, matched on its binding rather than its simple name.
+//
+// Keying on the name would mean a project-local or third-party
+// @PostAuthorize — one this extractor knows nothing about, and which may
+// well run before the method — lost ADR 0022 §3's suppression and gained
+// a message describing Spring's evaluation order. That is the nacos fault
+// (ADR 0022 §1) reintroduced in the change meant to be careful about
+// exactly this, and a test caught it.
+const springPostAuthorize = "org.springframework.security.access.prepost.PostAuthorize"
 
 func (MutatingEndpointWithoutAccessControl) ID() string {
 	return "mutating-endpoint-without-access-control"
@@ -66,9 +97,16 @@ func (r MutatingEndpointWithoutAccessControl) Check(m *model.Model) []model.Find
 
 	// ADR 0022 §3: an endpoint with an access-control annotation this
 	// extractor could not identify is not in the state this rule
-	// describes.
+	// describes. ADR 0030 §2 carves out @PostAuthorize, which authorizes
+	// too late to stop a mutation, so it is tracked separately rather
+	// than joining the suppression set.
 	unidentified := make(map[model.ID]bool, len(m.UnrecognizedAuthAnnotations))
+	postAuthorize := make(map[model.ID]bool)
 	for _, a := range m.UnrecognizedAuthAnnotations {
+		if a.BoundTo == springPostAuthorize {
+			postAuthorize[a.EndpointID] = true
+			continue
+		}
 		unidentified[a.EndpointID] = true
 	}
 
@@ -82,10 +120,31 @@ func (r MutatingEndpointWithoutAccessControl) Check(m *model.Model) []model.Find
 			Confidence:  model.ConfidenceLow,
 			SubjectID:   e.ID,
 			SubjectKind: model.SubjectEndpoint,
-			Message:     fmt.Sprintf("%s %s has no detected guard or role decorator", e.HTTPMethod, e.Path),
+			Message:     mutatingMessage(e, postAuthorize[e.ID], m.MethodSecurity),
 		})
 	}
 	return findings
+}
+
+// mutatingMessage explains why the finding fired. The default premise —
+// "no detected guard" — is visibly false to a reader looking at a handler
+// with @PostAuthorize one line above it, and ADR 0022 §3 established that
+// a message whose premise the reader can see is wrong discredits the rule.
+//
+// ADR 0030 §3: when the annotation is confirmed inert, the endpoint gets
+// the ordinary message instead. Nothing evaluates the annotation at all,
+// so describing WHEN it evaluates would be the false statement ADR 0015
+// Amendment 1 was written to remove.
+func mutatingMessage(e model.Endpoint, hasPostAuthorize bool, status model.MethodSecurityStatus) string {
+	if hasPostAuthorize && !(status.Found && !status.PrePostEnabled) {
+		return fmt.Sprintf(
+			"%s %s has a @PostAuthorize but no guard that runs before the method. "+
+				"@PostAuthorize is evaluated after the handler executes, so the state change has "+
+				"already happened when access is denied — unless an enclosing transaction rolls it "+
+				"back, which is not visible here.",
+			e.HTTPMethod, e.Path)
+	}
+	return fmt.Sprintf("%s %s has no detected guard or role decorator", e.HTTPMethod, e.Path)
 }
 
 // isConfirmedInert reports whether g's annotation family is positively

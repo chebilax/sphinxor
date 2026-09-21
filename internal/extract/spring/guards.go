@@ -13,9 +13,29 @@ import (
 // alibaba/nacos's own @Secured as Spring method security, 392 times. See
 // acceptedAnnotationPackages in imports.go for the bindings.
 var methodSecurityAnnotations = map[string]bool{
-	"PreAuthorize": true,
-	"Secured":      true,
-	"RolesAllowed": true,
+	"PreAuthorize":  true,
+	"Secured":       true,
+	"RolesAllowed":  true,
+	"PostAuthorize": true,
+}
+
+// uninterpretedSpringAuth are Spring Security's own method-security
+// annotations that are recognized and deliberately NOT read as guards —
+// docs/decisions/0030-post-authorize-and-method-security-filters.md §2.
+//
+// @PostAuthorize is Spring's, correctly imported, and really does
+// authorize — but its expressions routinely reference returnObject
+// (`returnObject.owner == authentication.name`), which the RBAC model has
+// no term for. Reading the subset that happens to look like @PreAuthorize
+// would present the rest as absent, which is the defect ADR 0020 removes.
+//
+// So it takes ADR 0023's treatment instead: recorded as evidence that
+// something authorizes this endpoint, without a claim about what. The one
+// thing that treatment does NOT buy it is suppression of
+// mutating-endpoint-without-access-control on a mutating endpoint — see
+// internal/lint/mutating_endpoint.go, and ADR 0030 §1 for why.
+var uninterpretedSpringAuth = map[string]bool{
+	"PostAuthorize": true,
 }
 
 // pendingGuard is one recognized method-security annotation's outcome, not
@@ -84,7 +104,7 @@ func pendingGuardsFromAnnotations(anns []annotationCall, src []byte, file string
 				continue
 			}
 			boundTo, kind := resolveQualifiedAuth(ann.Name, ann.Qualifier)
-			if kind != "spring" {
+			if kind != "spring" || uninterpretedSpringAuth[ann.Name] {
 				unknown = append(unknown, pendingUnrecognized{name: ann.Name, boundTo: boundTo, file: file, line: line})
 				continue
 			}
@@ -114,6 +134,13 @@ func pendingGuardsFromAnnotations(anns []annotationCall, src []byte, file string
 		// would assert protection this extractor never established.
 		boundTo, accepted := imports.resolveAnnotation(ann.Name)
 		if !accepted {
+			unknown = append(unknown, pendingUnrecognized{name: ann.Name, boundTo: boundTo, file: file, line: line})
+			continue
+		}
+
+		// ADR 0030 §2: Spring's own, and deliberately not interpreted.
+		// Recorded as authorization-present rather than as a guard.
+		if uninterpretedSpringAuth[ann.Name] {
 			unknown = append(unknown, pendingUnrecognized{name: ann.Name, boundTo: boundTo, file: file, line: line})
 			continue
 		}
