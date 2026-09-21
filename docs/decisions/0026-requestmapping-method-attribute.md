@@ -2,7 +2,18 @@
 
 ## Status
 
-Proposed.
+Accepted. **Implemented after [ADR 0027](0027-unannounced-url-layers.md)**, deliberately.
+
+The Context below establishes that every repository gaining findings here has a URL
+layer this extractor does not read, and that inlong's authenticates every non-`anon`
+path. Two of those layers — nakadi's `WebSecurityConfigurerAdapter` and inlong's
+`ShiroFilterFactoryBean` — are not announced at all today, so landing this decision
+first would surface inlong's 110 and nakadi's 22 new findings with no caveat
+attached, reading as "anyone can call this" when the truth is "no per-endpoint
+authorization, behind global authentication".
+
+ADR 0027 announces those two layers first. This is the same sequencing as ADR 0023
+before ADR 0024: qualify the findings before surfacing them.
 
 ## Context
 
