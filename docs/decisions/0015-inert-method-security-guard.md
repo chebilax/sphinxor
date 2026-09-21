@@ -151,3 +151,182 @@ fact is settled by Spring's own documentation, not hypothetical.
   `internal/export/cerbos`, and the other two lint rules are unaffected:
   none of them make a "is this endpoint guarded at all" decision the way
   `mutating-endpoint-without-access-control` does.
+
+---
+
+## Amendment 1 — `@EnableReactiveMethodSecurity` (2026-09-21)
+
+### Status
+
+Accepted.
+
+### §1 Context: the one place the tool says something false
+
+[ADR 0029](0029-spring-security-scope.md) as accepted listed
+`@EnableReactiveMethodSecurity` as **silent**, and its §3 singled the mechanism out
+as the one where silence was not the whole problem. (That row now reads **read**,
+changed by this amendment.)
+
+The original decision above scans for two enabling annotations. A reactive project
+enables method security with a third, so `MethodSecurity.Found` stayed `false`, and
+the ADR 0020 §4 caveat fired — quoted here as it stood before this change:
+
+> method-security annotations were found, but no `@EnableMethodSecurity` /
+> `@EnableGlobalMethodSecurity` was located in the analyzed source. If it isn't
+> enabled elsewhere (a parent module, Kotlin config), those annotations are inert
+> at runtime and the endpoints they appear to protect are **NOT protected**.
+
+On a correctly configured WebFlux application that is a false statement about a
+real, working security configuration — not a gap reported honestly, which is what
+`Found == false` is designed to be everywhere else. The reason it is wrong here is
+narrow and fixable: the enabling annotation *was* in the analyzed source, and the
+scan did not know to look for it.
+
+### §2 What the annotation actually does
+
+`@EnableReactiveMethodSecurity` does **not** resemble its servlet counterpart, and
+the amendment is only safe because that was checked rather than assumed. It
+declares `proxyTargetClass`, `mode`, `order` and `useAuthorizationManager` — and
+none of `prePostEnabled`, `securedEnabled`, `jsr250Enabled`.
+
+Established by reading the two configuration classes it imports, not the reference
+documentation:
+
+| Family | Effective | Evidence |
+|---|---|---|
+| `@PreAuthorize` / `@PostAuthorize` | **enabled**, unconditionally | on the `useAuthorizationManager = true` path, `ReactiveAuthorizationManagerMethodSecurityConfiguration` registers `AuthorizationManagerBefore`/`AfterReactiveMethodInterceptor`; on the `false` path, `ReactiveMethodSecurityConfiguration` registers `PrePostAdviceReactiveMethodInterceptor` |
+| `@Secured` | **not enabled** | neither configuration registers a `SecuredAuthorizationManager` or any `@Secured` metadata source |
+| `@RolesAllowed` (JSR-250) | **not enabled** | neither configuration registers a `Jsr250AuthorizationManager` |
+
+`useAuthorizationManager` (default `true`) selects *which* pre/post implementation is
+registered, not *whether* one is, so it changes none of the three and is
+deliberately not read.
+
+**The first draft of this amendment had the JSR-250 row wrong**, following
+`useAuthorizationManager` on the strength of the servlet annotation's documentation
+mentioning JSR-250 compliance. Reading the reactive configuration classes falsified
+it. Recorded rather than quietly corrected because the difference is exactly the
+standard the original decision set for itself — Spring's own behaviour, not a
+plausible inference — and because the `@Secured` row rests on the same evidence and
+would have been believed on the same weak grounds.
+
+#### §2.1 Version provenance, and when this must be re-checked
+
+**Verified against Spring Security 6.5.11, 7.1.1 and `main` (7.2.0-SNAPSHOT), on
+2026-09-21.** All three agree: `EnableReactiveMethodSecurity` declares the same
+four attributes, and `ReactiveAuthorizationManagerMethodSecurityConfiguration`
+registers exactly `preFilter`, `preAuthorize`, `postFilter`, `postAuthorize` and
+an expression handler — no `SecuredAuthorizationManager`, no
+`Jsr250AuthorizationManager`. 6.5.x and 7.x are the two lines currently
+maintained.
+
+**This conclusion is version-bound, and the `@Secured`/`@RolesAllowed` rows are the
+version-bound part.** They are a *negative* established by reading source: "no
+interceptor is registered for this family." A negative of that shape is only true
+of the releases it was read from. If a later Spring Security adds reactive
+`@Secured` or JSR-250 support, `securedEnabled: false` stops describing Spring and
+starts producing **false positives** — `mutating-endpoint-without-access-control`
+firing on endpoints that are genuinely protected, which is the failure direction
+[ADR 0011](0011-spring-second-framework.md) §1 tolerates but does not want.
+
+The pre/post row is not exposed the same way. It is a positive — an interceptor
+that is registered — and a future release removing it would be a breaking change
+to the annotation's entire purpose.
+
+**Re-check on every Spring Security major version.** The check is two files and
+takes minutes: read `EnableReactiveMethodSecurity`'s attributes, and read the bean
+methods of the configuration class its selector imports. If either row in the §2
+table changes, `enableReactiveMethodSecurityDefaults` changes with it and this
+section records the new version. The defaults live in one struct literal in
+`internal/extract/spring/method_security.go` carrying a pointer back here, so
+there is exactly one place to change.
+
+### §3 Decision
+
+**`scanMethodSecurityStatus` recognizes `@EnableReactiveMethodSecurity`, with the
+effective flags `prePostEnabled: true`, `securedEnabled: false`,
+`jsr250Enabled: false`.** Everything else in this ADR applies unchanged: the flags
+OR-combine across enablers, and `isConfirmedInert` reads them as before.
+
+Two consequences follow from that reuse, both intended:
+
+- **A correctly configured reactive project stops being told its `@PreAuthorize`
+  annotations may be inert.** This is the defect §1 names.
+- **A `@Secured` or `@RolesAllowed` under a reactive-only configuration is
+  downgraded to unguarded**, and `mutating-endpoint-without-access-control` fires
+  on its endpoint. This is a new finding that did not exist before, on an
+  annotation Spring genuinely never evaluates.
+
+The second is the part that needed the evidence in §2 to be real. It is a
+*confirmed negative* in this ADR's sense — Spring registers no interceptor for
+those families on either reactive path — and not the "absent, therefore assumed
+off" reasoning the original decision rejects. Had the answer only been "the
+documentation does not mention `@Secured`", the correct treatment would have been
+to leave `Found` false for it, because silence in a document is not a confirmed
+negative and this ADR's whole boundary is that distinction.
+
+The direction is also the safe one: the downgrade *understates* protection, which
+the original decision already identified as the tolerable failure mode. That is a
+reason it is acceptable, not a reason it would have been acceptable without the
+evidence.
+
+**A hybrid application keeps `@Secured`.** A project carrying both enablers has it
+genuinely switched on by the servlet one, and the existing OR across located
+annotations already produces that — pinned by a test, since the reactive enabler
+contributing a `false` makes the OR load-bearing in a way it was not before.
+
+### §4 Measured effect
+
+One corpus repository out of twenty uses the annotation: **halo**, in
+`WebServerSecurityConfig`, alongside `@EnableWebFluxSecurity` and a
+`SecurityWebFilterChain`.
+
+**`sphinxor lint` produces byte-identical output on all twenty repositories,
+before and against this change** — 765 KB of report compared, zero differing
+lines. That is the validation, and it is a negative one by design.
+
+halo's report is unchanged for two independent reasons, both worth stating because
+either alone would have been enough:
+
+1. It declares **zero** `@PreAuthorize`, `@Secured` and `@RolesAllowed`
+   annotations, so `hasMethodSecurityAnnotations` is false and the §1 caveat never
+   fired for it. Its authorization lives entirely in the reactive URL layer, which
+   [ADR 0020](0020-unanalyzable-is-unknown-not-absent.md) §3 already detects and
+   announces.
+2. It yields **zero recognized endpoints** from 1,001 parsed files, and the run
+   says so. Its production routes are `RouterFunction`s in 151 files — reactive
+   functional routing, which is not annotation-based and not Spring Security. Its
+   only four `@RestController`s are nested classes inside test files — the nested
+   controller on [ADR 0029](0029-spring-security-scope.md)'s remaining silent list.
+
+This corrects ADR 0029 §3, which as accepted stated that all of its remaining items
+"measure zero occurrences across the 20-repository corpus". That is true of the
+*defect* here and false of the *mechanism*: halo uses the annotation, and halo also
+exercises the nested-controller item. The difference matters because the count was
+offered as the reason the urgency is low, and one of the two readings supports that
+and the other does not. The claim is corrected in place rather than left standing.
+
+So the amendment is validated by construction rather than by corpus delta: the
+false statement is reproducible only on a project that both enables method security
+reactively *and* annotates handlers, which no corpus repository does. Five tests
+pin the behaviour, including both directions §3 calls out, the hybrid case, and the
+unchanged absence boundary.
+
+### §5 Consequences
+
+- `internal/extract/spring/method_security.go`: one entry in
+  `methodSecurityDefaultsFor`, one `methodSecurityDefaults` value carrying the §2
+  table, and a note on the OR that the hybrid case now depends on.
+- `internal/cli/analyze.go`: the ADR 0020 §4 caveat names
+  `@EnableReactiveMethodSecurity` alongside the other two. A caveat that reports
+  what was not found must name what was looked for, or a reactive reader
+  reasonably concludes the reactive enabler was never checked.
+- No model change, no new field, no new consumer — the [ADR 0011](0011-spring-second-framework.md)
+  §1 `DeclaresRoles` hazard does not apply, because this adds a way of setting
+  existing fields rather than a state something must learn to read.
+- [ADR 0029](0029-spring-security-scope.md) §2 moves this mechanism from **silent**
+  to **read**, and its §3 count is corrected as described in §4. Four items remain.
+- **A standing obligation**: §2.1's negative is re-checked on every Spring Security
+  major version. This is the first decision in the log that depends on an external
+  project *not* doing something, so it is the first that can be falsified by someone
+  else's release rather than by a change here.

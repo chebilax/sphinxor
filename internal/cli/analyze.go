@@ -159,9 +159,9 @@ func projectWarnings(m *model.Model) []string {
 	// every role shown for them is imaginary.
 	if !m.MethodSecurity.Found && hasMethodSecurityAnnotations(m) {
 		out = append(out, "method-security annotations were found, but no @EnableMethodSecurity /\n"+
-			"         @EnableGlobalMethodSecurity was located in the analyzed source. If it isn't enabled\n"+
-			"         elsewhere (a parent module, Kotlin config), those annotations are inert at runtime and\n"+
-			"         the endpoints they appear to protect are NOT protected.")
+			"         @EnableGlobalMethodSecurity / @EnableReactiveMethodSecurity was located in the analyzed\n"+
+			"         source. If it isn't enabled elsewhere (a parent module, Kotlin config), those annotations\n"+
+			"         are inert at runtime and the endpoints they appear to protect are NOT protected.")
 	}
 
 	// Amendment 1 §5: routes whose declared path could not be read. The

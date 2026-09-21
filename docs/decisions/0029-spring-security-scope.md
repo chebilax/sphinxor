@@ -65,7 +65,7 @@ Every Spring Security mechanism, with exactly one status:
 | SpEL outside that subset — bean calls, boolean combinations, `#param` comparisons | **detected and announced** (`?` in Roles, warning names the count) | [0020](0020-unanalyzable-is-unknown-not-absent.md) Am3 §9/§11 |
 | A same-named annotation from another package | detected and announced | [0022](0022-annotation-identity-and-unrecognized-authorization.md) §2/§3a |
 | `@EnableMethodSecurity` / `@EnableGlobalMethodSecurity`, and its absence | read; absence announced | [0015](0015-inert-method-security-guard.md), [0020](0020-unanalyzable-is-unknown-not-absent.md) §4 |
-| `@EnableReactiveMethodSecurity` | **silent** | — |
+| `@EnableReactiveMethodSecurity` | read | [0015](0015-inert-method-security-guard.md) Am1 |
 | `@PostAuthorize` / `@PreFilter` / `@PostFilter` | **silent** | [0011](0011-spring-second-framework.md) §1 names them out of scope, but nothing announces them |
 
 #### The URL layer
@@ -120,23 +120,38 @@ ADR 0002 model question recorded in `docs/limitations.md`, and it is deliberatel
 part of this definition — otherwise "done" would depend on a decision nobody has
 made.
 
-By that definition, five items remain:
+By that definition, **four** items remain:
 
-1. `@EnableReactiveMethodSecurity` — a reactive project that enables method security
-   this way is told its annotations "may be inert", which is false.
-2. `@PostAuthorize` / `@PreFilter` / `@PostFilter`.
-3. `RoleHierarchy` — roles shown are narrower than what the application grants.
-4. A method-level mapping meta-annotation.
-5. Routes on an inherited interface, and a nested `@RestController`.
+1. `@PostAuthorize` / `@PreFilter` / `@PostFilter`.
+2. `RoleHierarchy` — roles shown are narrower than what the application grants.
+3. A method-level mapping meta-annotation.
+4. Routes on an inherited interface, and a nested `@RestController`.
 
-Items 1–3 are named here as `silent` rather than `out of scope`, which extends the
-list beyond the three endpoint-discovery gaps. The reasoning: ADR 0011 §1 called them
+`@EnableReactiveMethodSecurity` was the fifth, and was the one item where the tool
+did not merely stay quiet but stated something false. [ADR 0015](0015-inert-method-security-guard.md)
+Amendment 1 closed it; the row above now reads **read**.
+
+Items 1 and 2, like the closed reactive one, are named here as `silent` rather than
+`out of scope`, which extends the list beyond the endpoint-discovery gaps. The reasoning: ADR 0011 §1 called them
 out of scope, and §1 above reserves that status for *other systems*. These are Spring
 Security's own mechanisms, so not interpreting them is a gap, and not saying so is
-the defect this project has spent seven decisions removing. **All four measure zero
-occurrences across the 20-repository corpus**, so the urgency is low and the status
-is unchanged by that: a checklist that omits what nobody happened to use is not a
-checklist.
+the defect this project has spent seven decisions removing.
+
+**A correction to this paragraph, made by the first amendment written against it.**
+As accepted, it claimed all of these "measure zero occurrences across the
+20-repository corpus", and offered that as the reason the urgency is low. Working
+the reactive enabler falsified it. **halo** carries `@EnableReactiveMethodSecurity` in
+`WebServerSecurityConfig`, and its only four `@RestController`s are nested classes,
+which is item 4 above. The zero was a count of the *defect* — a project that both
+enables method security reactively and annotates handlers — not a count of the
+*mechanism*, and the paragraph read it as the second. The corpus figures per item
+are now recorded by the amendment that measures them
+([ADR 0015](0015-inert-method-security-guard.md) Am1 §4) rather than asserted here
+in aggregate, because an aggregate claim over four unmeasured items is exactly the
+kind of thing a checklist exists to stop.
+
+The status of each item is unchanged by any of this: a checklist that omits what
+nobody happened to use is not a checklist.
 
 ## Alternatives considered
 
@@ -170,9 +185,9 @@ checklist.
   the promise, citing this ADR for the checklist. It also says plainly that **NestJS
   has no equivalent enumeration**, because a scope section covering one of two
   supported frameworks would otherwise imply both are documented to this standard.
-- Five items get a status they did not have. Four of them measure zero corpus
-  occurrences, so this changes the list before it changes any behaviour — which is
-  the point of writing it down.
+- Five items get a status they did not have, and this changes the list before it
+  changes any behaviour — which is the point of writing it down. (The corpus counts
+  originally given alongside them were wrong; see §3.)
 - Future decisions inherit a place to record their effect. An ADR that moves a
   mechanism from `silent` to `detected and announced` closes a line here, and one
   that adds a mechanism adds a line.

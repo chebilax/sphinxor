@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`@EnableReactiveMethodSecurity` is now read.** Sphinxor scanned for
+  `@EnableMethodSecurity` and `@EnableGlobalMethodSecurity` only, so a WebFlux
+  project enabling method security the reactive way was told its annotations
+  "are inert at runtime and the endpoints they appear to protect are **NOT
+  protected**" — a false statement about a correctly configured application,
+  and the only place the tool asserted something untrue rather than staying
+  silent.
+
+  The annotation does not resemble its servlet counterpart and has none of
+  its three attributes, so the effective families were established by reading
+  Spring Security's own reactive configuration classes: `@PreAuthorize` and
+  `@PostAuthorize` are **enabled unconditionally**, and `@Secured` and
+  `@RolesAllowed` are **not enabled on either `useAuthorizationManager`
+  path**. Verified against Spring Security 6.5.11, 7.1.1 and `main`; the two
+  negatives are version-bound and are re-checked on each major release.
+
+  Consequently a `@Secured` or `@RolesAllowed` under a reactive-only
+  configuration is now correctly treated as inert, and
+  `mutating-endpoint-without-access-control` reports its endpoint. A project
+  carrying both enablers keeps `@Secured`. The caveat text now names all
+  three enablers, since a caveat about what was not found has to say what was
+  looked for.
+
+  No corpus report changes: `sphinxor lint` is byte-identical across all 20
+  repositories. The one repository using the annotation, **halo**, declares
+  no method-security annotations at all. See
+  [ADR 0015](docs/decisions/0015-inert-method-security-guard.md) Amendment 1.
+
 - **A handler mapping every HTTP verb is now an endpoint.** A method-level
   `@RequestMapping` with no `method` attribute routes all eight verbs in
   Spring; there are **141 across 12 repositories** in the surveyed corpus,
