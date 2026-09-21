@@ -77,7 +77,7 @@ flowchart LR
     subgraph EX["Framework extractors"]
         direction TB
         NEST["NestJS / TypeScript<br/>decorators, guards,<br/>composite @Auth()"]
-        SPRING["Spring / Java<br/>@PreAuthorize, SpEL,<br/>SecurityFilterChain"]
+        SPRING["Spring Security / Java<br/>@PreAuthorize, SpEL,<br/>SecurityFilterChain"]
     end
 
     MODEL["Framework-independent model<br/>endpoints · guards · roles<br/>permissions · auth requirements"]
@@ -107,11 +107,11 @@ A new framework means a new extractor plus whatever the model genuinely lacks, f
 
 ## What it does
 
-- **Analyzes NestJS (TypeScript) and Spring (Java)** — endpoints, guards, roles, and permissions, with the framework auto-detected from your source (`--framework` to override).
+- **Analyzes NestJS (TypeScript) and Spring Security (Java)** — endpoints, guards, roles, and permissions, with the framework auto-detected from your source (`--framework` to override). The Spring extractor targets Spring Security specifically, not authorization in Spring applications generally: [ADR 0029](docs/decisions/0029-spring-security-scope.md) lists every mechanism and its status.
 - **Drift detection in CI — the differentiator.** `sphinxor diff <base> <head>` compares two checkouts and fails the build on a *regression*: an endpoint that newly lost its protection, or one whose explicit exemption was quietly removed. Point-in-time scanning can't see either. Pre-existing findings don't re-fail every subsequent PR.
 - **Three lint rules**: mutating endpoint with no detected access control, permission declared but never referenced, empty role.
 - **Cerbos policy export** — generates a Cerbos resource policy set from the extracted model, validated against the real `cerbos compile`. Explicitly marked review-before-deploying.
-- **Combines authorization layers.** For Spring, the exported policy intersects method-level annotations with `SecurityFilterChain` URL rules, so it reflects the effective permission rather than either layer alone.
+- **Combines authorization layers.** For Spring Security, the exported policy intersects method-level annotations with `SecurityFilterChain` URL rules, so it reflects the effective permission rather than either layer alone.
 - **`// sphinxor-allow:` suppression** for endpoints that are public on purpose — with a finding when a marker no longer matches anything, so exemptions can't rot silently.
 - **Confidence-graded findings.** `High` fails CI; `Low` is a warning. Nothing is reported as a certainty that isn't one.
 
