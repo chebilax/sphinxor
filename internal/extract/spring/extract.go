@@ -155,20 +155,13 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	// and "a URL layer nobody could read" are indistinguishable, and the
 	// second silently gets treated as the first — which let a two-chain
 	// project export a Cerbos grant the running application denies.
-	servletBeans, reactiveBeans := countChainBeans(files)
+	forms := countChainBeans(files)
 	b.model.URLLayer = model.URLLayerStatus{
-		Present:  servletBeans > 0 || reactiveBeans > 0,
-		Analyzed: hasChain,
+		Present:  forms.any(),
+		Analyzed: hasChain && forms.legacyAdapter == 0 && forms.shiro == 0,
 	}
 	if b.model.URLLayer.Unknown() {
-		switch {
-		case reactiveBeans > 0 && servletBeans == 0:
-			b.model.URLLayer.Reason = "a reactive SecurityWebFilterChain was found; reactive chain rules are not parsed yet"
-		case servletBeans > 1:
-			b.model.URLLayer.Reason = fmt.Sprintf("%d SecurityFilterChain beans were found; which one governs a given request depends on @Order/securityMatcher, which is not resolved", servletBeans)
-		default:
-			b.model.URLLayer.Reason = "a SecurityFilterChain bean was found but its authorizeHttpRequests rules could not be parsed"
-		}
+		b.model.URLLayer.Reason = unreadableLayerReason(forms, hasChain)
 	}
 
 	// Pass 4: authentication requirements (ADR 0010), per layer (ADR 0011
@@ -337,3 +330,39 @@ func isExtractableSourceFile(path string) bool {
 // (docs/decisions/0019-cli-framework-selection.md §2) use this extractor's
 // own rule rather than a second, drifting copy of it.
 func IsSourceFile(path string) bool { return isExtractableSourceFile(path) }
+
+// unreadableLayerReason explains Present && !Analyzed, naming every
+// unreadable URL layer the project declares — docs/decisions/0027-unannounced-url-layers.md §3.
+//
+// It is a list rather than a single clause because a project can declare
+// more than one: JeecgBoot has both a reactive SecurityWebFilterChain and
+// a ShiroFilterFactoryBean. The previous single-Reason switch would have
+// let whichever case matched first hide the other, and both are real and
+// unread.
+func unreadableLayerReason(forms urlLayerForms, servletChainParsed bool) string {
+	var parts []string
+	switch {
+	case forms.servlet > 1:
+		parts = append(parts, fmt.Sprintf("%d SecurityFilterChain beans were found; which one governs a given request depends on @Order/securityMatcher, which is not resolved", forms.servlet))
+	case forms.servlet == 1 && !servletChainParsed:
+		parts = append(parts, "a SecurityFilterChain bean was found but its authorizeHttpRequests rules could not be parsed")
+	}
+	if forms.reactive > 0 {
+		parts = append(parts, "a reactive SecurityWebFilterChain was found; reactive chain rules are not parsed yet")
+	}
+	if forms.legacyAdapter > 0 {
+		parts = append(parts, "a WebSecurityConfigurerAdapter was found; this pre-Spring-Security-5.7 URL layer's authorizeRequests rules are not parsed")
+	}
+	if forms.shiro > 0 {
+		// Named as Shiro deliberately: "your URL layer could not be
+		// analyzed" sends a reader looking for a SecurityFilterChain
+		// they do not have.
+		parts = append(parts, "an Apache Shiro ShiroFilterFactoryBean was found; Shiro is not Spring Security and its filter chain definitions are not parsed")
+	}
+	if len(parts) == 0 {
+		// Defensive: Unknown() was true, so something is present and
+		// unread. Saying so beats an empty clause.
+		return "a URL-authorization layer was found but could not be analyzed"
+	}
+	return strings.Join(parts, "; and ")
+}

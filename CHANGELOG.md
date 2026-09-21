@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Two more URL-authorization layers are detected and announced.** A class
+  extending `WebSecurityConfigurerAdapter` (Spring Security's pre-5.7
+  configuration base class) and a `@Bean` returning Apache Shiro's
+  `ShiroFilterFactoryBean` were invisible: a project with one was reported
+  as though it had no URL layer at all. Seven corpus projects are affected
+  — nakadi, and JeecgBoot, shenyu, streampark, inlong, litemall and
+  metersphere.
+
+  Both now produce the state [ADR 0020](docs/decisions/0020-unanalyzable-is-unknown-not-absent.md)
+  §2 already defined for a present-but-unanalyzed layer: `sphinxor lint`
+  warns that the roles shown come from the method layer alone, and
+  `sphinxor export cerbos` omits every endpoint. Nothing is parsed —
+  recording that a layer exists is not interpreting it.
+
+  Detection matches a **declaration**, never a mention of the type name. A
+  project with more than one unreadable layer now names all of them in one
+  warning instead of one hiding the others.
+
+  Measured: rule counts are unchanged (all seven already exported zero,
+  having no Spring Security guard to export), but 1,655 endpoints across
+  six projects stop being reported as `no-guard` in the export report and
+  become `url-layer-unknown`, which is the accurate reason. See
+  [ADR 0027](docs/decisions/0027-unannounced-url-layers.md).
+
 ### Added
 
 - **A Spring annotation written fully qualified is now recognized.**
