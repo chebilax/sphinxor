@@ -89,6 +89,8 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 		scanMethodSecurityFilters(f.tree.RootNode(), f.src, &b.model.MethodSecurityFilters)
 		// ADR 0031: a role hierarchy, recorded as existing and not read.
 		scanRoleHierarchy(f.tree.RootNode(), f.src, &b.model.RoleHierarchy)
+		// ADR 0033: methods building WebFlux functional routes.
+		scanFunctionalRouting(f.tree.RootNode(), f.src, &b.model.FunctionalRouting)
 	}
 
 	// Pass 2: controllers, endpoints, method-security (method-layer)

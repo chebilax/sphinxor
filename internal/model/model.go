@@ -97,6 +97,9 @@ type Model struct {
 	// UnrecoveredRoutes lists controllers whose routes were not all
 	// recovered (ADR 0032).
 	UnrecoveredRoutes []ControllerWithUnrecoveredRoutes
+	// FunctionalRouting records methods that build WebFlux RouterFunction
+	// route definitions, which are not read (ADR 0033).
+	FunctionalRouting FunctionalRoutingStatus
 	// RoleHierarchy records that the project declares a role hierarchy,
 	// which makes every role shown narrower than what the application
 	// grants (ADR 0031).
@@ -356,6 +359,28 @@ type ControllerWithUnrecoveredRoutes struct {
 	// that overrides one unrelated method, so any count derived from the
 	// class alone would be wrong.
 	NoRoutesAtAll bool
+}
+
+// FunctionalRoutingStatus counts methods that build a WebFlux
+// RouterFunction — docs/decisions/0033-functional-routing.md.
+//
+// The unit is the METHOD, chosen because it is the only one spanning all
+// three idioms in the corpus: a @Bean returning RouterFunction, an
+// implementation of a project interface that returns one (halo's
+// CustomEndpoint, ~68 classes), and the interface declaration itself.
+// Counting @Bean methods finds 14 of halo's 82 files; counting
+// RouterFunctions.route( calls misses its springdoc builder entirely.
+//
+// Builders is deliberately NOT a route count and must not be presented
+// as one (§2). One route(...) chain declares any number of routes —
+// halo's 104 chains carry at least 200 verb predicates — and a method
+// may be a fragment composed into a chain elsewhere rather than an
+// independent declaration, so the number can overstate the number of
+// route sources as easily as it understates the routes.
+type FunctionalRoutingStatus struct {
+	Builders int
+	// Classes names the declaring classes, for the warning text.
+	Classes []string
 }
 
 // RoleHierarchyStatus records that a project declares a Spring Security

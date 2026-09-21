@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **No enumerated Spring Security mechanism is silent any more.**
+  [ADR 0029](docs/decisions/0029-spring-security-scope.md) listed every mechanism
+  the Spring extractor deals with and defined done as none of them being
+  *present, uninterpreted, and unmentioned*. As of 2026-09-21 that holds: each is
+  either read or detected and announced. It does **not** mean everything is read —
+  an unreadable SpEL expression, a `RouterFunction` builder's routes and an
+  external interface's mappings are announced and not understood, and
+  `docs/limitations.md` says which.
+
+- **Functional routing is announced.** WebFlux `RouterFunction` routes are built
+  in code rather than declared by annotation, and were read by nothing. Measured:
+  **82 builder methods across three repositories** (halo 77, shenyu 4, JeecgBoot
+  1). The unit is a method whose return type is `RouterFunction` — the only
+  criterion spanning all three idioms found; counting `@Bean` methods finds 14 of
+  halo's 82 files, and counting `RouterFunctions.route(` calls misses its
+  springdoc builder.
+
+  The warning counts **methods, not routes**, and says so: one chain declares any
+  number of routes, and a method may be a fragment composed elsewhere. halo now
+  shows this alongside the existing "recognized no endpoints" notice, which is
+  correct — shenyu and JeecgBoot recognize 394 and 931 endpoints and trigger only
+  the new one. See [ADR 0033](docs/decisions/0033-functional-routing.md).
+
+### Fixed
+
+- **A `@RestController` nested inside another class is now extracted.**
+  `extractControllers` walked top-level classes only, so a nested controller
+  yielded no endpoints *and no controller* — invisible rather than incomplete, so
+  even the "produced no routes" warning could not see it. It now walks classes at
+  any depth, and guards attach as they do for a top-level controller.
+
+  Zero corpus delta: all 33 nested controllers in the 20-repository corpus sit in
+  paths already skipped as test sources, so this exists to protect production
+  code. See [ADR 0034](docs/decisions/0034-nested-controllers.md).
+
 - **Controllers whose routes were not all recovered are now announced.** The matrix
   reported `N endpoint(s)` with no way to tell whether N covered the application.
   For four corpus repositories it did not, and dataease reported **16 endpoints

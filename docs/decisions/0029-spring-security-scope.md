@@ -94,8 +94,8 @@ Every Spring Security mechanism, with exactly one status:
 | One route declared by two controllers | detected and announced | [0020](0020-unanalyzable-is-unknown-not-absent.md) Am2 §8 |
 | A **method-level** mapping meta-annotation (`@AnonymousGetMapping`) | detected and announced (not resolved) | [0032](0032-controllers-that-yield-no-routes.md) §1 |
 | Routes declared on an **inherited interface** | detected and announced (not resolved) | [0032](0032-controllers-that-yield-no-routes.md) §1 |
-| A **nested** `@RestController` | **silent** | recorded in `docs/limitations.md`, no decision |
-| Functional routing (`RouterFunction`) | **silent** | recorded in `docs/limitations.md`, no decision |
+| A **nested** `@RestController` | read | [0034](0034-nested-controllers.md) |
+| Functional routing (`RouterFunction`) | detected and announced (not read) | [0033](0033-functional-routing.md) §1 |
 
 #### Out of scope — other systems (§1)
 
@@ -122,78 +122,45 @@ ADR 0002 model question recorded in `docs/limitations.md`, and it is deliberatel
 part of this definition — otherwise "done" would depend on a decision nobody has
 made.
 
-By that definition, **two** items remain, both endpoint discovery:
+By that definition, **the list is empty.**
 
-1. A nested `@RestController`. It yields no *controller*, so ADR 0032's detection
-   does not reach it; the corpus holds 33, all in test sources and none in
-   production code.
-2. Functional routing — `RouterFunction`, the reactive counterpart of an annotated
-   controller. It is Spring's own routing, not another system, so §1 does not put
-   it out of scope the way it does JAX-RS.
+### §3.1 Done, as of 2026-09-21
 
-   **Added by a check that expected the opposite answer, and the answer is easy to
-   get backwards — so it is stated outright here rather than left to be inferred
-   from this item's presence on the list.**
+**No mechanism in §2 has status `silent`.** Every Spring Security mechanism
+enumerated here is now either *read* or *detected and announced*, and the two
+remaining endpoint-discovery gaps closed last:
 
-   **ADR 0019 §2's "recognized no endpoints" warning DOES fire on halo.** Measured,
-   not assumed. Its presence on this list does not mean the warning was silent
-   there.
+| Closed by | Mechanism | New status |
+|---|---|---|
+| [0015](0015-inert-method-security-guard.md) Am1 | `@EnableReactiveMethodSecurity` | read |
+| [0030](0030-post-authorize-and-method-security-filters.md) | `@PostAuthorize`, `@PreFilter`/`@PostFilter` | detected and announced |
+| [0031](0031-role-hierarchy.md) | `RoleHierarchy` | detected and announced |
+| [0032](0032-controllers-that-yield-no-routes.md) | inherited-interface routes, method-level mapping meta-annotations | detected and announced |
+| [0033](0033-functional-routing.md) | functional routing (`RouterFunction`) | detected and announced |
+| [0034](0034-nested-controllers.md) | nested `@RestController` | read |
 
-   Nor do halo's four nested `@RestController`s suppress it, which was the other
-   plausible explanation and is also wrong: a nested `@RestController` yields
-   **zero** endpoints (`extractControllers` walks top-level classes only), so it
-   cannot lift `len(m.Endpoints)` off zero. That is precisely *why* the warning
-   still fires on halo.
+**What this does and does not claim.** It claims that a reader of a Spring report
+is not silently misled about any mechanism on this list: where the tool cannot
+interpret something, the run says so. It does **not** claim every mechanism is
+read — §3 was written to exclude that reading deliberately, because "every
+mechanism read" would depend on the unanswered ADR 0002 permissions question and
+could never be reached.
 
-   `RouterFunction` is `silent` for a third reason. The warning's condition is
-   `len(m.Endpoints) == 0` across the **whole project**, so it announces
-   *emptiness*, never a route shape that could not be read. halo is announced by
-   accident of having nothing else; a project with functional routes *and*
-   annotated controllers gets nothing. Verified directly: adding a single annotated
-   controller to a `RouterFunction`-only project removes the warning while the
-   functional routes stay invisible.
+Three things remain open and are **not** on this list, by construction:
 
-   That is the real corpus case, not a hypothetical. Measured across the three
-   repositories that use `RouterFunction`:
+- Reading the *content* of what is announced — an unreadable SpEL expression, a
+  `RouterFunction` builder's routes, an external interface's mappings. Each is a
+  resolution decision with its own cost, recorded in `docs/limitations.md`.
+- Everything §1 puts out of scope: other systems, and Kotlin source.
+- **Whether test sources should be analyzed at all.** `parseProject` skips
+  directories named `test` and files ending `Test`/`Tests`/`IT`, which is a
+  partial, undeclared policy rather than a decision. It is orthogonal to this
+  checklist — it changes *what is scanned*, not *what is understood* — and is
+  recorded as an open question in `docs/limitations.md`.
 
-   | Repository | `RouterFunction` files | Recognized endpoints | ADR 0019 §2 warning |
-   |---|---|---|---|
-   | halo | 151 | 0 | **fires** |
-   | apache/shenyu | 6 | 394 | does not fire |
-   | JeecgBoot | 1 | 931 | does not fire |
-
-   shenyu's are real routes, not scaffolding: `POST /helloWorld2`, `GET /rewrite`,
-   `GET /pdm`, `GET /oms`, `GET /timeout`. Two of three repositories lose them in
-   complete silence, which is what puts this item on the list.
-
-`@EnableReactiveMethodSecurity` was on this list and was the one item where the tool
-did not merely stay quiet but stated something false. [ADR 0015](0015-inert-method-security-guard.md)
-Amendment 1 closed it; the row above now reads **read**. Item 5 replaced it, so the
-count is unchanged — which is the checklist working, not failing.
-
-The three method-security items that were on this list — the reactive enabler,
-the `@PostAuthorize` group and `RoleHierarchy` — were named `silent` rather than
-`out of scope`, which extended the list beyond the endpoint-discovery gaps.
-All three are now closed, so what remains is exactly the endpoint-discovery set. The reasoning: ADR 0011 §1 called them
-out of scope, and §1 above reserves that status for *other systems*. These are Spring
-Security's own mechanisms, so not interpreting them is a gap, and not saying so is
-the defect this project has spent seven decisions removing.
-
-**A correction to this paragraph, made by the first amendment written against it.**
-As accepted, it claimed all of these "measure zero occurrences across the
-20-repository corpus", and offered that as the reason the urgency is low. Working
-the reactive enabler falsified it. **halo** carries `@EnableReactiveMethodSecurity` in
-`WebServerSecurityConfig`, and its only four `@RestController`s are nested classes,
-which is the nested-controller item above. The zero was a count of the *defect* — a project that both
-enables method security reactively and annotates handlers — not a count of the
-*mechanism*, and the paragraph read it as the second. The corpus figures per item
-are now recorded by the amendment that measures them
-([ADR 0015](0015-inert-method-security-guard.md) Am1 §4) rather than asserted here
-in aggregate, because an aggregate claim over four unmeasured items is exactly the
-kind of thing a checklist exists to stop.
-
-The status of each item is unchanged by any of this: a checklist that omits what
-nobody happened to use is not a checklist.
+This status holds for the enumeration in §2 at the date above. A mechanism this
+ADR does not list cannot be `silent` under it, which is why §2 is a list someone
+can add a line to rather than a completeness proof.
 
 ## Alternatives considered
 

@@ -51,17 +51,47 @@ var httpMappingAnnotations = map[string]model.HTTPMethod{
 // a single Endpoint under ADR 0014 (same method+path, differing only in
 // `produces`) are two real places in the source a developer could put a
 // marker above, and either should exempt the endpoint they share.
+// controllerCandidateClasses returns every class declaration in a
+// compilation unit, at any nesting depth — docs/decisions/0034-nested-controllers.md.
+//
+// This used to walk top-level classes only, so a @RestController
+// declared inside another class contributed no endpoints AND no
+// controller, which meant ADR 0032's detection could not see it either:
+// the class was invisible rather than incomplete, the silent failure ADR
+// 0020 exists to remove.
+//
+// Descending costs nothing measurable. All 33 nested controllers in the
+// 20-repository corpus sit in paths parseProject already skips — 32 in a
+// directory named `test` AND matching *Test.java, one by the directory
+// alone — so this is a zero-delta change there. It exists for production
+// code, where Java allows the shape and nothing warned about it.
+//
+// A local class inside a method body is reached too. Spring cannot
+// component-scan one, so it is not a controller in practice; it is also
+// not a shape any real project writes, and excluding it would cost a
+// special case for a hypothetical.
+func controllerCandidateClasses(root *sitter.Node) []*sitter.Node {
+	var out []*sitter.Node
+	var walk func(n *sitter.Node)
+	walk = func(n *sitter.Node) {
+		for _, c := range namedChildren(n) {
+			if c.Type() == "class_declaration" {
+				out = append(out, c)
+			}
+			walk(c)
+		}
+	}
+	walk(root)
+	return out
+}
+
 func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID, controllerMetas map[string]controllerMeta) {
 	// ADR 0022 §1: annotation identity is a per-file question, answered
 	// from this file's own imports. Parsed once per file rather than per
 	// annotation.
 	imports := parseImports(root, src)
 
-	for _, decl := range namedChildren(root) {
-		if decl.Type() != "class_declaration" {
-			continue
-		}
-
+	for _, decl := range controllerCandidateClasses(root) {
 		classAnns := annotationsOf(decl, src)
 
 		// A class is a controller when it carries @RestController /
