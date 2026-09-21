@@ -72,10 +72,23 @@ func pendingGuardsFromAnnotations(anns []annotationCall, src []byte, file string
 	var out []pendingGuard
 	var unknown []pendingUnrecognized
 	for _, ann := range anns {
+		line := int(ann.Node.StartPoint().Row) + 1
+
+		// ADR 0023 §1: an annotation from a third-party authorization
+		// framework. Recognized by the package its import binds it to,
+		// never by its name — Shiro's @RequiresPermissions shares no
+		// name with anything Spring uses, so it would otherwise fall
+		// straight through to "no access control found", which ADR 0022
+		// §3 established is the wrong thing to report about an endpoint
+		// that has some.
+		if boundTo, _, isThirdParty := imports.resolveThirdPartyAuth(ann.Name); isThirdParty {
+			unknown = append(unknown, pendingUnrecognized{name: ann.Name, boundTo: boundTo, file: file, line: line})
+			continue
+		}
+
 		if !methodSecurityAnnotations[ann.Name] {
 			continue
 		}
-		line := int(ann.Node.StartPoint().Row) + 1
 
 		// ADR 0022 §1: the name is not the annotation. Without a binding
 		// to an accepted package this is someone else's annotation that

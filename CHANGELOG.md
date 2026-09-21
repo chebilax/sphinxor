@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An Apache Shiro authorization annotation is no longer reported as no
+  access control.** `@RequiresPermissions` shares no name with anything
+  Spring Security uses, so it never entered any recognized set and the
+  endpoint fell straight through to "nothing found". Measured across 20
+  Java repositories, **907 mutating routes carried a Shiro annotation and
+  were flagged as unguarded** — around a fifth of all
+  `mutating-endpoint-without-access-control` findings in the Spring corpus.
+
+  An annotation bound by import to `org.apache.shiro.authz.annotation` is
+  now recorded as an unrecognized authorization annotation, the state
+  [ADR 0022](docs/decisions/0022-annotation-identity-and-unrecognized-authorization.md)
+  introduced: no guard, no role, `?` in the Guards column, the finding
+  suppressed, and a warning naming the package and the count. **845
+  findings disappeared** — metersphere 555, streampark 101, JeecgBoot 81,
+  litemall 65, inlong 43 — with no other repository changing at all.
+
+  Recognition is by import **package**, not annotation name. A name
+  heuristic was measured and rejected: it catches `@IgnoreAuth`, which
+  *skips* authentication, and so would suppress the finding exactly where
+  it is correct.
+
+  **Shiro is still unsupported** — nothing reads what it requires, and its
+  URL layer is still unparsed. One claim was withdrawn: that these
+  endpoints have no access control. The run also reports whether Shiro's
+  `AuthorizationAttributeSourceAdvisor` wiring was located, so a reader
+  knows what the suppression rests on. See
+  [ADR 0023](docs/decisions/0023-third-party-authorization-annotations.md).
+
 - **A Spring method-security annotation is now identified by its import, not
   just its name.** `@PreAuthorize`, `@Secured` and `@RolesAllowed` were
   matched on simple name alone, so any annotation spelled that way — from

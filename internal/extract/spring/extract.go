@@ -98,6 +98,13 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 		extractControllers(f.tree.RootNode(), f.src, f.relPath, b, roleByName)
 	}
 
+	// Pass 2b: ADR 0023 §3. For each third-party authorization framework
+	// whose annotations pass 2 actually recorded, say whether the wiring
+	// that switches them on is present. It runs after pass 2 because it
+	// only reports on frameworks that were seen, and before any consumer
+	// reads b.model.ThirdPartyAuth.
+	scanThirdPartyAuthStatus(files, b)
+
 	// Two controllers declaring one route are two endpoints until proven
 	// otherwise (ADR 0020 Amendment 2 §8). It runs after every file has
 	// been walked, and before both the allowlist matching below and the
