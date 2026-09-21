@@ -72,6 +72,18 @@ const (
 	// project export `roles: [ADMIN, ANALYST]` for an endpoint the
 	// running application restricted to ADMIN.
 	ReasonURLLayerUnknown OmissionReason = "url-layer-unknown"
+	// ReasonAnyVerb: this endpoint answers every HTTP verb — Spring's
+	// method-level @RequestMapping with no `method` attribute
+	// (docs/decisions/0028-verbless-request-mapping.md §2).
+	//
+	// ADR 0009 §2 derives a rule's action from the HTTP method, so this
+	// endpoint's action would be "any" — which is not an action any
+	// request carries. The rule would read as a grant and govern
+	// nothing, which is worse than omitting: a reviewer sees coverage
+	// that does not exist. Writing eight rules instead would grant seven
+	// verbs the handler may never have been meant to serve, which ADR
+	// 0009 §3 forbids in the permissive direction.
+	ReasonAnyVerb OmissionReason = "any-verb"
 	// ReasonPathUnresolved: this endpoint's declared route path could not
 	// be read — a route constant, enum member, array or template literal
 	// (docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
@@ -354,6 +366,19 @@ func Translate(m *model.Model) Result {
 				Detail: "this endpoint's declared route path could not be read (its @Controller/@RequestMapping " +
 					"argument is not a string literal), so \"" + e.Path + "\" is only the part of the route that " +
 					"resolved — the real route is longer, and no policy can be named after a fragment of it",
+			})
+			continue
+		}
+		// A handler answering every verb has no single action to name
+		// (ADR 0028 §2, ReasonAnyVerb).
+		if e.HTTPMethod == model.MethodAny {
+			pathOmissions = append(pathOmissions, Omission{
+				Endpoint: e,
+				Resource: resource,
+				Reason:   ReasonAnyVerb,
+				Detail: "this handler answers every HTTP verb (a @RequestMapping with no method attribute), " +
+					"so it has no single action to name: \"any\" is not an action a request carries, and " +
+					"granting all eight would grant verbs the handler may never have been meant to serve",
 			})
 			continue
 		}

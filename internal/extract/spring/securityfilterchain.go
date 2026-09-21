@@ -479,7 +479,11 @@ func argCount(call *sitter.Node) int {
 // every path; otherwise at least one pattern must match via
 // matchesAntPattern (antpattern.go).
 func matchesRule(rule filterChainRule, e model.Endpoint) bool {
-	if rule.method != nil && *rule.method != e.HTTPMethod {
+	// A verb-scoped rule is *considered* against an ANY endpoint rather
+	// than skipped — firstMatch neutralises it (ADR 0028 §2). Skipping
+	// here would let a later, more permissive rule apply to an endpoint
+	// an earlier one really does govern for one of its verbs.
+	if rule.method != nil && e.HTTPMethod != model.MethodAny && *rule.method != e.HTTPMethod {
 		return false
 	}
 	if rule.anyRequest {
@@ -509,9 +513,24 @@ func matchesRule(rule filterChainRule, e model.Endpoint) bool {
 // doesn't match e at all.
 func firstMatch(rules []filterChainRule, e model.Endpoint) (filterChainRule, bool) {
 	for _, r := range rules {
-		if matchesRule(r, e) {
-			return r, true
+		if !matchesRule(r, e) {
+			continue
 		}
+		// A verb-scoped rule covers one of the eight verbs an ANY
+		// endpoint answers, so it neither clearly applies nor clearly
+		// does not (ADR 0028 §2). Treating it as applying would grant
+		// its roles across seven verbs it does not cover; treating it as
+		// not applying would drop a rule that really does govern one.
+		//
+		// So it matches — stopping evaluation, so no later and more
+		// permissive rule is reached — but as chainUnrecognized, which
+		// is exactly ADR 0018's existing "opaque, may match, contributes
+		// nothing" outcome. No new state was needed.
+		if r.method != nil && e.HTTPMethod == model.MethodAny {
+			r.kind = chainUnrecognized
+			r.roles = nil
+		}
+		return r, true
 	}
 	return filterChainRule{}, false
 }

@@ -292,6 +292,18 @@ func findHTTPMapping(anns []annotationCall, src []byte) (annotationCall, []model
 			if verbs := requestMappingVerbs(a.Args, src); len(verbs) > 0 {
 				return a, verbs, true
 			}
+			// No `method` attribute: Spring routes every verb here
+			// (ADR 0028 §1). One endpoint marked ANY, not eight — the
+			// arithmetic is in that ADR and in model.MethodAny.
+			//
+			// Reached only for a *method-level* annotation: the caller
+			// walks a method_declaration's own annotations, and a
+			// class-level @RequestMapping is read separately as the base
+			// path. The corpus has 735 of those, and none becomes an
+			// endpoint.
+			if !hasMethodAttribute(a.Args, src) {
+				return a, []model.HTTPMethod{model.MethodAny}, true
+			}
 		}
 	}
 	return annotationCall{}, nil, false
@@ -366,4 +378,28 @@ func requestMethodConstants(value *sitter.Node, src []byte) []string {
 		}
 		return nil
 	}
+}
+
+// hasMethodAttribute reports whether an annotation's argument list
+// carries a `method` element at all, regardless of whether its value
+// could be read.
+//
+// Distinguishing "no method attribute" (ADR 0028's every-verb case) from
+// "a method attribute naming a verb this model has no term for"
+// (ADR 0026, which yields no endpoint rather than a guess) matters:
+// treating the second as the first would turn an unreadable verb into a
+// claim that the handler answers all of them.
+func hasMethodAttribute(args *sitter.Node, src []byte) bool {
+	if args == nil {
+		return false
+	}
+	for _, arg := range namedChildren(args) {
+		if arg.Type() != "element_value_pair" {
+			continue
+		}
+		if key := arg.ChildByFieldName("key"); key != nil && key.Content(src) == "method" {
+			return true
+		}
+	}
+	return false
 }

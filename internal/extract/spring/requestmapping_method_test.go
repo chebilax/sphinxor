@@ -102,12 +102,21 @@ public class C {
 	}
 }
 
-// TestRequestMappingMethod_VerblessStaysOut pins ADR 0026 §4. A
-// method-level @RequestMapping with no method attribute maps every verb
-// in Spring; there are 164 across 17 corpus repositories, and
-// representing one is a model decision this ADR deliberately does not
-// make. The exclusion is pinned so it stays deliberate.
-func TestRequestMappingMethod_VerblessStaysOut(t *testing.T) {
+// TestRequestMappingMethod_VerblessIsNowAnyVerb replaces ADR 0026 §4's
+// exclusion test, which asserted that a verb-less method-level
+// @RequestMapping produced no endpoint.
+//
+// That exclusion was deliberate and temporary: ADR 0026 §4 declined to
+// decide how to represent a handler answering every verb, because doing
+// so alongside its HEAD/OPTIONS/TRACE change would have bundled two model
+// decisions. ADR 0028 made that decision — one endpoint marked ANY — so
+// the assertion is inverted here rather than deleted, to keep the history
+// of the shape visible at the place that tests it.
+//
+// The measured population it covers: 141 method-level occurrences across
+// 12 repositories (and 735 class-level ones, which are base paths and
+// still produce nothing — see TestRequestMappingMethod_ClassLevelVerblessIsOnlyABasePath).
+func TestRequestMappingMethod_VerblessIsNowAnyVerb(t *testing.T) {
 	m, _ := extractOne(t, `
 @RestController
 @RequestMapping("/api")
@@ -116,8 +125,14 @@ public class C {
     public void anything() { }
 }
 `)
-	if len(m.Endpoints) != 0 {
-		t.Errorf("a verb-less @RequestMapping declares no known route yet (§4), got %+v", m.Endpoints)
+	if len(m.Endpoints) != 1 {
+		t.Fatalf("a verb-less @RequestMapping is one ANY endpoint (ADR 0028 §1), got %+v", m.Endpoints)
+	}
+	if m.Endpoints[0].HTTPMethod != model.MethodAny {
+		t.Errorf("HTTPMethod = %q, want ANY", m.Endpoints[0].HTTPMethod)
+	}
+	if m.Endpoints[0].Path != "/api/anything" {
+		t.Errorf("Path = %q, want /api/anything", m.Endpoints[0].Path)
 	}
 }
 

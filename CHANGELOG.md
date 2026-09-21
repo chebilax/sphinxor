@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A handler mapping every HTTP verb is now an endpoint.** A method-level
+  `@RequestMapping` with no `method` attribute routes all eight verbs in
+  Spring; there are **141 across 12 repositories** in the surveyed corpus,
+  and none of them appeared in the matrix.
+
+  Each becomes **one endpoint marked `ANY`**, not eight rows. Expanding
+  would have produced 504 `mutating-endpoint-without-access-control`
+  findings restating 126 facts — four per handler — plus roughly a
+  thousand rows of `HEAD`, `OPTIONS` and `TRACE`. Measured result: **138
+  endpoints and 128 findings**.
+
+  `ANY` counts as mutating, since the handler accepts POST, PUT, PATCH and
+  DELETE. `sphinxor export cerbos` **omits** such an endpoint rather than
+  writing a rule on an `any` action no request carries, and a verb-scoped
+  URL-layer rule leaves it unresolved rather than granting its roles
+  across seven verbs it does not cover. See
+  [ADR 0028](docs/decisions/0028-verbless-request-mapping.md).
+
+
 - **`@RequestMapping(method = RequestMethod.X)` now declares routes.**
   ADR 0011 cut this older form deliberately, on the grounds that no fixture
   used it. It was hiding **611 routes** across seven repositories —

@@ -221,18 +221,51 @@ should be written down rather than discovered later.
 - 141 endpoints appear; 126 new Low-confidence findings, in projects that mostly
   carry an announced unreadable URL layer.
 - One new Cerbos omission reason.
-- **Validation before this is Accepted**, per `docs/testing.md`:
-  - The 12 repositories gain exactly 141 endpoints between them, distributed as
-    measured above, and **126** new mutating findings — not 504, which is the number
-    that would indicate Option A's behaviour had been implemented by accident.
-  - **No other repository changes**, and all four vendored fixtures stay
-    byte-identical — none declares a verb-less method-level `@RequestMapping`.
-  - A test per §2 consumer: `MethodAny` is mutating; a Cerbos export omits it with
-    the new reason rather than emitting an `any` action; a verb-scoped URL rule
-    leaves it unresolved while an unscoped one applies; and `ANY /x` alongside
-    `GET /x` is a collision rather than a merge.
-  - A test that a **class-level** verb-less `@RequestMapping` still contributes only
-    a base path and creates no endpoint — the 735, which must not move.
-  - A test for §4's overlap, modelled on `TaskSchedulerController`: a verb-less and a
-    `@DeleteMapping` on one path yield **two** endpoints, `ANY` and `DELETE`, each
-    carrying its own handler's guards and neither merged into the other.
+### Validation — measured after implementation
+
+**138 endpoints, 128 findings.** The number that mattered was **not 504**: that is
+what Option A's behaviour would have produced, and its absence is the check that the
+rejected representation was not implemented by accident.
+
+| Repository | endpoints | mutating findings |
+|---|---|---|
+| JeecgBoot | 855 → 931 | 227 → 294 |
+| shenyu | 371 → 394 | 122 → 145 |
+| spring-cloud-dataflow | 103 → 115 | 45 → 57 |
+| apollo | 217 → 224 | 43 → 50 |
+| litemall | 213 → 219 | 39 → 45 |
+| inlong | 334 → 339 | 184 → 189 |
+| thingsboard | 547 → 551 | 10 → 14 |
+| RuoYi-Vue, dolphinscheduler, eladmin, nacos, nakadi | +1 each | +1 each, except nacos |
+
+No other repository changed, and all four vendored fixtures are byte-identical.
+
+**The three-endpoint gap, traced rather than absorbed.** The measurement predicted
+141 and the extractor produced 138, the whole difference being JeecgBoot's 79 against
+76. The three are in `ISysBaseAPI.java` — a Java **interface**, not a controller
+class. The probe walked every `method_declaration` carrying the annotation; the
+extractor requires the enclosing type to be a `@RestController`/`@Controller`, and
+correctly produces nothing for an interface. The probe over-counted; the extractor is
+right. (A nested controller class was considered first and ruled out: the corpus
+contains none, though it is worth knowing that a nested one would also produce
+nothing — see `docs/limitations.md`.)
+
+The finding count came in at 128 against 126 for the same reason one level down: the
+absorption classification credited class-level annotations that the real guard
+attachment resolves differently. Both gaps are the ADR 0024 "approximate prediction"
+case — a scan guessing what extraction will do — and both are small and in the
+direction of the scan over-crediting itself.
+
+Tests: `isMutating` treats `ANY` as mutating and fires **once** per handler, not four
+times; a class-level verb-less `@RequestMapping` still yields only a base path; §4's
+overlap yields two endpoints whose guards do not leak across; a verb-scoped URL rule
+neither grants its roles nor falls through to a later `permitAll()`; and the Cerbos
+exporter omits an any-verb endpoint with `ReasonAnyVerb` rather than writing a rule
+on an action no request carries.
+
+**One test was deliberately inverted, not deleted.** ADR 0026 §4's
+`TestRequestMappingMethod_VerblessStaysOut` asserted this shape produced no endpoint.
+That exclusion was explicitly temporary — ADR 0026 declined the model decision rather
+than judging the shape unimportant — so the test is renamed and its assertion
+reversed in place, with the supersession recorded in its comment, to keep the shape's
+history where it is tested.

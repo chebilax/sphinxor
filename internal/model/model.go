@@ -46,6 +46,28 @@ const (
 	MethodHead    HTTPMethod = "HEAD"
 	MethodOptions HTTPMethod = "OPTIONS"
 	MethodTrace   HTTPMethod = "TRACE"
+	// MethodAny is a handler that answers every HTTP verb — Spring's
+	// method-level @RequestMapping with no `method` attribute, which is
+	// 141 handlers across 12 repositories of the surveyed corpus
+	// (docs/decisions/0028-verbless-request-mapping.md).
+	//
+	// It is a positive fact, not an unknown: Spring really does route
+	// every verb there, so this is not an ADR 0020 "unanalyzable" case.
+	//
+	// One row rather than eight. Expanding each handler into one Endpoint
+	// per verb needed no new model term, but produced 504
+	// mutating-endpoint findings restating 126 facts — four per handler,
+	// one for each mutating verb — and roughly a thousand extra matrix
+	// rows of HEAD, OPTIONS and TRACE.
+	//
+	// Six consumers know about it, enumerated in ADR 0028 §2 before it
+	// was added, because ADR 0011 §1's lesson is that a new model state
+	// is read correctly only by consumers that know to read it:
+	// isMutating treats it as mutating; the Cerbos exporter omits it
+	// rather than writing a rule on an "any" action no request carries;
+	// a verb-scoped URL rule leaves it unresolved (ADR 0018); identity,
+	// collision detection and diff treat it as its own verb.
+	MethodAny HTTPMethod = "ANY"
 )
 
 // Model is the full result of analyzing one project at one point in time:
