@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-21
+
+Every Spring Security mechanism Sphinxor enumerates is now either read or
+announced — see [ADR 0029](docs/decisions/0029-spring-security-scope.md) §3.1.
+Most of this release is about the report no longer being quietly wrong: routes
+that were invisible, guards that were phantom, and gaps that looked like
+absences.
+
+### Upgrading from 0.6.0 — what can change in CI
+
+**Only `empty-role` can fail a build.** `sphinxor lint` exits non-zero on
+high-confidence findings only, and `empty-role` is the sole High-confidence rule;
+`mutating-endpoint-without-access-control` and `unreferenced-permission` are both
+Low and appear in the report without gating. That matters for reading the numbers
+below.
+
+| Change | Effect on the exit code | Effect on the report |
+|---|---|---|
+| `empty-role` no longer fires on unreadable SpEL (**675 findings removed**) | **Builds that failed may now pass** | 675 fewer rows |
+| Shiro annotations suppress `mutating-endpoint-without-access-control` | none (Low) | fewer rows, one new warning |
+| `@RequestMapping(method=)` read (**+611 routes, +209 findings**) | **none — all Low** | many more rows |
+| Controller meta-annotations (shenyu **+179 routes, +35 findings**) | **none — all Low** | more rows |
+| Verb-less `@RequestMapping` (**+138 endpoints**), fully-qualified annotations (**+80**) | **none — all Low** | more rows |
+| A nacos-style `@Secured` is no longer read as a Spring guard | **none** | no new findings: the annotation becomes *unrecognized authorization*, which still suppresses the Low finding. One new warning, and the matrix stops claiming Spring guards it never had |
+| An unanalyzable URL layer omits endpoints from `export cerbos` | none | **fewer policies exported**, each with a stated reason |
+
+**`sphinxor diff` against a 0.6.0 baseline will show churn.** Endpoint identity is
+still `METHOD + path` (`model.NewEndpointID`), so **a route with a readable path,
+no declared version and no collision keeps its ID**. Three groups do not, and each
+now carries a synthesized controller-and-handler identity:
+
+- routes declaring an API version (NestJS `@Version`), which now includes the
+  version;
+- routes whose declared path could not be read;
+- routes declared by two controllers in one tree, which are kept apart rather
+  than merged.
+
+Those appear as one removed and one added. Every newly-visible route — the 611
+above and the rest — appears as added. Allowlist markers are matched by position
+and anchor rather than by ID, so they are unaffected.
+
+
 ### Added
 
 - **No enumerated Spring Security mechanism is silent any more.**
@@ -31,6 +73,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shows this alongside the existing "recognized no endpoints" notice, which is
   correct — shenyu and JeecgBoot recognize 394 and 931 endpoints and trigger only
   the new one. See [ADR 0033](docs/decisions/0033-functional-routing.md).
+
+- **A Spring annotation written fully qualified is now recognized.**
+  `microcks/microcks` declares its own `io.github.microcks.web.RestController`,
+  so Spring's cannot be imported there; all 13 files in that package write
+  `@org.springframework.web.bind.annotation.RestController`. Extraction
+  matched the text as written, so none of those classes was a controller.
+  microcks reported **50 endpoints** while those files held **30 more** in a
+  shape already supported — roughly 40% of its API surface, and silent.
+
+  It is the nacos collision with the sign reversed: there a matching simple
+  name made a foreign annotation count, here a qualified name made Spring's
+  own annotation not count. An annotation's identity is now its simple name
+  however it is written, and microcks reports **80 endpoints** with 11 new
+  `mutating-endpoint-without-access-control` findings and no change to any
+  role or guard.
+
+  A dotted name must match a known package **in full** —
+  `@com.example.RestController` is not Spring's. A fully-qualified use of a
+  method-security annotation counts as its own binding, so Spring's
+  `@PreAuthorize` spelled out is a guard rather than an unrecognized
+  annotation, while nacos's `@Secured` spelled out still is not. See
+  [ADR 0025](docs/decisions/0025-qualified-annotation-names.md).
+
+- **A controller declared by a meta-annotation is now recognized.** Spring
+  treats an annotation that is itself annotated `@RestController` as
+  composing it; extraction required the literal annotation. `apache/shenyu`
+  declares `@RestApi` — `@RestController` + `@RequestMapping` with an
+  `@AliasFor`'d path — on 35 of shenyu-admin's 41 controller classes,
+  hiding **179 route declarations**. A run reported 192 endpoints, of which
+  155 were demo applications and **11 were the real admin API**, with
+  nothing in the output suggesting the rest existed.
+
+  shenyu now reports **371 endpoints, 190 of them from shenyu-admin**. No
+  other repository in the 20-project corpus changed, since none declares a
+  controller-composing meta-annotation — a census of all 115 project-declared
+  `@Target(TYPE)` annotations in the corpus found exactly one that composes
+  a controller, which is also why a name-based rule was rejected.
+
+  Resolution is **one level**, class-level, and reads only two things: that
+  the class is a controller, and its base path (from the declaration's own
+  `@RequestMapping`, or the use site via `@AliasFor`). A base path that
+  cannot be read is marked unresolved rather than treated as empty. Deeper
+  chains and method-level mapping meta-annotations are deliberately not
+  resolved: every one measured bottoms out at `@RequestMapping(method = …)`,
+  which is not read, so following them surfaces zero endpoints. See
+  [ADR 0024](docs/decisions/0024-controller-meta-annotations.md).
+
+  The 179 new routes brought **35** new `mutating-endpoint-without-access-control`
+  findings rather than ~101, because ADR 0023 recognized their 100 Shiro
+  annotations as soon as the endpoints existed. Those 35 are endpoints with
+  no *method-level* access control in a project whose Shiro URL layer is
+  unparsed — not endpoints established to be unguarded.
 
 ### Fixed
 
@@ -165,7 +259,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   across seven verbs it does not cover. See
   [ADR 0028](docs/decisions/0028-verbless-request-mapping.md).
 
-
 - **`@RequestMapping(method = RequestMethod.X)` now declares routes.**
   ADR 0011 cut this older form deliberately, on the grounds that no fixture
   used it. It was hiding **611 routes** across seven repositories —
@@ -189,89 +282,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A method-level `@RequestMapping` with **no** `method` attribute maps every
   verb in Spring; those 164 uses remain out of scope, recorded as a model
   question rather than decided in passing.
-
-### Security
-
-- **Two more URL-authorization layers are detected and announced.** A class
-  extending `WebSecurityConfigurerAdapter` (Spring Security's pre-5.7
-  configuration base class) and a `@Bean` returning Apache Shiro's
-  `ShiroFilterFactoryBean` were invisible: a project with one was reported
-  as though it had no URL layer at all. Seven corpus projects are affected
-  — nakadi, and JeecgBoot, shenyu, streampark, inlong, litemall and
-  metersphere.
-
-  Both now produce the state [ADR 0020](docs/decisions/0020-unanalyzable-is-unknown-not-absent.md)
-  §2 already defined for a present-but-unanalyzed layer: `sphinxor lint`
-  warns that the roles shown come from the method layer alone, and
-  `sphinxor export cerbos` omits every endpoint. Nothing is parsed —
-  recording that a layer exists is not interpreting it.
-
-  Detection matches a **declaration**, never a mention of the type name. A
-  project with more than one unreadable layer now names all of them in one
-  warning instead of one hiding the others.
-
-  Measured: rule counts are unchanged (all seven already exported zero,
-  having no Spring Security guard to export), but 1,655 endpoints across
-  six projects stop being reported as `no-guard` in the export report and
-  become `url-layer-unknown`, which is the accurate reason. See
-  [ADR 0027](docs/decisions/0027-unannounced-url-layers.md).
-
-### Added
-
-- **A Spring annotation written fully qualified is now recognized.**
-  `microcks/microcks` declares its own `io.github.microcks.web.RestController`,
-  so Spring's cannot be imported there; all 13 files in that package write
-  `@org.springframework.web.bind.annotation.RestController`. Extraction
-  matched the text as written, so none of those classes was a controller.
-  microcks reported **50 endpoints** while those files held **30 more** in a
-  shape already supported — roughly 40% of its API surface, and silent.
-
-  It is the nacos collision with the sign reversed: there a matching simple
-  name made a foreign annotation count, here a qualified name made Spring's
-  own annotation not count. An annotation's identity is now its simple name
-  however it is written, and microcks reports **80 endpoints** with 11 new
-  `mutating-endpoint-without-access-control` findings and no change to any
-  role or guard.
-
-  A dotted name must match a known package **in full** —
-  `@com.example.RestController` is not Spring's. A fully-qualified use of a
-  method-security annotation counts as its own binding, so Spring's
-  `@PreAuthorize` spelled out is a guard rather than an unrecognized
-  annotation, while nacos's `@Secured` spelled out still is not. See
-  [ADR 0025](docs/decisions/0025-qualified-annotation-names.md).
-
-
-- **A controller declared by a meta-annotation is now recognized.** Spring
-  treats an annotation that is itself annotated `@RestController` as
-  composing it; extraction required the literal annotation. `apache/shenyu`
-  declares `@RestApi` — `@RestController` + `@RequestMapping` with an
-  `@AliasFor`'d path — on 35 of shenyu-admin's 41 controller classes,
-  hiding **179 route declarations**. A run reported 192 endpoints, of which
-  155 were demo applications and **11 were the real admin API**, with
-  nothing in the output suggesting the rest existed.
-
-  shenyu now reports **371 endpoints, 190 of them from shenyu-admin**. No
-  other repository in the 20-project corpus changed, since none declares a
-  controller-composing meta-annotation — a census of all 115 project-declared
-  `@Target(TYPE)` annotations in the corpus found exactly one that composes
-  a controller, which is also why a name-based rule was rejected.
-
-  Resolution is **one level**, class-level, and reads only two things: that
-  the class is a controller, and its base path (from the declaration's own
-  `@RequestMapping`, or the use site via `@AliasFor`). A base path that
-  cannot be read is marked unresolved rather than treated as empty. Deeper
-  chains and method-level mapping meta-annotations are deliberately not
-  resolved: every one measured bottoms out at `@RequestMapping(method = …)`,
-  which is not read, so following them surfaces zero endpoints. See
-  [ADR 0024](docs/decisions/0024-controller-meta-annotations.md).
-
-  The 179 new routes brought **35** new `mutating-endpoint-without-access-control`
-  findings rather than ~101, because ADR 0023 recognized their 100 Shiro
-  annotations as soon as the endpoints existed. Those 35 are endpoints with
-  no *method-level* access control in a project whose Shiro URL layer is
-  unparsed — not endpoints established to be unguarded.
-
-### Fixed
 
 - **An Apache Shiro authorization annotation is no longer reported as no
   access control.** `@RequiresPermissions` shares no name with anything
@@ -354,7 +364,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [ADR 0020](docs/decisions/0020-unanalyzable-is-unknown-not-absent.md)
   Amendment 3.
 
-### Security
 
 Six blind spots, found by an audit of Spring and NestJS extraction against
 real projects and by the NestJS hunt that followed it across six more
@@ -363,6 +372,50 @@ construct Sphinxor could not analyze was recorded as *absent* rather than
 *unknown*, and the report presented the result with confidence it hadn't
 earned. See [ADR 0020](docs/decisions/0020-unanalyzable-is-unknown-not-absent.md)
 and its Amendment 1.
+
+- `sphinxor version` no longer reports `dev` for a binary installed with
+  `go install <pkg>@<version>`. `go install` doesn't apply the release
+  workflow's `-ldflags`, so a freshly installed tagged release misreported
+  itself on the user's first command. The version now falls back to the module
+  version Go records in the build info when no `-ldflags` stamp is present —
+  release binaries are unaffected, since the stamp still takes precedence. A
+  local `go build` inside the repo now reports the VCS pseudo-version (with
+  `+dirty` on an uncommitted tree) instead of `dev`, identifying the exact
+  commit; `dev` remains for builds with no VCS information at all.
+
+- **A composite decorator taking a rest parameter now resolves.** NestJS
+  decorators built with `applyDecorators()` that collect their arguments with a
+  rest parameter — `(...roles: string[])` — were rejected outright, so every
+  endpoint behind one was reported as unguarded. They are now recognized, per
+  [ADR 0006](docs/decisions/0006-composite-decorator-resolution.md)'s amended
+  scope, and the roles they declare reach the matrix. Modelled on a real
+  `@RequiresScope(...)` shape from `ghostfolio`.
+
+### Security
+
+- **Two more URL-authorization layers are detected and announced.** A class
+  extending `WebSecurityConfigurerAdapter` (Spring Security's pre-5.7
+  configuration base class) and a `@Bean` returning Apache Shiro's
+  `ShiroFilterFactoryBean` were invisible: a project with one was reported
+  as though it had no URL layer at all. Seven corpus projects are affected
+  — nakadi, and JeecgBoot, shenyu, streampark, inlong, litemall and
+  metersphere.
+
+  Both now produce the state [ADR 0020](docs/decisions/0020-unanalyzable-is-unknown-not-absent.md)
+  §2 already defined for a present-but-unanalyzed layer: `sphinxor lint`
+  warns that the roles shown come from the method layer alone, and
+  `sphinxor export cerbos` omits every endpoint. Nothing is parsed —
+  recording that a layer exists is not interpreting it.
+
+  Detection matches a **declaration**, never a mention of the type name. A
+  project with more than one unreadable layer now names all of them in one
+  warning instead of one hiding the others.
+
+  Measured: rule counts are unchanged (all seven already exported zero,
+  having no Spring Security guard to export), but 1,655 endpoints across
+  six projects stop being reported as `no-guard` in the export report and
+  become `url-layer-unknown`, which is the accurate reason. See
+  [ADR 0027](docs/decisions/0027-unannounced-url-layers.md).
 
 - **A route's declared API version is now part of its identity.** NestJS's
   `@Controller({ path, version })` and `@Version()`, and Spring's `version`
@@ -411,6 +464,7 @@ and its Amendment 1.
   §2's "recognized no endpoints" notice keys on zero endpoints and two is not
   zero. Resolvers are now detected and the run warns, naming how many
   operations it did not analyze. No resolver is parsed and no finding changes.
+
 - **A comment between a decorator and what it decorates no longer deletes
   endpoints.** In tree-sitter-typescript a comment is a named sibling, so for
   shapes as ordinary as `@Post('x') // note` the decorators were attached to
@@ -424,6 +478,7 @@ and its Amendment 1.
   difference between a false "all clear" and three real findings on a fully
   unguarded controller, out of a two-line defect — the clearest example in
   this project so far that the dangerous bugs are not the complicated ones.
+
 - **An endpoint whose route path cannot be read no longer collides with
   another endpoint's identity.** Endpoint identity is derived from
   `(method, path)`, and extraction reads only string literals — so
@@ -453,6 +508,7 @@ and its Amendment 1.
   it grants its roles to no endpoint and stops evaluation for the ones it might
   cover. `antMatcher(...)` wrappers carrying a readable pattern are now read
   properly rather than being lost this way.
+
 - **A URL layer that exists but couldn't be analyzed is no longer treated as
   no URL layer.** A project with more than one `SecurityFilterChain` bean had
   the layer silently skipped, leaving the method layer to stand as the complete
@@ -462,11 +518,13 @@ and its Amendment 1.
   `lint` warns that its roles may be broader than reality, and `export` omits
   every endpoint and says why rather than exporting a grant the application
   denies.
+
 - **Reactive Spring Security (`SecurityWebFilterChain` / WebFlux) is now
   detected.** Its rules are still not parsed — that remains out of scope — but
   a reactive project no longer looks like one with no URL-layer authorization
   at all. It gets the same warning and the same export omission as the
   multi-chain case.
+
 - **Two systematic distortions are now stated instead of implied.** A Spring
   project whose method-security annotations were found with no
   `@EnableMethodSecurity` anywhere in the analyzed source now warns that those
@@ -475,18 +533,6 @@ and its Amendment 1.
   provider or `app.useGlobalGuards()`) now warns that endpoint-level results
   understate protection, since every route is protected by default. Neither
   changes a finding; both change what the output means.
-
-### Fixed
-
-- `sphinxor version` no longer reports `dev` for a binary installed with
-  `go install <pkg>@<version>`. `go install` doesn't apply the release
-  workflow's `-ldflags`, so a freshly installed tagged release misreported
-  itself on the user's first command. The version now falls back to the module
-  version Go records in the build info when no `-ldflags` stamp is present —
-  release binaries are unaffected, since the stamp still takes precedence. A
-  local `go build` inside the repo now reports the VCS pseudo-version (with
-  `+dirty` on an uncommitted tree) instead of `dev`, identifying the exact
-  commit; `dev` remains for builds with no VCS information at all.
 
 ## [0.6.0] - 2026-09-18
 
