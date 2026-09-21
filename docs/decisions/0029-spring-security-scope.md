@@ -124,7 +124,7 @@ made.
 
 By that definition, **the list is empty.**
 
-### §3.1 Done, as of 2026-09-21
+### §3.1 Done, as of 2026-09-21 (commit `8afa4a1`)
 
 **No mechanism in §2 has status `silent`.** Every Spring Security mechanism
 enumerated here is now either *read* or *detected and announced*, and the two
@@ -158,7 +158,10 @@ Three things remain open and are **not** on this list, by construction:
   checklist — it changes *what is scanned*, not *what is understood* — and is
   recorded as an open question in `docs/limitations.md`.
 
-This status holds for the enumeration in §2 at the date above. A mechanism this
+This status holds for the enumeration in §2 at the date and commit above —
+`8afa4a1`, "Announce functional routing, resolve nested controllers (ADR 0033,
+0034)" (#40), which closed the last two entries. A later commit can reopen the
+question by adding a mechanism, which is the point of §2 being a list. A mechanism this
 ADR does not list cannot be `silent` under it, which is why §2 is a list someone
 can add a line to rather than a completeness proof.
 
