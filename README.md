@@ -127,10 +127,10 @@ Or download a prebuilt binary:
 
 ```sh
 # macOS (Apple Silicon)
-curl -sSL https://github.com/chebilax/sphinxor/releases/download/v0.7.0/sphinxor_v0.7.0_darwin_arm64.tar.gz | tar -xz sphinxor
+curl -fsSL https://github.com/chebilax/sphinxor/releases/download/v0.7.0/sphinxor_v0.7.0_darwin_arm64.tar.gz | tar -xz sphinxor
 
 # Linux (x86-64)
-curl -sSL https://github.com/chebilax/sphinxor/releases/download/v0.7.0/sphinxor_v0.7.0_linux_amd64.tar.gz | tar -xz sphinxor
+curl -fsSL https://github.com/chebilax/sphinxor/releases/download/v0.7.0/sphinxor_v0.7.0_linux_amd64.tar.gz | tar -xz sphinxor
 ```
 
 Windows builds are on the [releases page](https://github.com/chebilax/sphinxor/releases).
