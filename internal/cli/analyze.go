@@ -213,6 +213,31 @@ func projectWarnings(m *model.Model) []string {
 			"         missing from this report along with the routes.")
 	}
 
+	// ADR 0033 §1/§2: WebFlux functional routing. The count is METHODS,
+	// worded as indicative rather than exact — a method returning a
+	// RouterFunction may be a fragment composed into a chain elsewhere
+	// rather than an independent declaration, so it can overstate the
+	// number of route sources just as the absence of a route count
+	// understates the routes.
+	if fr := m.FunctionalRouting; fr.Builders > 0 {
+		msg := strconv.Itoa(fr.Builders) + " method(s) building functional routes (WebFlux RouterFunction)"
+		if len(fr.Classes) > 0 {
+			shown := fr.Classes
+			if len(shown) > 6 {
+				shown = shown[:6]
+			}
+			msg += " in: " + strings.Join(shown, ", ")
+			if len(fr.Classes) > len(shown) {
+				msg += ", …"
+			}
+		}
+		out = append(out, msg+".\n"+
+			"         Routes declared this way are built in code rather than by annotation, and are\n"+
+			"         not read at all — they do not appear in the matrix and neither does any\n"+
+			"         authorization on them. The count is of methods, not routes: one builder can\n"+
+			"         declare many routes, and several can compose into one.")
+	}
+
 	// ADR 0031 §2: a role hierarchy makes every role shown narrower than
 	// what the application grants. The DIRECTION is the substance of the
 	// message — a bare "this project has a role hierarchy" leaves the
