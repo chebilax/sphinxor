@@ -112,7 +112,11 @@ func isConfirmedInert(g model.GuardApplication, status model.MethodSecurityStatu
 
 func isMutating(m model.HTTPMethod) bool {
 	switch m {
-	case model.MethodPost, model.MethodPut, model.MethodPatch, model.MethodDelete:
+	case model.MethodPost, model.MethodPut, model.MethodPatch, model.MethodDelete,
+		// A handler mapping every verb accepts POST, PUT, PATCH and
+		// DELETE, so a rule about state change must say so
+		// (docs/decisions/0028-verbless-request-mapping.md §2).
+		model.MethodAny:
 		return true
 	default:
 		return false
