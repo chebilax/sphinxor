@@ -179,6 +179,40 @@ func projectWarnings(m *model.Model) []string {
 			"         NOT access control and no endpoint's protection changes because of them.")
 	}
 
+	// ADR 0032 §2/§4: controllers whose routes were not all recovered.
+	// The counts lead, because the number is what tells a reader the
+	// matrix is incomplete and how incomplete; names follow so they can
+	// go and look. It says routes were NOT RECOVERED, never that routes
+	// exist — a controller whose methods are all @ExceptionHandlers is a
+	// correct zero, and the wording must not make it an alarm.
+	if u := m.UnrecoveredRoutes; len(u) > 0 {
+		var none, partial int
+		var names []string
+		for _, c := range u {
+			if c.NoRoutesAtAll {
+				none++
+			} else {
+				partial++
+			}
+			if len(names) < 8 {
+				names = append(names, c.Name)
+			}
+		}
+		msg := strconv.Itoa(none) + " recognized controller(s) produced no routes"
+		if partial > 0 {
+			msg += ", and " + strconv.Itoa(partial) + " produced fewer than they declare"
+		}
+		msg += ": " + strings.Join(names, ", ")
+		if len(u) > len(names) {
+			msg += ", …"
+		}
+		out = append(out, msg+".\n"+
+			"         Their handlers' mappings were not recognized — declared on an inherited\n"+
+			"         interface, behind a method-level meta-annotation, or in a shape\n"+
+			"         docs/limitations.md does not yet list. Any authorization on those handlers is\n"+
+			"         missing from this report along with the routes.")
+	}
+
 	// ADR 0031 §2: a role hierarchy makes every role shown narrower than
 	// what the application grants. The DIRECTION is the substance of the
 	// message — a bare "this project has a role hierarchy" leaves the

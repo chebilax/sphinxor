@@ -92,8 +92,8 @@ Every Spring Security mechanism, with exactly one status:
 | A verb-less method-level `@RequestMapping` | read (as `ANY`) | [0028](0028-verbless-request-mapping.md) §1 |
 | A route path or version that cannot be read | detected and announced | [0020](0020-unanalyzable-is-unknown-not-absent.md) Am1 §5, Am2 §7 |
 | One route declared by two controllers | detected and announced | [0020](0020-unanalyzable-is-unknown-not-absent.md) Am2 §8 |
-| A **method-level** mapping meta-annotation (`@AnonymousGetMapping`) | **silent** | [0024](0024-controller-meta-annotations.md) §1 excludes it |
-| Routes declared on an **inherited interface** | **silent** | recorded in `docs/limitations.md`, no decision |
+| A **method-level** mapping meta-annotation (`@AnonymousGetMapping`) | detected and announced (not resolved) | [0032](0032-controllers-that-yield-no-routes.md) §1 |
+| Routes declared on an **inherited interface** | detected and announced (not resolved) | [0032](0032-controllers-that-yield-no-routes.md) §1 |
 | A **nested** `@RestController` | **silent** | recorded in `docs/limitations.md`, no decision |
 | Functional routing (`RouterFunction`) | **silent** | recorded in `docs/limitations.md`, no decision |
 
@@ -122,11 +122,12 @@ ADR 0002 model question recorded in `docs/limitations.md`, and it is deliberatel
 part of this definition — otherwise "done" would depend on a decision nobody has
 made.
 
-By that definition, **three** items remain, and all three are endpoint discovery:
+By that definition, **two** items remain, both endpoint discovery:
 
-1. A method-level mapping meta-annotation.
-2. Routes on an inherited interface, and a nested `@RestController`.
-3. Functional routing — `RouterFunction`, the reactive counterpart of an annotated
+1. A nested `@RestController`. It yields no *controller*, so ADR 0032's detection
+   does not reach it; the corpus holds 33, all in test sources and none in
+   production code.
+2. Functional routing — `RouterFunction`, the reactive counterpart of an annotated
    controller. It is Spring's own routing, not another system, so §1 does not put
    it out of scope the way it does JAX-RS.
 
@@ -183,7 +184,7 @@ As accepted, it claimed all of these "measure zero occurrences across the
 20-repository corpus", and offered that as the reason the urgency is low. Working
 the reactive enabler falsified it. **halo** carries `@EnableReactiveMethodSecurity` in
 `WebServerSecurityConfig`, and its only four `@RestController`s are nested classes,
-which is item 2 above. The zero was a count of the *defect* — a project that both
+which is the nested-controller item above. The zero was a count of the *defect* — a project that both
 enables method security reactively and annotates handlers — not a count of the
 *mechanism*, and the paragraph read it as the second. The corpus figures per item
 are now recorded by the amendment that measures them

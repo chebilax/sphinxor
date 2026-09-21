@@ -105,12 +105,26 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	// different files — shenyu declares @RestApi once and applies it 35
 	// files away (ADR 0024 §1).
 	controllerMetas := make(map[string]controllerMeta)
+	ifaces := newInterfaceIndex()
 	for _, f := range files {
 		scanControllerMetaAnnotations(f.tree.RootNode(), f.src, controllerMetas)
+		// ADR 0032 §1 condition B needs to know whether an implemented
+		// interface bears routes, and dataease declares its interfaces in
+		// a different module from the controllers implementing them.
+		ifaces.scan(f.tree.RootNode(), f.src)
 	}
 
 	for _, f := range files {
 		extractControllers(f.tree.RootNode(), f.src, f.relPath, b, roleByName, controllerMetas)
+	}
+
+	// ADR 0032 condition B: count each controller's public @Override
+	// methods that carry no mapping, where the interface they come from
+	// could bear routes. Gathered per file here; applied below, once
+	// every endpoint is known.
+	partialOverrides := map[model.ID]bool{}
+	for _, f := range files {
+		scanPartialInherited(f.tree.RootNode(), f.src, f.relPath, b, ifaces, partialOverrides)
 	}
 
 	// Pass 2b: ADR 0023 §3. For each third-party authorization framework
@@ -176,6 +190,11 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	// once every guard contributing to that same layer is known), same
 	// ordering reason as internal/extract/nestjs's own final pass.
 	b.model.AuthenticationRequirements = computeAuthenticationRequirements(&b.model, b.authCandidates, b.nextID("authreq"))
+
+	// Pass 5: ADR 0032. Which recognized controllers did not yield every
+	// route they declare. Last, because condition A is defined against
+	// the finished endpoint list.
+	recordUnrecoveredRoutes(&b.model, partialOverrides)
 
 	return &b.model, outcome, nil
 }
