@@ -51,7 +51,7 @@ var httpMappingAnnotations = map[string]model.HTTPMethod{
 // a single Endpoint under ADR 0014 (same method+path, differing only in
 // `produces`) are two real places in the source a developer could put a
 // marker above, and either should exempt the endpoint they share.
-func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID) {
+func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID, controllerMetas map[string]controllerMeta) {
 	// ADR 0022 §1: annotation identity is a per-file question, answered
 	// from this file's own imports. Parsed once per file rather than per
 	// annotation.
@@ -63,7 +63,13 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 		}
 
 		classAnns := annotationsOf(decl, src)
-		if !hasAny(classAnns, controllerAnnotations) {
+
+		// A class is a controller when it carries @RestController /
+		// @Controller literally, or a project-declared annotation that
+		// composes one (ADR 0024 §1). Spring treats the two the same;
+		// before this, 35 of shenyu-admin's 41 controllers were invisible.
+		metaUse, meta, viaMeta := findControllerMeta(classAnns, controllerMetas)
+		if !hasAny(classAnns, controllerAnnotations) && !viaMeta {
 			continue
 		}
 
@@ -89,6 +95,13 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			// A class-level version applies to every handler that does not
 			// declare its own (ADR 0020 Amendment 2 §7).
 			classVersion = versionAttributeValue(reqMapping.Args, src)
+		} else if viaMeta {
+			// The base path comes from the meta-annotation: either a
+			// literal on its declaration, or the use site's argument
+			// routed through @AliasFor (ADR 0024 §2/§3). An argument that
+			// exists and cannot be read leaves the path unresolved, which
+			// ADR 0020 Amendment 1 §5 already handles (§4).
+			basePath, basePathResolved = metaBasePath(meta, metaUse, src)
 		}
 
 		controllerID := b.nextIDFor("controller")
@@ -236,4 +249,17 @@ func findHTTPMapping(anns []annotationCall) (annotationCall, model.HTTPMethod, b
 		}
 	}
 	return annotationCall{}, "", false
+}
+
+// findControllerMeta reports whether any of a class's annotations is a
+// project-declared annotation composing @RestController/@Controller, and
+// returns the use site so its arguments can supply the base path
+// (docs/decisions/0024-controller-meta-annotations.md §1).
+func findControllerMeta(anns []annotationCall, metas map[string]controllerMeta) (annotationCall, controllerMeta, bool) {
+	for _, a := range anns {
+		if m, ok := metas[a.Name]; ok {
+			return a, m, true
+		}
+	}
+	return annotationCall{}, controllerMeta{}, false
 }

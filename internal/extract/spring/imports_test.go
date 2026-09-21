@@ -13,7 +13,7 @@ func extractOne(t *testing.T, src string) (*model.Model, map[model.ID]string) {
 	t.Helper()
 	root, source := parseJava(t, src)
 	b := newBuilder()
-	extractControllers(root, source, "Thing.java", b, nil)
+	extractControllers(root, source, "Thing.java", b, nil, nil)
 	handler := make(map[model.ID]string, len(b.model.Endpoints))
 	for _, e := range b.model.Endpoints {
 		handler[e.ID] = e.HandlerName

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Accepted.
 
 ## Context
 
@@ -211,19 +211,39 @@ argument cannot be read.
   JAX-RS, method-level mapping meta-annotations) are unchanged.
 - One new resolution step in controller extraction, reading annotation declarations
   that are already parsed. No model change, no new entity, no new output shape.
-- **Validation before this is Accepted**, against the real corpus per `docs/testing.md`:
-  - shenyu: 192 → ~371 endpoints, the 35 `@RestApi` controllers' routes present with
-    their real paths, their 100 Shiro annotations recorded as unrecognized
-    authorization annotations (ADR 0023) rather than as nothing, and exactly 35 new
-    mutating findings.
-  - **No other repository in the 20-project corpus changes in any respect**, since
-    none declares a controller-composing meta-annotation.
-  - All four vendored fixtures byte-identical.
-  - A test that a one-level controller meta-annotation resolves, including its
-    `@AliasFor`-routed base path, and that a **two-level** one does not — the depth
-    bound pinned, since the corpus cannot exercise it on a recognized mapping.
-  - A test that an unreadable use-site path takes §4's unresolved treatment, since
-    no corpus project exercises that branch either.
-  - A test that an ordinary `@Target(TYPE)` project annotation composing no
-    controller — `@ConditionalOnProperty`-style — does not make its class a
-    controller.
+### Validation — measured after implementation
+
+The prediction above was **192 → ~371 endpoints and exactly 35 new findings**. Both
+landed exactly, which is worth recording because the two preceding decisions in this
+sequence did not: ADR 0023 predicted 907 suppressions and measured 845, and its
+per-repo estimate for JeecgBoot was 80 against an actual 81. Where those predictions
+came from source-level scans that could not know what extraction would do with each
+site, this one came from counting route declarations inside a set of files that
+either are or are not recognized — a quantity the scan and the extractor compute the
+same way.
+
+| | before | after |
+|---|---:|---:|
+| shenyu endpoints | 192 | **371** |
+| …from `shenyu-admin` | 11 | **190** |
+| shenyu `mutating-endpoint-without-access-control` | 87 | **122** (+35) |
+| shenyu endpoints carrying a Shiro annotation | 0 | **100** |
+
+- **The admin API stops being invisible**, which is the substantive result: 11 of
+  roughly 190 endpoints were reaching the report before.
+- **ADR 0023 absorbed the 100 Shiro annotations with no further work.** They were
+  never reachable before — the controllers carrying them did not exist as far as
+  extraction was concerned — and the moment the endpoints appeared, the Shiro rule
+  recorded them as unrecognized authorization annotations and suppressed their
+  findings. The 101-versus-35 split is that layering, visible in one run.
+- **No other repository in the 20-project corpus changed in any respect**, and all
+  four vendored fixtures are byte-identical.
+
+Tests, in `internal/extract/spring/metaannotations_test.go`, all exercising the real
+cross-file `Extract` because the declaration and its uses live in different files:
+a one-level meta-annotation resolving with its `@AliasFor`-routed base path; a
+**two-level** one not resolving; a declaration-site `@RequestMapping` path applying
+to every use; an unreadable use-site path taking §4's unresolved treatment; a
+within-annotation `@AliasFor` establishing no base path; and an ordinary
+`@Target(TYPE)` annotation composing no controller not making its class one. The
+last four cover branches the corpus cannot reach.

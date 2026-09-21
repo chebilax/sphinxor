@@ -35,7 +35,7 @@ public class ThingController {
 `
 	root, source := parseJava(t, src)
 	b := newBuilder()
-	extractControllers(root, source, "ThingController.java", b, nil)
+	extractControllers(root, source, "ThingController.java", b, nil, nil)
 
 	cases := []struct {
 		path      string
@@ -97,7 +97,7 @@ public class ThingController {
 `
 	root, source := parseJava(t, src)
 	b := newBuilder()
-	extractControllers(root, source, "ThingController.java", b, nil)
+	extractControllers(root, source, "ThingController.java", b, nil, nil)
 
 	if len(b.model.GuardApplications) != 1 {
 		t.Fatalf("got %d GuardApplications, want 1: %+v", len(b.model.GuardApplications), b.model.GuardApplications)
@@ -139,7 +139,7 @@ public class ThingController {
 `
 	root, source := parseJava(t, src)
 	b := newBuilder()
-	extractControllers(root, source, "ThingController.java", b, nil)
+	extractControllers(root, source, "ThingController.java", b, nil, nil)
 
 	if len(b.model.GuardApplications) != 1 {
 		t.Fatalf("got %d GuardApplications, want 1", len(b.model.GuardApplications))
@@ -213,7 +213,7 @@ public class ThingController {
 `
 	root, source := parseJava(t, src)
 	b := newBuilder()
-	extractControllers(root, source, "ThingController.java", b, nil)
+	extractControllers(root, source, "ThingController.java", b, nil, nil)
 
 	if len(b.model.Endpoints) != 1 {
 		t.Fatalf("got %d endpoints, want 1 (merged per ADR 0014): %+v", len(b.model.Endpoints), b.model.Endpoints)

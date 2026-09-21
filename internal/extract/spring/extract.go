@@ -94,8 +94,17 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	// reimplementing it: the marker grammar is a `//` line comment in both
 	// languages, and matching operates on line positions and anchors, not
 	// on either language's syntax tree.
+	// Controller-composing meta-annotations must be known before any
+	// controller is walked, because the declaration and its uses live in
+	// different files — shenyu declares @RestApi once and applies it 35
+	// files away (ADR 0024 §1).
+	controllerMetas := make(map[string]controllerMeta)
 	for _, f := range files {
-		extractControllers(f.tree.RootNode(), f.src, f.relPath, b, roleByName)
+		scanControllerMetaAnnotations(f.tree.RootNode(), f.src, controllerMetas)
+	}
+
+	for _, f := range files {
+		extractControllers(f.tree.RootNode(), f.src, f.relPath, b, roleByName, controllerMetas)
 	}
 
 	// Pass 2b: ADR 0023 §3. For each third-party authorization framework
