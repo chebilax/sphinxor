@@ -264,6 +264,18 @@ func TestProjectWarnings(t *testing.T) {
 			want: "are NOT protected",
 		},
 		{
+			// ADR 0015 Amendment 1. The caveat must name every enabler
+			// the scan actually looks for, or a reactive project reads it
+			// as "we checked for the servlet annotation only" — which was
+			// true before the amendment and is not now.
+			name: "the caveat names the reactive enabler too",
+			build: func(m *model.Model) {
+				guardedEndpoint(m)
+				m.MethodSecurity = model.MethodSecurityStatus{Found: false}
+			},
+			want: "@EnableReactiveMethodSecurity",
+		},
+		{
 			// The same caveat must not fire on NestJS, where
 			// MethodSecurity.Found is false only because the concept does
 			// not exist. Before this case it did, on every project using
