@@ -28,6 +28,24 @@ const (
 	MethodPut    HTTPMethod = "PUT"
 	MethodPatch  HTTPMethod = "PATCH"
 	MethodDelete HTTPMethod = "DELETE"
+	// HEAD, OPTIONS and TRACE are declarable by Spring's
+	// @RequestMapping(method = …) and appear in the surveyed corpus —
+	// docs/decisions/0026-requestmapping-method-attribute.md §2. A
+	// declared endpoint is a fact, and dropping these would make the
+	// matrix silently incomplete for a project that uses them.
+	//
+	// Nothing downstream needed teaching: ADR 0009's Cerbos action is the
+	// lowercased method, so "head"/"options"/"trace" are valid actions
+	// the moment these exist, and endpoint identity is (method, path).
+	//
+	// None of the three is in internal/lint/mutating_endpoint.go's
+	// mutating set, deliberately. HEAD and OPTIONS are safe by
+	// specification, and TRACE — whatever its own history as a
+	// cross-site-tracing vector — does not change state, which is what
+	// that rule is about.
+	MethodHead    HTTPMethod = "HEAD"
+	MethodOptions HTTPMethod = "OPTIONS"
+	MethodTrace   HTTPMethod = "TRACE"
 )
 
 // Model is the full result of analyzing one project at one point in time:

@@ -216,27 +216,53 @@ verdict.
   but not sufficient** for them: zero handlers carrying an eladmin
   `@Anonymous*Mapping` also carry a literal `@RequestMapping`, so each still needs
   method-level meta-annotation resolution, and shenyu's additionally needs depth 2.
-- **Validation before this is Accepted**, against the real corpus per `docs/testing.md`.
-  The per-repository prediction, to be checked and any gap explained rather than
-  absorbed:
+### Validation — measured after implementation
 
-  | Repository | endpoints | mutating findings |
-  |---|---|---|
-  | JeecgBoot | 587 → ~855 | 170 → ~213 |
-  | inlong | 159 → ~315 | 74 → ~184 |
-  | thingsboard | 454 → ~547 | 4 → ~10 |
-  | nakadi | 1 → ~46 | 1 → ~23 |
-  | microcks | 80 → ~97 | 31 → ~34 |
-  | nacos | 422 → ~428 | 3 → ~6 |
-  | metersphere | 1050 → ~1053 | 84 → 84 |
+| Repository | endpoints | predicted | mutating findings | predicted |
+|---|---|---|---|---|
+| JeecgBoot | 587 → **855** | ~855 ✓ | 170 → **227** | ~213 |
+| inlong | 159 → **334** | ~315 | 74 → **184** | ~184 ✓ |
+| thingsboard | 454 → **547** | ~547 ✓ | 4 → **10** | ~10 ✓ |
+| nakadi | 1 → **50** | ~46 | 1 → **25** | ~23 |
+| microcks | 80 → **97** | ~97 ✓ | 31 → **40** | ~34 |
+| nacos | 422 → **428** | ~428 ✓ | 3 → **6** | ~6 ✓ |
+| metersphere | 1050 → **1053** | ~1053 ✓ | 84 → **84** | 84 ✓ |
 
-  - **No other repository changes in any respect**, and all four vendored fixtures
-    stay byte-identical — none uses the `method =` form.
-  - thingsboard's `POST /api/customer` appears, carrying `TENANT_ADMIN` from its
-    existing `@PreAuthorize`: the single clearest check that a recovered route keeps
-    its authorization.
-  - A test that `method = {GET, POST}` yields two endpoints sharing one handler.
-  - A test that `HEAD`, `OPTIONS` and `TRACE` are extracted and that **none** of them
-    produces a `mutating-endpoint-without-access-control` finding (§2.3).
-  - A test that a verb-less method-level `@RequestMapping` still yields no endpoint
-    (§4), so the exclusion is pinned rather than incidental.
+**The sharpest check passes.** thingsboard's `POST /api/customer` now appears with
+`roles: [TENANT_ADMIN]` and no finding — a route recovered by this decision keeping
+the authorization it always declared.
+
+No other repository in the 20-project corpus changed, and all four vendored fixtures
+are byte-identical: none uses the `method =` form.
+
+### Where the prediction missed, and why
+
+**611 routes were recovered, against 588 predicted.** Endpoint counts were exact on
+five of seven repositories; inlong came in 19 high and nakadi 4 high. New findings
+totalled **209** against 184 predicted.
+
+The cause is the one the Context named in advance rather than a surprise: the figure
+came from **a regex scan with a fixed lookahead window**, which decided an annotation
+was method-level by looking a few lines ahead for a `public`/`protected` signature.
+Re-running that scan on nakadi with a slightly wider window finds 49 where the
+earlier one found 45 — the extractor's tree-sitter parse, which knows what a
+`method_declaration` is, finds 49 too. The scan approximated; the parse is the
+authority, and the same windowing propagated into the absorption classification,
+which is why the finding total moved further than the route total.
+
+This is exactly the distinction ADR 0024 recorded and this ADR's Context restated:
+**a prediction is exact when the scan and the extractor answer the same question, and
+approximate when the scan has to guess what extraction will do.** ADR 0024's and ADR
+0025's predictions were exact because they counted declarations in files that either
+are or are not recognized. This one had to guess what counts as a method-level
+annotation, and missed by 4%.
+
+`docs/limitations.md` records **611** — what the tool actually recovers — rather than
+any of the three scan estimates that preceded it.
+
+Tests, in `internal/extract/spring/requestmapping_method_test.go`: single- and
+multi-verb declarations, with both expanded rows sharing one handler; a recovered
+route keeping its `@PreAuthorize` role and producing no finding; `HEAD`, `OPTIONS`
+and `TRACE` extracted and none of them mutating; a verb-less `@RequestMapping`
+yielding no endpoint (§4); and an unrecognized `RequestMethod` constant yielding
+none rather than a guess.

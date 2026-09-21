@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`@RequestMapping(method = RequestMethod.X)` now declares routes.**
+  ADR 0011 cut this older form deliberately, on the grounds that no fixture
+  used it. It was hiding **611 routes** across seven repositories —
+  JeecgBoot 268, inlong 175, thingsboard 93, nakadi 49, microcks 17,
+  nacos 6, metersphere 3 — including thingsboard's `POST /api/customer`,
+  which carries a plainly readable `@PreAuthorize("hasAuthority('TENANT_ADMIN')")`
+  and now appears with that role.
+
+  `method = {GET, POST}` expands into one endpoint per verb; 40 annotations
+  in the corpus declare more than one. **`HEAD`, `OPTIONS` and `TRACE` are
+  added to the model**, since the corpus declares them and a declared
+  endpoint is a fact; none of the three is treated as mutating, because
+  that rule is about state change.
+
+  Well over half the recovered routes needed no finding — they carry a
+  Spring Security guard or a Shiro annotation already recognized. The 209
+  that do arrive in projects whose URL layer this tool cannot read, and
+  since ADR 0027 every one of those projects says so. See
+  [ADR 0026](docs/decisions/0026-requestmapping-method-attribute.md).
+
+  A method-level `@RequestMapping` with **no** `method` attribute maps every
+  verb in Spring; those 164 uses remain out of scope, recorded as a model
+  question rather than decided in passing.
+
 ### Security
 
 - **Two more URL-authorization layers are detected and announced.** A class

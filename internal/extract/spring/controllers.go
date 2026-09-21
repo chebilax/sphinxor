@@ -122,7 +122,7 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			}
 
 			methodAnns := annotationsOf(member, src)
-			mapping, httpMethod, ok := findHTTPMapping(methodAnns)
+			mapping, httpMethods, ok := findHTTPMapping(methodAnns, src)
 			if !ok {
 				continue
 			}
@@ -143,92 +143,100 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 				version = v
 			}
 
-			// Identity, in order of what is least knowable — the same
-			// ordering and the same reasoning as the NestJS extractor's
-			// (ADR 0020 Amendment 1 §5, Amendment 2 §7). Java's failure
-			// mode differs — a colliding endpoint is dropped below rather
-			// than merged — but the cause and the fix are identical.
-			endpointID := model.NewEndpointID(httpMethod, path)
-			switch {
-			case pathUnresolved:
-				endpointID = model.NewUnresolvedPathEndpointID(httpMethod, nameNode.Content(src), handlerName)
-			case version.unknownVersion():
-				endpointID = model.NewUnresolvedVersionEndpointID(httpMethod, nameNode.Content(src), handlerName)
-			case version.declared:
-				endpointID = model.NewVersionedEndpointID(httpMethod, path, version.value)
-			}
+			// One handler can declare several verbs:
+			// @RequestMapping(method = {GET, POST}) is two routes, and
+			// ADR 0011 §1 specified expanding it into one Endpoint per
+			// verb. Everything above is shared by all of them — the path,
+			// the version, the annotations — and everything from here
+			// down is per-route (ADR 0026 §1).
+			for _, httpMethod := range httpMethods {
+				// Identity, in order of what is least knowable — the same
+				// ordering and the same reasoning as the NestJS extractor's
+				// (ADR 0020 Amendment 1 §5, Amendment 2 §7). Java's failure
+				// mode differs — a colliding endpoint is dropped below rather
+				// than merged — but the cause and the fix are identical.
+				endpointID := model.NewEndpointID(httpMethod, path)
+				switch {
+				case pathUnresolved:
+					endpointID = model.NewUnresolvedPathEndpointID(httpMethod, nameNode.Content(src), handlerName)
+				case version.unknownVersion():
+					endpointID = model.NewUnresolvedVersionEndpointID(httpMethod, nameNode.Content(src), handlerName)
+				case version.declared:
+					endpointID = model.NewVersionedEndpointID(httpMethod, path, version.value)
+				}
 
-			// The handler's own starting line. In Java, annotations are
-			// part of method_declaration's modifiers, so the node already
-			// starts at the first annotation (@PostMapping, not the
-			// signature) — verified against real Pharmacy source rather
-			// than assumed from the grammar, and the same line the
-			// Endpoint row records below.
-			b.anchors = append(b.anchors, allowlist.Anchor{
-				EndpointID: endpointID,
-				File:       file,
-				Line:       int(member.StartPoint().Row) + 1,
-			})
-
-			// Two real handlers sharing HTTPMethod+Path (differing only in
-			// `produces`) merge into one Endpoint —
-			// docs/decisions/0014-endpoint-identity-and-content-negotiation.md.
-			// The first encountered wins the Endpoint row itself
-			// (HandlerName/File/Line), but every merged handler's own
-			// guards still get attached below — ADR 0014's Consequences
-			// says so explicitly: "it attaches whatever guards each real
-			// handler carries to the shared Endpoint.ID exactly as
-			// extracted." Skipping guard extraction for a merged-away
-			// handler would silently discard a real annotation.
-			// Two real handlers sharing HTTPMethod+Path (differing only in
-			// `produces`) merge into one Endpoint —
-			// docs/decisions/0014-endpoint-identity-and-content-negotiation.md.
-			// The first encountered wins the Endpoint row itself
-			// (HandlerName/File/Line), but every merged handler's own
-			// guards still get attached below — ADR 0014's Consequences
-			// says so explicitly: "it attaches whatever guards each real
-			// handler carries to the shared Endpoint.ID exactly as
-			// extracted." Skipping guard extraction for a merged-away
-			// handler would silently discard a real annotation — locked in
-			// as a regression test, TestExtractControllers_MergedHandlerRetainsOwnGuard
-			// (guards_test.go), confirmed to actually fail against the
-			// original buggy shape before being kept.
-			// Keyed by controller as well as by ID: a second handler in
-			// the *same* controller is ADR 0014 content negotiation and
-			// merges, while a second *controller* is a route collision
-			// and must keep its own endpoint (ADR 0020 Amendment 2 §8).
-			key := endpointKey{id: endpointID, controller: controllerID}
-			idx, merged := b.seenEndpoints[key]
-			if !merged {
-				b.model.Endpoints = append(b.model.Endpoints, model.Endpoint{
-					ID:                endpointID,
-					HTTPMethod:        httpMethod,
-					Path:              path,
-					HandlerName:       handlerName,
-					PathUnresolved:    pathUnresolved,
-					Version:           version.value,
-					VersionUnresolved: version.unknownVersion(),
-					ControllerID:      controllerID,
-					File:              file,
-					Line:              int(member.StartPoint().Row) + 1,
+				// The handler's own starting line. In Java, annotations are
+				// part of method_declaration's modifiers, so the node already
+				// starts at the first annotation (@PostMapping, not the
+				// signature) — verified against real Pharmacy source rather
+				// than assumed from the grammar, and the same line the
+				// Endpoint row records below.
+				b.anchors = append(b.anchors, allowlist.Anchor{
+					EndpointID: endpointID,
+					File:       file,
+					Line:       int(member.StartPoint().Row) + 1,
 				})
-				idx = len(b.model.Endpoints) - 1
-				b.seenEndpoints[key] = idx
-				// Class-level guards apply once per endpoint, not once per
-				// merged handler — attaching them again for a second
-				// merged handler would duplicate identical
-				// GuardApplications for no reason (both variants share the
-				// exact same class-level annotations by construction).
-				b.curEndpoint = idx
-				b.applyGuards(endpointID, classGuards, model.ScopeClass)
-				b.applyUnrecognized(endpointID, classUnrecognized, model.ScopeClass)
-			}
-			b.anchorOwner = append(b.anchorOwner, idx)
-			b.curEndpoint = idx
 
-			methodGuards, methodUnrecognized := pendingGuardsFromAnnotations(methodAnns, src, file, roleByName, imports)
-			b.applyGuards(endpointID, methodGuards, model.ScopeMethod)
-			b.applyUnrecognized(endpointID, methodUnrecognized, model.ScopeMethod)
+				// Two real handlers sharing HTTPMethod+Path (differing only in
+				// `produces`) merge into one Endpoint —
+				// docs/decisions/0014-endpoint-identity-and-content-negotiation.md.
+				// The first encountered wins the Endpoint row itself
+				// (HandlerName/File/Line), but every merged handler's own
+				// guards still get attached below — ADR 0014's Consequences
+				// says so explicitly: "it attaches whatever guards each real
+				// handler carries to the shared Endpoint.ID exactly as
+				// extracted." Skipping guard extraction for a merged-away
+				// handler would silently discard a real annotation.
+				// Two real handlers sharing HTTPMethod+Path (differing only in
+				// `produces`) merge into one Endpoint —
+				// docs/decisions/0014-endpoint-identity-and-content-negotiation.md.
+				// The first encountered wins the Endpoint row itself
+				// (HandlerName/File/Line), but every merged handler's own
+				// guards still get attached below — ADR 0014's Consequences
+				// says so explicitly: "it attaches whatever guards each real
+				// handler carries to the shared Endpoint.ID exactly as
+				// extracted." Skipping guard extraction for a merged-away
+				// handler would silently discard a real annotation — locked in
+				// as a regression test, TestExtractControllers_MergedHandlerRetainsOwnGuard
+				// (guards_test.go), confirmed to actually fail against the
+				// original buggy shape before being kept.
+				// Keyed by controller as well as by ID: a second handler in
+				// the *same* controller is ADR 0014 content negotiation and
+				// merges, while a second *controller* is a route collision
+				// and must keep its own endpoint (ADR 0020 Amendment 2 §8).
+				key := endpointKey{id: endpointID, controller: controllerID}
+				idx, merged := b.seenEndpoints[key]
+				if !merged {
+					b.model.Endpoints = append(b.model.Endpoints, model.Endpoint{
+						ID:                endpointID,
+						HTTPMethod:        httpMethod,
+						Path:              path,
+						HandlerName:       handlerName,
+						PathUnresolved:    pathUnresolved,
+						Version:           version.value,
+						VersionUnresolved: version.unknownVersion(),
+						ControllerID:      controllerID,
+						File:              file,
+						Line:              int(member.StartPoint().Row) + 1,
+					})
+					idx = len(b.model.Endpoints) - 1
+					b.seenEndpoints[key] = idx
+					// Class-level guards apply once per endpoint, not once per
+					// merged handler — attaching them again for a second
+					// merged handler would duplicate identical
+					// GuardApplications for no reason (both variants share the
+					// exact same class-level annotations by construction).
+					b.curEndpoint = idx
+					b.applyGuards(endpointID, classGuards, model.ScopeClass)
+					b.applyUnrecognized(endpointID, classUnrecognized, model.ScopeClass)
+				}
+				b.anchorOwner = append(b.anchorOwner, idx)
+				b.curEndpoint = idx
+
+				methodGuards, methodUnrecognized := pendingGuardsFromAnnotations(methodAnns, src, file, roleByName, imports)
+				b.applyGuards(endpointID, methodGuards, model.ScopeMethod)
+				b.applyUnrecognized(endpointID, methodUnrecognized, model.ScopeMethod)
+			}
 		}
 	}
 }
@@ -245,13 +253,48 @@ func hasAny(anns []annotationCall, names map[string]bool) bool {
 	return false
 }
 
-func findHTTPMapping(anns []annotationCall) (annotationCall, model.HTTPMethod, bool) {
+// requestMethodNames maps Spring's RequestMethod enum constants to the
+// model's HTTPMethod — docs/decisions/0026-requestmapping-method-attribute.md §1/§2.
+var requestMethodNames = map[string]model.HTTPMethod{
+	"GET":     model.MethodGet,
+	"POST":    model.MethodPost,
+	"PUT":     model.MethodPut,
+	"PATCH":   model.MethodPatch,
+	"DELETE":  model.MethodDelete,
+	"HEAD":    model.MethodHead,
+	"OPTIONS": model.MethodOptions,
+	"TRACE":   model.MethodTrace,
+}
+
+// findHTTPMapping returns the annotation declaring this handler's routes
+// and the HTTP method(s) it declares.
+//
+// Two forms produce a route. `@GetMapping` and its four siblings declare
+// exactly one verb. `@RequestMapping(method = …)` declares one or more,
+// and ADR 0026 §1 reads it: 588 routes across the 20-repository corpus
+// come from 532 such annotations, because 40 declare more than one verb.
+// An implementation reading only the first would be wrong 40 times and
+// look right in aggregate.
+//
+// A method-level @RequestMapping with NO method attribute maps every HTTP
+// verb in Spring. Those 164 uses stay out (ADR 0026 §4): representing one
+// faithfully needs either eight rows per handler or a new "any verb"
+// concept, and that is a model decision with its own evidence to gather.
+func findHTTPMapping(anns []annotationCall, src []byte) (annotationCall, []model.HTTPMethod, bool) {
 	for _, a := range anns {
-		if method, known := httpMappingAnnotations[a.Name]; known && a.isSpringWeb() {
-			return a, method, true
+		if !a.isSpringWeb() {
+			continue
+		}
+		if method, known := httpMappingAnnotations[a.Name]; known {
+			return a, []model.HTTPMethod{method}, true
+		}
+		if a.Name == "RequestMapping" {
+			if verbs := requestMappingVerbs(a.Args, src); len(verbs) > 0 {
+				return a, verbs, true
+			}
 		}
 	}
-	return annotationCall{}, "", false
+	return annotationCall{}, nil, false
 }
 
 // findControllerMeta reports whether any of a class's annotations is a
@@ -265,4 +308,62 @@ func findControllerMeta(anns []annotationCall, metas map[string]controllerMeta) 
 		}
 	}
 	return annotationCall{}, controllerMeta{}, false
+}
+
+// requestMappingVerbs reads @RequestMapping's `method` attribute, in both
+// the single (`method = RequestMethod.GET`) and list
+// (`method = {RequestMethod.GET, RequestMethod.POST}`) forms.
+//
+// Returns nil when there is no method attribute — which is not an error
+// but ADR 0026 §4's deliberate exclusion: such a mapping answers every
+// verb, and saying which rows to create for it is a separate decision.
+// It also returns nil for a verb this model has no constant for, rather
+// than guessing.
+func requestMappingVerbs(args *sitter.Node, src []byte) []model.HTTPMethod {
+	if args == nil {
+		return nil
+	}
+	for _, arg := range namedChildren(args) {
+		if arg.Type() != "element_value_pair" {
+			continue
+		}
+		key := arg.ChildByFieldName("key")
+		if key == nil || key.Content(src) != "method" {
+			continue
+		}
+		value := arg.ChildByFieldName("value")
+		if value == nil {
+			return nil
+		}
+		var out []model.HTTPMethod
+		for _, name := range requestMethodConstants(value, src) {
+			if m, known := requestMethodNames[name]; known {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// requestMethodConstants collects the enum constant names from either a
+// single `RequestMethod.GET` reference or a `{…}` list of them,
+// preserving written order so multi-verb expansion is deterministic.
+func requestMethodConstants(value *sitter.Node, src []byte) []string {
+	switch value.Type() {
+	case "element_value_array_initializer":
+		var out []string
+		for _, elem := range namedChildren(value) {
+			out = append(out, requestMethodConstants(elem, src)...)
+		}
+		return out
+	default:
+		// `RequestMethod.GET` (field_access) or a bare `GET` from a
+		// static import. Either way the last dotted segment is the
+		// constant.
+		if n := simpleNameOfClassLiteral(value.Content(src)); n != "" {
+			return []string{n}
+		}
+		return nil
+	}
 }
