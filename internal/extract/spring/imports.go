@@ -149,6 +149,38 @@ func isStaticImport(n *sitter.Node) bool {
 // Only a binding counts. A project-local annotation that happens to be
 // called @RequiresPermissions is not assumed to be Shiro's, for the same
 // reason ADR 0022 refuses to assume an unbound @Secured is Spring's.
+// resolveQualifiedAuth answers the identity question for an annotation
+// written fully qualified — ADR 0025 §3.
+//
+// This exists because ADR 0025 §1 would otherwise break
+// ADR 0022. A fully-qualified
+// @org.springframework.security.access.prepost.PreAuthorize normalizes to
+// the simple name "PreAuthorize", which no import binds — there is none,
+// the path is written out in full — and ADR 0022 §1 correctly treats an
+// unbound name as not-Spring's. The result would be an unrecognized
+// authorization annotation recorded for Spring's own annotation, spelled
+// out in the source: ADR 0022's defect recreated on the annotation it
+// protects.
+//
+// A qualified use is its own binding, and a stronger one than an import:
+// it names the package at the use site with no file-level indirection.
+// kind is "spring" for an accepted Spring/JSR-250 package, "thirdparty"
+// for a known third-party authorization package (ADR 0023), and "foreign"
+// for anything else — nacos's @Secured written out in full still lands as
+// unrecognized, which is the behaviour ADR 0022 established.
+func resolveQualifiedAuth(simpleName, qualifier string) (boundTo, kind string) {
+	fqn := qualifier + "." + simpleName
+	for _, pkg := range acceptedAnnotationPackages[simpleName] {
+		if qualifier == pkg {
+			return fqn, "spring"
+		}
+	}
+	if _, known := thirdPartyAuthPackages[qualifier]; known {
+		return fqn, "thirdparty"
+	}
+	return fqn, "foreign"
+}
+
 func (t importTable) resolveThirdPartyAuth(simpleName string) (boundTo, framework string, ok bool) {
 	if fqn, found := t.exact[simpleName]; found {
 		if i := strings.LastIndexByte(fqn, '.'); i >= 0 {

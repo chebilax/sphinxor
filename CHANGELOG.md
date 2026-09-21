@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A Spring annotation written fully qualified is now recognized.**
+  `microcks/microcks` declares its own `io.github.microcks.web.RestController`,
+  so Spring's cannot be imported there; all 13 files in that package write
+  `@org.springframework.web.bind.annotation.RestController`. Extraction
+  matched the text as written, so none of those classes was a controller.
+  microcks reported **50 endpoints** while those files held **30 more** in a
+  shape already supported — roughly 40% of its API surface, and silent.
+
+  It is the nacos collision with the sign reversed: there a matching simple
+  name made a foreign annotation count, here a qualified name made Spring's
+  own annotation not count. An annotation's identity is now its simple name
+  however it is written, and microcks reports **80 endpoints** with 11 new
+  `mutating-endpoint-without-access-control` findings and no change to any
+  role or guard.
+
+  A dotted name must match a known package **in full** —
+  `@com.example.RestController` is not Spring's. A fully-qualified use of a
+  method-security annotation counts as its own binding, so Spring's
+  `@PreAuthorize` spelled out is a guard rather than an unrecognized
+  annotation, while nacos's `@Secured` spelled out still is not. See
+  [ADR 0025](docs/decisions/0025-qualified-annotation-names.md).
+
+
 - **A controller declared by a meta-annotation is now recognized.** Spring
   treats an annotation that is itself annotated `@RestController` as
   composing it; extraction required the literal annotation. `apache/shenyu`

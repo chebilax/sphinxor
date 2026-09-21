@@ -233,9 +233,12 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 	}
 }
 
+// hasAny reports whether any annotation matches one of names. A
+// qualified use must be qualified with a real Spring package (ADR 0025
+// §4) — @com.example.RestController is not Spring's.
 func hasAny(anns []annotationCall, names map[string]bool) bool {
 	for _, a := range anns {
-		if names[a.Name] {
+		if names[a.Name] && a.isSpringWeb() {
 			return true
 		}
 	}
@@ -244,7 +247,7 @@ func hasAny(anns []annotationCall, names map[string]bool) bool {
 
 func findHTTPMapping(anns []annotationCall) (annotationCall, model.HTTPMethod, bool) {
 	for _, a := range anns {
-		if method, known := httpMappingAnnotations[a.Name]; known {
+		if method, known := httpMappingAnnotations[a.Name]; known && a.isSpringWeb() {
 			return a, method, true
 		}
 	}
@@ -257,7 +260,7 @@ func findHTTPMapping(anns []annotationCall) (annotationCall, model.HTTPMethod, b
 // (docs/decisions/0024-controller-meta-annotations.md §1).
 func findControllerMeta(anns []annotationCall, metas map[string]controllerMeta) (annotationCall, controllerMeta, bool) {
 	for _, a := range anns {
-		if m, ok := metas[a.Name]; ok {
+		if m, ok := metas[a.Name]; ok && m.matchesUse(a.Qualifier) {
 			return a, m, true
 		}
 	}

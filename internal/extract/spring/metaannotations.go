@@ -26,6 +26,16 @@ type controllerMeta struct {
 	//	@AliasFor(attribute = "path", annotation = RequestMapping.class)
 	//	String[] value() default {};
 	pathAttribute string
+	// pkg is the package the annotation type was declared in, so a
+	// fully-qualified use can be checked against it — ADR 0025 §4's
+	// whole-path rule applied to project-declared annotations.
+	//
+	// Without it, `@other.pkg.RestApi` would match shenyu's `@RestApi`
+	// on its last segment alone, which is the hazard §4 exists to
+	// prevent. Found by the post-implementation audit for call sites
+	// still matching on a bare name; no corpus project writes a project
+	// meta-annotation qualified, so nothing exercises it.
+	pkg string
 }
 
 // scanControllerMetaAnnotations adds every controller-composing
@@ -66,6 +76,7 @@ func scanControllerMetaAnnotations(root *sitter.Node, src []byte, out map[string
 			}
 		}
 		meta.pathAttribute = pathAliasAttribute(decl, src)
+		meta.pkg = packageOf(root, src)
 
 		out[nameNode.Content(src)] = meta
 	}
@@ -234,4 +245,29 @@ func namedArgumentValue(args *sitter.Node, attr string, src []byte) (value strin
 		}
 	}
 	return "", true
+}
+
+// packageOf returns a compilation unit's declared package, or "" for the
+// default package.
+func packageOf(root *sitter.Node, src []byte) string {
+	for _, n := range namedChildren(root) {
+		if n.Type() != "package_declaration" {
+			continue
+		}
+		for _, c := range namedChildren(n) {
+			switch c.Type() {
+			case "scoped_identifier", "identifier":
+				return c.Content(src)
+			}
+		}
+	}
+	return ""
+}
+
+// matchesUse reports whether a use site written with this qualifier
+// refers to this meta-annotation. An unqualified use always does; a
+// qualified one must name the package the annotation was declared in
+// (ADR 0025 §4).
+func (m controllerMeta) matchesUse(qualifier string) bool {
+	return qualifier == "" || qualifier == m.pkg
 }
