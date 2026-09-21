@@ -276,6 +276,20 @@ func TestProjectWarnings(t *testing.T) {
 			want: "@EnableReactiveMethodSecurity",
 		},
 		{
+			// ADR 0031 §2. The direction is the substance: "narrower"
+			// tells the reader the matrix under-reports, which is the
+			// opposite response from an over-report.
+			name: "role hierarchy names the direction of the error",
+			build: func(m *model.Model) {
+				guardedEndpoint(m)
+				m.MethodSecurity = model.MethodSecurityStatus{Found: true}
+				m.RoleHierarchy = model.RoleHierarchyStatus{
+					Found: true, DeclaredIn: []string{"SecurityConfig"},
+				}
+			},
+			want: "NARROWER",
+		},
+		{
 			// The same caveat must not fire on NestJS, where
 			// MethodSecurity.Found is false only because the concept does
 			// not exist. Before this case it did, on every project using

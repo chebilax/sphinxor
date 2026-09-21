@@ -179,6 +179,22 @@ func projectWarnings(m *model.Model) []string {
 			"         NOT access control and no endpoint's protection changes because of them.")
 	}
 
+	// ADR 0031 §2: a role hierarchy makes every role shown narrower than
+	// what the application grants. The DIRECTION is the substance of the
+	// message — a bare "this project has a role hierarchy" leaves the
+	// reader to work out which way the numbers are wrong, and the two
+	// directions call for opposite responses.
+	if h := m.RoleHierarchy; h.Found {
+		msg := "this project declares a Spring Security role hierarchy"
+		if len(h.DeclaredIn) > 0 {
+			msg += " in: " + strings.Join(h.DeclaredIn, ", ")
+		}
+		out = append(out, msg+".\n"+
+			"         Its rules are not read, so the roles shown below are NARROWER than what the\n"+
+			"         application actually grants: a role that implies another reaches every endpoint\n"+
+			"         the implied one does. Every role shown is real; the list is not exhaustive.")
+	}
+
 	// Amendment 1 §5: routes whose declared path could not be read. The
 	// matrix marks each one with a leading ellipsis; this says what the
 	// mark means and which controllers to look at, because a fragment
