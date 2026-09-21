@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A role hierarchy is announced, with the direction of the error.** A project
+  declaring one (`@Bean RoleHierarchy`, `RoleHierarchyImpl.fromHierarchy(...)`, or
+  `setRoleHierarchy(...)`) now produces a warning saying the roles shown are
+  **narrower** than what the application grants: a role that implies another
+  reaches every endpoint the implied one does.
+
+  Stating the direction is the point — a bare "this project has a role hierarchy"
+  leaves the reader to work out which way the numbers are wrong, and the two
+  directions call for opposite responses. It is a warning and never a finding,
+  because the error under-reports access: a reader acting on the matrix
+  over-restricts rather than under-restricts.
+
+  The hierarchy's **content is not parsed** and no grant is expanded — that would
+  change reported access rather than annotate it, and stays a separate decision.
+  See [ADR 0031](docs/decisions/0031-role-hierarchy.md). Zero corpus occurrences,
+  so `sphinxor lint` is byte-identical across all 20 repositories.
+
 - **`@PostAuthorize` is recognized — and still reported on a write.** Spring
   evaluates it *after* the handler runs, so on a `POST`/`PUT`/`PATCH`/`DELETE` the
   state change has already happened when access is denied. Spring's own docs say

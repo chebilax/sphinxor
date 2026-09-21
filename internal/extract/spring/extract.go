@@ -87,6 +87,8 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 		// Announced only — nothing downstream reads this to decide
 		// whether an endpoint is protected.
 		scanMethodSecurityFilters(f.tree.RootNode(), f.src, &b.model.MethodSecurityFilters)
+		// ADR 0031: a role hierarchy, recorded as existing and not read.
+		scanRoleHierarchy(f.tree.RootNode(), f.src, &b.model.RoleHierarchy)
 	}
 
 	// Pass 2: controllers, endpoints, method-security (method-layer)

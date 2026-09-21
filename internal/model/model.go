@@ -94,6 +94,10 @@ type Model struct {
 	// MethodSecurityFilters counts @PreFilter/@PostFilter, which are
 	// announced and deliberately reach no rule (ADR 0030 §4).
 	MethodSecurityFilters MethodSecurityFilterStatus
+	// RoleHierarchy records that the project declares a role hierarchy,
+	// which makes every role shown narrower than what the application
+	// grants (ADR 0031).
+	RoleHierarchy RoleHierarchyStatus
 	// RouteCollisions records every route declared by more than one
 	// controller in the analyzed tree — ADR 0020 Amendment 2 §8.
 	RouteCollisions []RouteCollision
@@ -319,6 +323,30 @@ type URLLayerStatus struct {
 // Unknown reports whether a URL layer exists but could not be analyzed —
 // the state in which no consumer may treat the method layer as complete.
 func (s URLLayerStatus) Unknown() bool { return s.Present && !s.Analyzed }
+
+// RoleHierarchyStatus records that a project declares a Spring Security
+// role hierarchy — docs/decisions/0031-role-hierarchy.md.
+//
+// The hierarchy's CONTENT is deliberately not parsed. What this carries
+// is that one exists, which is enough to say the matrix under-reports:
+// where a row lists ROLE_USER, a ROLE_ADMIN holder reaches it too and the
+// matrix does not show that.
+//
+// The error runs in the under-reporting direction, so this is a warning
+// and never a finding — a reader acting on the matrix over-restricts
+// rather than under-restricts. Nothing consults it to decide whether an
+// endpoint is protected, and nothing should: every role shown is still
+// real and correct, just not exhaustive.
+//
+// Found == false is "not located", never "confirmed absent" — the same
+// boundary MethodSecurityStatus.Found draws. A hierarchy declared in
+// YAML, properties or Kotlin is invisible here (ADR 0011 §1).
+type RoleHierarchyStatus struct {
+	Found bool
+	// DeclaredIn names the classes where it was found, for the warning
+	// text, so a reader can go and look.
+	DeclaredIn []string
+}
 
 // MethodSecurityStatus records whether Spring's @EnableMethodSecurity or
 // the deprecated @EnableGlobalMethodSecurity was found anywhere in the
