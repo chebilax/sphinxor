@@ -162,15 +162,53 @@ func isChainBeanOfType(methodDecl *sitter.Node, src []byte, typeName string) boo
 // countChainBeans reports how many servlet and reactive chain beans exist
 // project-wide, regardless of whether their rules can be parsed. Presence
 // and parseability are separate questions (ADR 0020 §2).
-func countChainBeans(files []parsedFile) (servlet, reactive int) {
+// urlLayerForms counts each recognized way of declaring a URL-authorization
+// layer. Every one is detected by a *declaration* — a @Bean method's return
+// type, or a class's extends clause — never by a mention of the type name,
+// per docs/decisions/0027-unannounced-url-layers.md §1.
+//
+// That distinction is not theoretical. A token-presence check would have
+// invented a reactive URL layer for apache/shenyu, where
+// SecurityWebFilterChain appears only in an import and a
+// @ConditionalOnClass({… SecurityWebFilterChain.class …}) with no @Bean
+// returning one.
+type urlLayerForms struct {
+	// servlet is Spring Security's modern @Bean SecurityFilterChain.
+	servlet int
+	// reactive is WebFlux's SecurityWebFilterChain (ADR 0020 §3).
+	reactive int
+	// legacyAdapter is a class extending WebSecurityConfigurerAdapter,
+	// Spring Security's own pre-5.7 configuration base class — in scope
+	// per ADR 0011, simply an older API (ADR 0027 §1).
+	legacyAdapter int
+	// shiro is a @Bean returning Apache Shiro's ShiroFilterFactoryBean.
+	// Shiro is not Spring Security and nothing here parses it; recording
+	// that the layer exists is not interpreting it (ADR 0027, Context).
+	shiro int
+}
+
+func (f urlLayerForms) any() bool {
+	return f.servlet > 0 || f.reactive > 0 || f.legacyAdapter > 0 || f.shiro > 0
+}
+
+func countChainBeans(files []parsedFile) urlLayerForms {
+	var out urlLayerForms
 	for _, f := range files {
 		var walk func(n *sitter.Node)
 		walk = func(n *sitter.Node) {
-			if n.Type() == "method_declaration" {
-				if isSecurityFilterChainBean(n, f.src) {
-					servlet++
-				} else if isReactiveChainBean(n, f.src) {
-					reactive++
+			switch n.Type() {
+			case "method_declaration":
+				switch {
+				case isSecurityFilterChainBean(n, f.src):
+					out.servlet++
+				case isReactiveChainBean(n, f.src):
+					out.reactive++
+				case isChainBeanOfType(n, f.src, "ShiroFilterFactoryBean"):
+					out.shiro++
+				}
+			case "class_declaration":
+				if extendsType(n, f.src, "WebSecurityConfigurerAdapter") {
+					out.legacyAdapter++
 				}
 			}
 			for _, c := range namedChildren(n) {
@@ -179,7 +217,24 @@ func countChainBeans(files []parsedFile) (servlet, reactive int) {
 		}
 		walk(f.tree.RootNode())
 	}
-	return servlet, reactive
+	return out
+}
+
+// extendsType reports whether a class declaration's superclass is name.
+// tree-sitter-java exposes the extends clause as a `superclass` child
+// holding a type node, so this matches a real declaration rather than any
+// occurrence of the identifier (ADR 0027 §1).
+func extendsType(classDecl *sitter.Node, src []byte, name string) bool {
+	super := findChildByType(classDecl, "superclass")
+	if super == nil {
+		return false
+	}
+	for _, c := range namedChildren(super) {
+		if simpleNameOfClassLiteral(c.Content(src)) == name {
+			return true
+		}
+	}
+	return false
 }
 
 func soleLambdaArg(args *sitter.Node) *sitter.Node {

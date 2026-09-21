@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Accepted.
 
 ## Context
 
@@ -158,16 +158,51 @@ on this and must pass unchanged.
   policies. That is the point: ADR 0020 §2's own reproduction showed a two-chain
   project exporting a grant the application denied.
 - ADR 0026 can then land with its findings correctly qualified on inlong and nakadi.
-- **Validation before this is Accepted**, against the real corpus per `docs/testing.md`:
-  - The warning fires on exactly **nakadi** (`WebSecurityConfigurerAdapter`) and
-    **inlong, streampark, shenyu, litemall, metersphere** (`ShiroFilterFactoryBean`),
-    and **JeecgBoot's existing reactive warning is joined by, not replaced with**,
-    its Shiro one.
-  - **No other repository changes in any respect** — in particular RuoYi-Vue, whose
-    chain parses, stays quiet.
-  - All four vendored fixtures byte-identical, and
-    `TestAnalyzeDirectory_RealProjectStaysQuiet` passes unchanged.
-  - A test that a *mention* of either type — an import, a `@ConditionalOnClass` —
-    does **not** trigger detection, pinning the shenyu near-miss so a token check
-    cannot creep back in.
-  - A test that a project with two unreadable layers names both (§3).
+### Validation — measured after implementation
+
+**The warning now fires on exactly six more repositories**, and on nothing else:
+
+| Repository | before | after | form |
+|---|---|---|---|
+| nakadi | silent | **warns** | `WebSecurityConfigurerAdapter` |
+| shenyu, streampark, inlong, litemall, metersphere | silent | **warns** | `ShiroFilterFactoryBean` |
+| JeecgBoot | warns (reactive) | warns (**both**) | reactive + Shiro |
+
+JeecgBoot's reason reads *"a reactive SecurityWebFilterChain was found …; and an
+Apache Shiro ShiroFilterFactoryBean was found …"* — joined, not replaced, which is
+§3 working.
+
+**RuoYi-Vue stays silent**, correctly: its single `SecurityFilterChain` parses, so it
+is `Present && Analyzed`. Endpoint and finding counts are **unchanged across all 14**
+repositories, all four vendored fixtures are byte-identical, and
+`TestAnalyzeDirectory_RealProjectStaysQuiet` passes unchanged.
+
+### The Cerbos export effect, measured per repository
+
+Extending ADR 0020 §2's omit-everything behaviour to seven more projects is a visible
+change in principle. Measured, **it is a no-op on rule counts**:
+
+| Repository | rules before | rules after | omission reason before → after |
+|---|---:|---:|---|
+| nakadi | 0 | 0 | `no-guard` → `url-layer-unknown` (1) |
+| JeecgBoot | 0 | 0 | `url-layer-unknown` (587), unchanged |
+| shenyu | 0 | 0 | `no-guard` (253) + `route-collision` (118) → `url-layer-unknown` (371) |
+| streampark | 0 | 0 | `no-guard` → `url-layer-unknown` (232) |
+| inlong | 0 | 0 | `no-guard` → `url-layer-unknown` (159) |
+| litemall | 0 | 0 | `no-guard` → `url-layer-unknown` (213) |
+| metersphere | 0 | 0 | `no-guard` → `url-layer-unknown` (1050) |
+
+**Every one of the seven already exported zero rules**, because none has a Spring
+Security guard that resolves to a role — their authorization is Shiro, or OAuth2
+scopes, or a filter chain. So nothing that was being exported stops being exported.
+
+What changes is the *reason* recorded against each omitted endpoint, and it changes
+to the more accurate one: these endpoints are not omitted because nothing guards
+them, they are omitted because the layer that does could not be read. A reader
+auditing the export report was previously told `no-guard` about 1,655 endpoints in
+six projects that all have a URL layer.
+
+Tests, in `internal/extract/spring/urllayer_detection_test.go`: each form detected
+and named; a *mention* of either type in an `import` and a `@ConditionalOnClass`
+detected as nothing, pinning the shenyu near-miss; two unreadable layers naming both;
+and a parseable single chain staying `Analyzed` and quiet.
