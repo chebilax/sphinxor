@@ -202,6 +202,34 @@ them, they are omitted because the layer that does could not be read. A reader
 auditing the export report was previously told `no-guard` about 1,655 endpoints in
 six projects that all have a URL layer.
 
+**The stated reason was false before, and that is the substantive result.** Nothing
+was exported wrongly — 1,655 endpoints were correctly omitted — but each was labelled
+`no-guard`, in six projects that every one of them has an authentication layer. The
+export report was telling a reader "no access control was detected for this endpoint"
+about endpoints sitting behind a Shiro filter chain or an OAuth2 scope check. The
+omission was right; the explanation for it was not.
+
+### Does anything become invisible? Checked, because one reason per endpoint masks another
+
+shenyu's 118 endpoints moved from `route-collision` to `url-layer-unknown`, and an
+omitted endpoint carries one reason, so the collision no longer appears in the export
+report. Whether that loses information was verified rather than assumed:
+
+- **The model keeps it.** shenyu still records **43 `RouteCollision`s** after this
+  change, unchanged.
+- **ADR 0020 Amendment 2 §8's warning is independent of the URL layer.** Confirmed on
+  a synthetic project declaring both a `ShiroFilterFactoryBean` and a guard-differing
+  collision: both warnings fire, neither suppressing the other.
+- **shenyu's own collisions do not warn, and did not before.** All 43 have
+  non-differing guards — they are `shenyu-examples/` demo applications — which is
+  exactly the case §8 deliberately stays quiet about.
+- **The endpoints are omitted either way.** A collision omits unconditionally and so
+  does an unknown URL layer, so the export's safety behaviour is byte-identical.
+
+What changed is which of two applicable labels the report prints, and it now prints
+the project-wide one that would have omitted the endpoint regardless. No collision
+information is lost from the model, the warnings, or the export's behaviour.
+
 Tests, in `internal/extract/spring/urllayer_detection_test.go`: each form detected
 and named; a *mention* of either type in an `import` and a `@ConditionalOnClass`
 detected as nothing, pinning the shenyu near-miss; two unreadable layers naming both;
