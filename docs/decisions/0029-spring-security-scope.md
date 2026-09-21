@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Accepted.
 
 ## Context
 
@@ -158,15 +158,18 @@ checklist.
   capability line (which now also links here), and the layer-combining line. Its
   remaining bare "Spring" mentions describe a specific demo project and the vendored
   test corpus, which really are Spring projects, and are left alone.
-- **`docs/vision.md` is unchanged, deliberately.** All three of its mentions were
-  checked and none is a scope claim: one names the market category ("mainstream web
-  frameworks (Spring, NestJS, Django, Symfony, ASP.NET)"), one is the v0.1
-  deliberation over which framework to start with ("Spring or NestJS are good
-  candidates"), and one describes the benchmark corpus. Rewriting the second in
-  particular would falsify the record of a decision as it was actually made, which
-  is the one thing `vision.md` and the ADR log exist to preserve. If the intent was
-  that `vision.md` should *gain* a scope statement rather than have its wording
-  changed, that is a separate edit and this ADR is the thing it would cite.
+- **`docs/vision.md` gains a scope section and keeps its existing wording.** All
+  three of its "Spring" mentions were checked and none is a scope claim: one names
+  the market category ("mainstream web frameworks (Spring, NestJS, Django, Symfony,
+  ASP.NET)"), one is the v0.1 deliberation over which framework to start with
+  ("Spring or NestJS are good candidates"), and one describes the benchmark corpus.
+  Rewriting the second would falsify the record of a decision as it was actually
+  made, which is the one thing `vision.md` and the ADR log exist to preserve.
+
+  What it lacked was not corrected wording but a stated boundary, so it gains one —
+  the promise, citing this ADR for the checklist. It also says plainly that **NestJS
+  has no equivalent enumeration**, because a scope section covering one of two
+  supported frameworks would otherwise imply both are documented to this standard.
 - Five items get a status they did not have. Four of them measure zero corpus
   occurrences, so this changes the list before it changes any behaviour — which is
   the point of writing it down.

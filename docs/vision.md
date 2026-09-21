@@ -80,6 +80,36 @@ Core in **Go**, consistent with [Lynxor](https://github.com/chebilax/lynxor) (po
 
 ---
 
+## Scope, per framework — what "supported" means
+
+The sections above are the vision. This one is the boundary, because "supports
+Spring" and "supports Spring Security" are different promises and only the second is
+one this project keeps.
+
+**The Spring extractor targets Spring Security**, not authorization in Spring
+applications generally. Apache Shiro, imperative permission checks written inside a
+handler, JAX-RS routing and path prefixes applied at runtime by a
+`WebMvcRegistrations` bean are *other systems*: reporting no roles for them is
+correct behaviour rather than a missing feature, and where their presence is
+detected — a Shiro annotation, a `ShiroFilterFactoryBean` — that is detection, not
+interpretation.
+
+[ADR 0029](decisions/0029-spring-security-scope.md) enumerates every Spring Security
+mechanism with one of four statuses — *read*, *detected and announced*, *silent*, or
+*out of scope* — and cites the decision behind each. It is the checklist; this
+paragraph is only the promise it keeps.
+
+It also defines when the framework is finished: **no mechanism is *silent*.** Not
+"everything is read" — a construct this tool cannot interpret is finished when the
+run says so plainly, which is the same heuristic-and-honest posture the section
+above commits to. `docs/limitations.md` is the companion: ADR 0029 says what the
+status of each mechanism is, and `limitations.md` says what that costs a reader in
+practice.
+
+NestJS has no equivalent enumeration yet. Its gaps are recorded in
+`docs/limitations.md` but have never been turned into a checklist, and saying so is
+more honest than implying the two frameworks are documented to the same standard.
+
 ## Documentation — same standard as Lynxor, in English from day one
 
 Sphinxor fully adopts the documentation convention already in place on [Lynxor](https://github.com/chebilax/lynxor/tree/main/docs). This isn't a layer bolted on afterward to look "professional" — it's the same real process, documented as it happens, starting from the very first decision.
