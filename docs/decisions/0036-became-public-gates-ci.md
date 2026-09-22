@@ -190,8 +190,27 @@ renames an endpoint and removes its guard will not gate.
 
 Three reasons it is the right trade:
 
-- **It is not silent.** The removal and the addition are both in the structural diff,
-  and the added endpoint carries whatever findings it earns.
+- **It is not silent — the gap is "not gated", not "not visible".** Both halves are
+  in the structural diff, *and* the renamed endpoint arrives carrying whatever
+  findings it earns. Verified on a rename-plus-unguard in one change — moving a
+  protected `DELETE /api/users/{id}` to `/api/v2/users/{id}` and dropping its
+  `@PreAuthorize` together:
+
+  ```
+  ## Endpoints
+  + DELETE /api/v2/users/{id}
+  - DELETE /api/users/{id}
+  ```
+
+  and `sphinxor lint` on the head reports it as what it now is:
+
+  ```
+  DELETE /api/v2/users/{id} has no detected guard or role decorator
+  ```
+
+  So a reviewer sees an endpoint appear, sees the old one go, and sees the new one
+  flagged as unprotected. What they do not get is a red build — which is §6's
+  position on any new unprotected endpoint, not a special concession to renames.
 - **The alternative is the matching this project has twice refused.** Pairing a removed
   endpoint with an added one means fuzzy or positional matching across an identity
   change — rejected outright by [ADR 0002](0002-intermediate-model-structure.md) and by
@@ -298,6 +317,7 @@ report because it was excused.
   | `hasRole('ADMIN')` → `@ss.hasPermi('user:delete')` | **0** |
   | `hasRole('ADMIN')` → `@validator.check(#id)` (unreadable) | **0** |
   | protected endpoint gains a version (identity change) | **0** |
+  | renamed **and** unguarded in one change (§5) | **0** |
   | new unprotected mutating endpoint added | **0** |
 
 - `sphinxor lint` output stays byte-identical everywhere: this decision touches no
@@ -305,7 +325,7 @@ report because it was excused.
 
 ### Measured after implementation
 
-All nine constructed cases produce the predicted exit code. Every one of the 20
+All ten constructed cases produce the predicted exit code. Every one of the 20
 corpus repositories diffed against itself reports zero regressions and exits 0, and
 `sphinxor lint --format json` is byte-identical on all 20 against the 0.7.0 binary.
 
