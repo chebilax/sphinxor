@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`sphinxor diff` compares permissions.** Since ADR 0035 the model carries a
+  `PermissionReference`, but a permission added, removed or changed between two runs
+  was invisible to the diff — editing a `@PreAuthorize("@ss.hasPermi('…')")` literal
+  in RuoYi-Vue produced a report whose every section read *No change*. That gap is
+  closed: the report gains a *Permission References* section listing each change as
+  `@ss.hasPermi('system:user:edit')` with its file and line, and JSON consumers get
+  `AddedPermissionReferences` / `RemovedPermissionReferences`. It matters most on the
+  projects this was measured against, since RuoYi-Vue and eladmin report no roles at
+  all and their endpoints' requirements are entirely permissions.
+  See [ADR 0037](docs/decisions/0037-permissions-in-the-diff.md).
+
+### Effect on CI
+
+- **None. This is not an exit-code change.** A permission changing to a different
+  string is reported and does not fail the build: Sphinxor holds no ordering over
+  roles ([ADR 0031](docs/decisions/0031-role-hierarchy.md)) and less than that over
+  permissions, since it does not decide what `@ss.hasPermi` means in the first place
+  ([ADR 0035](docs/decisions/0035-permissions-in-the-model.md) §3) — so neither
+  direction of a swap can be called wider. An endpoint that loses its annotation
+  altogether still fails the build, under
+  [ADR 0036](docs/decisions/0036-became-public-gates-ci.md)'s existing rule, not a
+  new one. Verified by running all ten constructed cases against the 0.8.0 binary and
+  this one and comparing the exit codes, and by `sphinxor lint --format json` staying
+  byte-identical across all 20 corpus repositories.
+
 ## [0.8.0] - 2026-09-22
 
 Two decisions, and the second one can turn a green pipeline red. `sphinxor diff`

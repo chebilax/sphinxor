@@ -210,3 +210,110 @@ func becamePublic(baseModel, headModel *model.Model) []model.Endpoint {
 	sortEndpoints(out)
 	return out
 }
+
+// permissionRefKey is PermissionReference's derived stable cross-run
+// identity: which (stable-keyed) guard application required it, the
+// callee that named it, and the literal itself
+// (docs/decisions/0037-permissions-in-the-diff.md §1).
+//
+// via is in the key, and that is the substantive part of this type.
+// ADR 0035 §3 decided that Sphinxor records "the annotation names
+// 'system:user:edit' VIA @ss.hasPermi" and deliberately does NOT decide
+// what @ss.hasPermi means, so (Via, RawLiteral) is the whole of the
+// recorded fact and the literal alone is half of it. A key on the
+// literal alone would assert that @ss.hasPermi('admin') and
+// @ss.hasRole('admin') are the same requirement — the interpretation
+// ADR 0035 §3 refused to make, arrived at through a comparison key
+// instead of through a decision. Not hypothetical: RuoYi-Vue carries
+// 115 @ss.hasPermi and one @ss.hasRole on the same bean.
+type permissionRefKey struct {
+	guardApp guardAppKey
+	via      string
+	literal  string
+}
+
+// keyOfPermissionReference keys the literal VERBATIM —
+// normalizeRawLiteral is deliberately not applied here, unlike in
+// keyOfRoleReference (ADR 0037 §1).
+//
+// Its reason does not exist on this path: normalization was introduced
+// for NestJS's resolveRoleArg fallback, which puts an argument's raw
+// source text (line breaks and all) into RawLiteral, so a reformat
+// changes the key without changing the meaning. ADR 0035 §2 admits a
+// permission only when every argument is a clean single-quoted literal,
+// and parseQuotedArgList returns the text strictly between the quotes;
+// Via comes from splitCall and must satisfy isBeanReference, a chain of
+// identifiers that cannot contain whitespace. Neither field has a shape
+// a reformat can perturb.
+//
+// Its cost does exist: collapsing runs of whitespace would key
+// 'report:view all' and 'report:view  all' as one permission. Those are
+// two different strings to whatever enforces them, and Sphinxor does not
+// read the enforcer. A key that cannot remove noise and can create a
+// false equality is the wrong key.
+func keyOfPermissionReference(p model.PermissionReference, guardsByID map[model.ID]model.GuardApplication) (permissionRefKey, bool) {
+	g, ok := guardsByID[p.GuardApplicationID]
+	if !ok {
+		return permissionRefKey{}, false
+	}
+	return permissionRefKey{guardApp: keyOfGuardApplication(g), via: p.Via, literal: p.RawLiteral}, true
+}
+
+// indexPermissionReferences keys a model's permission references for
+// comparison.
+//
+// Two references sharing a key — @el.check('a','a') — collapse to one,
+// exactly as indexRoleReferences already does, and the argument's
+// ordinal is deliberately NOT part of the key: a permission's position
+// in an argument list is not part of the requirement, and including it
+// would report @el.check('a','b') becoming @el.check('b','a') as two
+// removals and two additions for a reorder that changes nothing.
+// Measured at zero collisions across the corpus's 212 references
+// (ADR 0037 §1).
+func indexPermissionReferences(m *model.Model, guardsByID map[model.ID]model.GuardApplication) map[permissionRefKey]model.PermissionReference {
+	out := make(map[permissionRefKey]model.PermissionReference, len(m.PermissionReferences))
+	for _, ref := range m.PermissionReferences {
+		k, ok := keyOfPermissionReference(ref, guardsByID)
+		if !ok {
+			continue // orphaned reference — measured at zero across the corpus, but degrade gracefully rather than panic, as indexRoleReferences does
+		}
+		out[k] = ref
+	}
+	return out
+}
+
+func diffPermissionReferences(base, head map[permissionRefKey]model.PermissionReference) (added, removed []model.PermissionReference) {
+	for k, ref := range head {
+		if _, ok := base[k]; !ok {
+			added = append(added, ref)
+		}
+	}
+	for k, ref := range base {
+		if _, ok := head[k]; !ok {
+			removed = append(removed, ref)
+		}
+	}
+	sortPermissionReferences(added)
+	sortPermissionReferences(removed)
+	return added, removed
+}
+
+// sortPermissionReferences orders on every field a reader sees, so the
+// output is deterministic rather than merely sorted — sort.Slice is not
+// stable, so ordering on a prefix of the rendered fields would leave ties
+// to rearrange themselves between runs of the same input.
+func sortPermissionReferences(refs []model.PermissionReference) {
+	sort.Slice(refs, func(i, j int) bool {
+		a, b := refs[i], refs[j]
+		if a.Via != b.Via {
+			return a.Via < b.Via
+		}
+		if a.RawLiteral != b.RawLiteral {
+			return a.RawLiteral < b.RawLiteral
+		}
+		if a.File != b.File {
+			return a.File < b.File
+		}
+		return a.Line < b.Line
+	})
+}

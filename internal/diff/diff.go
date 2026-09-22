@@ -54,6 +54,22 @@ type Result struct {
 	AddedRoleReferences   []model.RoleReference
 	RemovedRoleReferences []model.RoleReference
 
+	// Added/RemovedPermissionReferences are the permission half of the
+	// structural diff (docs/decisions/0037-permissions-in-the-diff.md
+	// §2). Before them, a permission added, removed or changed between
+	// two runs produced a report whose every section read "No change" —
+	// confirmed on RuoYi-Vue, which reports zero roles and whose
+	// endpoints' requirements are entirely permissions.
+	//
+	// There is deliberately no third "changed" list: a changed
+	// permission is a removal plus an addition. Reporting it as one
+	// entry means pairing a removal with an addition, which is matching
+	// across an identity change — refused by ADR 0002, by ADR 0007 §2
+	// and by ADR 0036 §5, and a guess as soon as two literals change on
+	// one guard in the same commit.
+	AddedPermissionReferences   []model.PermissionReference
+	RemovedPermissionReferences []model.PermissionReference
+
 	// BecamePublic lists endpoints present on both sides that had at
 	// least one guard application in base and none in head — vision.md's
 	// "endpoints that became public", derived from the guard-application
@@ -106,9 +122,16 @@ func Compare(base, head Snapshot) Result {
 	headGuardsByKey := indexGuardApplications(head.Model)
 	r.AddedGuardApplications, r.RemovedGuardApplications = diffGuardApplications(baseGuardsByKey, headGuardsByKey)
 
-	baseRefsByKey := indexRoleReferences(base.Model, guardAppByID(base.Model))
-	headRefsByKey := indexRoleReferences(head.Model, guardAppByID(head.Model))
+	baseGuardsByID := guardAppByID(base.Model)
+	headGuardsByID := guardAppByID(head.Model)
+
+	baseRefsByKey := indexRoleReferences(base.Model, baseGuardsByID)
+	headRefsByKey := indexRoleReferences(head.Model, headGuardsByID)
 	r.AddedRoleReferences, r.RemovedRoleReferences = diffRoleReferences(baseRefsByKey, headRefsByKey)
+
+	basePermsByKey := indexPermissionReferences(base.Model, baseGuardsByID)
+	headPermsByKey := indexPermissionReferences(head.Model, headGuardsByID)
+	r.AddedPermissionReferences, r.RemovedPermissionReferences = diffPermissionReferences(basePermsByKey, headPermsByKey)
 
 	r.BecamePublic = becamePublic(base.Model, head.Model)
 
