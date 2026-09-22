@@ -22,7 +22,10 @@ func analyze(t *testing.T, dir string) Snapshot {
 	}
 	findings := lint.Run(m, lint.DefaultRules(), outcome.AllowlistedEndpoints)
 	findings = append(findings, outcome.StaleMarkers...)
-	return Snapshot{Model: m, Findings: findings}
+	// AllowlistedEndpoints is carried, not dropped: ADR 0036 §4's gate
+	// reads it, and a helper that omitted it would test the gate with an
+	// empty allowlist while the real CLI passes a full one.
+	return Snapshot{Model: m, Findings: findings, AllowlistedEndpoints: outcome.AllowlistedEndpoints}
 }
 
 // copyTree copies the real vendored fixture tree into dst, so each test
@@ -76,12 +79,27 @@ func mustReplace(t *testing.T, path, old, new string) {
 // meet: diff has to be checked against genuine before/after source, the
 // same standard docs/testing.md sets for extraction itself.
 //
-// This is deliberately NOT expected to gate: mutating-endpoint-without-access-control
-// is Low confidence (ADR 0004), and Low never gates (ADR 0007 §3) — a
-// removed guard is real, structural information (it shows up in
-// BecamePublic), but not, on its own, the kind of finding this tool
-// states High confidence about. Asserting it does NOT gate is as
-// important a check as asserting the structural change is seen at all.
+// THIS TEST'S EXPECTATION WAS INVERTED BY
+// docs/decisions/0036-became-public-gates-ci.md, deliberately and not by
+// flipping a boolean until the suite passed. What it asserted before:
+//
+//	"a Low-confidence-only change (guard removed) must not gate CI"
+//
+// That was a correct reading of ADR 0007 §3, which placed "endpoints that
+// became public" under the informational structural diff. It was also the
+// reason README.md's claim that diff "fails the build on an endpoint that
+// newly lost its protection" was false for the whole of 0.7.x: five
+// endpoints lose their class-level guard here and the run exited 0.
+//
+// ADR 0036 §1 adds case (c) and this is its real-source positive case —
+// a genuine vendored fixture with a class-level @Roles()/@UseGuards()
+// stripped, not a constructed model pair. The gate is NOT the Low rule
+// being promoted (§6 keeps it Low and ungated): it is the TRANSITION,
+// which requires protection Sphinxor positively saw in the base.
+//
+// The structural assertions below are unchanged and still matter: the gate
+// must fire on exactly the endpoints BecamePublic reports, never on a
+// superset.
 func TestRealWorldDiff_GuardRemoved(t *testing.T) {
 	baseDir := t.TempDir()
 	headDir := t.TempDir()
@@ -105,8 +123,31 @@ func TestRealWorldDiff_GuardRemoved(t *testing.T) {
 		}
 	}
 
-	if result.HasRegressions() {
-		t.Errorf("a Low-confidence-only change (guard removed) must not gate CI, got regressions: %+v", result.Regressions)
+	if !result.HasRegressions() {
+		t.Fatal("five endpoints lost their only guard and the run did not gate — ADR 0036 §1 case (c)")
+	}
+	if len(result.Regressions) != 5 {
+		t.Errorf("got %d regression(s), want 5 — the gate must fire on exactly the endpoints BecamePublic reports, not a superset: %+v", len(result.Regressions), result.Regressions)
+	}
+	for _, reg := range result.Regressions {
+		if reg.Reason != ReasonBecamePublic {
+			t.Errorf("regression %q has reason %q, want %q", reg.Finding.SubjectID, reg.Reason, ReasonBecamePublic)
+		}
+		if reg.Finding.RuleID != becamePublicRuleID {
+			t.Errorf("regression %q has rule %q, want %q", reg.Finding.SubjectID, reg.Finding.RuleID, becamePublicRuleID)
+		}
+		if reg.Finding.Confidence != model.ConfidenceHigh {
+			t.Errorf("regression %q is %q, but only High gates", reg.Finding.SubjectID, reg.Finding.Confidence)
+		}
+	}
+
+	// ADR 0036 §6: the Low rule is NOT what gates. Every one of these
+	// endpoints also carries mutating-endpoint-without-access-control or
+	// nothing at all, and neither may contribute a regression.
+	for _, reg := range result.Regressions {
+		if reg.Finding.RuleID == "mutating-endpoint-without-access-control" {
+			t.Errorf("the Low rule gated; ADR 0036 §6 keeps it ungated")
+		}
 	}
 }
 

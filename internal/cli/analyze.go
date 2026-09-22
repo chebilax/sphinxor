@@ -66,17 +66,35 @@ func resolveFramework(dir, override string) (extract.Framework, string, error) {
 // endpoints) go to w, which callers point at stderr so they never
 // contaminate a --format json report on stdout.
 func analyzeDirectory(w io.Writer, dir, override string) (*model.Model, []model.Finding, error) {
+	m, findings, _, err := analyzeSnapshot(w, dir, override)
+	return m, findings, err
+}
+
+// analyzeSnapshot is analyzeDirectory plus the set of endpoints a
+// sphinxor-allow marker exempts.
+//
+// It exists for `sphinxor diff` alone (ADR 0036 §4). That gate has to know
+// whether an endpoint made public was made public DELIBERATELY, and the
+// allowlist set is the only complete source of that: a GET endpoint that
+// loses its guard and gains a marker produces no finding at all, so the
+// Allowlisted flag on findings has nothing to ride on. Measured, not
+// assumed — see Snapshot.AllowlistedEndpoints.
+//
+// Kept as a separate entry point rather than widening analyzeDirectory's
+// signature, so the dozen callers that do not need the set are not made
+// to discard it at every call.
+func analyzeSnapshot(w io.Writer, dir, override string) (*model.Model, []model.Finding, map[model.ID]bool, error) {
 	framework, how, err := resolveFramework(dir, override)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	sourceFiles, err := extract.SourceFileCount(dir, framework)
 	if err != nil {
-		return nil, nil, fmt.Errorf("scanning %s: %w", dir, err)
+		return nil, nil, nil, fmt.Errorf("scanning %s: %w", dir, err)
 	}
 	if sourceFiles == 0 {
-		return nil, nil, fmt.Errorf(
+		return nil, nil, nil, fmt.Errorf(
 			"no %s source files found under %s — nothing was analyzed.\n"+
 				"Check the path, or pass --framework if the framework was misidentified",
 			framework, dir)
@@ -86,7 +104,7 @@ func analyzeDirectory(w io.Writer, dir, override string) (*model.Model, []model.
 
 	m, allow, err := extract.Run(dir, framework)
 	if err != nil {
-		return nil, nil, fmt.Errorf("extracting model at %s: %w", dir, err)
+		return nil, nil, nil, fmt.Errorf("extracting model at %s: %w", dir, err)
 	}
 
 	// Parsed real files but recognized no routes. Unlike the zero-files
@@ -115,7 +133,7 @@ func analyzeDirectory(w io.Writer, dir, override string) (*model.Model, []model.
 	findings := lint.Run(m, lint.DefaultRules(), allow.AllowlistedEndpoints)
 	findings = append(findings, allow.StaleMarkers...)
 
-	return m, findings, nil
+	return m, findings, allow.AllowlistedEndpoints, nil
 }
 
 // projectWarnings returns the project-level caveats that change how the

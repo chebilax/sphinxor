@@ -37,18 +37,18 @@ func newDiffCmd() *cobra.Command {
 // status could be dropped before the de-allowlisting regression case
 // can match against it.
 func runDiff(cmd *cobra.Command, baseDir, headDir, framework string, format report.Format) error {
-	baseModel, baseFindings, err := analyzeDirectory(cmd.ErrOrStderr(), baseDir, framework)
+	baseModel, baseFindings, baseAllowed, err := analyzeSnapshot(cmd.ErrOrStderr(), baseDir, framework)
 	if err != nil {
 		return err
 	}
-	headModel, headFindings, err := analyzeDirectory(cmd.ErrOrStderr(), headDir, framework)
+	headModel, headFindings, headAllowed, err := analyzeSnapshot(cmd.ErrOrStderr(), headDir, framework)
 	if err != nil {
 		return err
 	}
 
 	result := diff.Compare(
-		diff.Snapshot{Model: baseModel, Findings: baseFindings},
-		diff.Snapshot{Model: headModel, Findings: headFindings},
+		diff.Snapshot{Model: baseModel, Findings: baseFindings, AllowlistedEndpoints: baseAllowed},
+		diff.Snapshot{Model: headModel, Findings: headFindings, AllowlistedEndpoints: headAllowed},
 	)
 
 	if err := report.WriteDiff(cmd.OutOrStdout(), result, format); err != nil {

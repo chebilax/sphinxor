@@ -67,3 +67,37 @@ func TestWriteDiff_NoChangesReadsCleanly(t *testing.T) {
 		t.Errorf("expected zero regressions to be stated plainly: %s", out)
 	}
 }
+
+// TestWriteDiff_ExcusedTransitionIsMarked is ADR 0036 §7's readability
+// half: an allowlisted became-public transition stays in the report
+// rather than vanishing because it was excused — but it says so, or a
+// reader seeing "0 regression(s)" above a listed endpoint is left to work
+// out why it did not fail the build.
+func TestWriteDiff_ExcusedTransitionIsMarked(t *testing.T) {
+	e := model.Endpoint{ID: "DELETE /things/1", HTTPMethod: model.MethodDelete, Path: "/things/1"}
+	gatedEndpoint := model.Endpoint{ID: "DELETE /things/2", HTTPMethod: model.MethodDelete, Path: "/things/2"}
+
+	result := diff.Result{
+		BecamePublic: []model.Endpoint{e, gatedEndpoint},
+		Regressions: []diff.Regression{{
+			Finding: model.Finding{RuleID: "endpoint-became-public", SubjectID: gatedEndpoint.ID, SubjectKind: model.SubjectEndpoint, Message: "gated"},
+			Reason:  diff.ReasonBecamePublic,
+		}},
+	}
+
+	var b bytes.Buffer
+	if err := WriteDiff(&b, result, FormatMarkdown); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+
+	if !strings.Contains(out, "- DELETE /things/1 (allowlisted — does not fail the build)") {
+		t.Errorf("the excused transition is not marked as excused:\n%s", out)
+	}
+	if strings.Contains(out, "- DELETE /things/2 (allowlisted") {
+		t.Errorf("a gated transition was marked as allowlisted:\n%s", out)
+	}
+	if !strings.Contains(out, "- DELETE /things/2\n") {
+		t.Errorf("the gated transition is missing from Became Public:\n%s", out)
+	}
+}

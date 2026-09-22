@@ -132,15 +132,61 @@ func sortRoleReferences(refs []model.RoleReference) {
 // becamePublic finds endpoints present in both base and head that had a
 // guard application in base and none in head — vision.md's "endpoints
 // that became public".
-func becamePublic(baseModel, headModel *model.Model, baseGuardsByKey, headGuardsByKey map[guardAppKey]model.GuardApplication) []model.Endpoint {
-	baseGuardedEndpoints := make(map[model.ID]bool, len(baseGuardsByKey))
-	for k := range baseGuardsByKey {
-		baseGuardedEndpoints[k.endpointID] = true
+// protectedEndpoints is ADR 0036 §2's definition: every endpoint with ANY
+// evidence of authorization, not every endpoint with a guard.
+//
+// The four terms and why the list is not just term 1:
+//
+//   - GuardApplication — method-level annotations, NestJS @UseGuards/@Roles,
+//     composite-resolved guards (ADR 0006), and URL-layer grants, which are
+//     GuardApplications with AppliedAt: ScopeRequestMatcher (ADR 0012).
+//   - UnrecognizedAuthAnnotation — Shiro (ADR 0023), a same-named annotation
+//     from another package such as nacos's @Secured (ADR 0022), and
+//     @PostAuthorize (ADR 0030). THIS IS THE TERM THAT MATTERS. Measured
+//     across the 20-repository corpus, term 1 alone protects 802 of 5,530
+//     endpoints and all four terms protect 2,704; the 1,902 difference is
+//     entirely this one, and SEVEN repositories have zero under term 1 and
+//     real protection here — metersphere 869, nacos 393, JeecgBoot 244,
+//     litemall 115, streampark 102, shenyu 100, inlong 79. Without it, a
+//     Shiro annotation disappearing is not even reported as a transition,
+//     let alone gated.
+//   - PermissionReference (ADR 0035) and AuthenticationRequirement (ADR 0010)
+//     are REDUNDANT TODAY — every corpus PermissionReference belongs to a
+//     guard satisfying term 1, and the Spring corpus has no
+//     AuthenticationRequirements at all. They are named anyway, for the
+//     reason ADR 0011 §1 paid for the hard way: a definition written as
+//     "term 1, and the rest follow" is wrong the moment an extractor
+//     produces one without the other, with no test failing. ADR 0035 §7
+//     already defers NestJS permissions to exactly that shape.
+//
+// Coarse by decision (ADR 0036 §2): presence, never content. hasRole('ADMIN')
+// becoming hasRole('USER') is not a transition, because Sphinxor holds no
+// ordering over roles — ADR 0031 announces a RoleHierarchy precisely because
+// it cannot read one.
+func protectedEndpoints(m *model.Model) map[model.ID]bool {
+	out := make(map[model.ID]bool, len(m.GuardApplications))
+	guardByID := make(map[model.ID]model.GuardApplication, len(m.GuardApplications))
+	for _, g := range m.GuardApplications {
+		out[g.EndpointID] = true
+		guardByID[g.ID] = g
 	}
-	headGuardedEndpoints := make(map[model.ID]bool, len(headGuardsByKey))
-	for k := range headGuardsByKey {
-		headGuardedEndpoints[k.endpointID] = true
+	for _, a := range m.UnrecognizedAuthAnnotations {
+		out[a.EndpointID] = true
 	}
+	for _, p := range m.PermissionReferences {
+		if g, ok := guardByID[p.GuardApplicationID]; ok {
+			out[g.EndpointID] = true
+		}
+	}
+	for _, r := range m.AuthenticationRequirements {
+		out[r.EndpointID] = true
+	}
+	return out
+}
+
+func becamePublic(baseModel, headModel *model.Model) []model.Endpoint {
+	baseGuardedEndpoints := protectedEndpoints(baseModel)
+	headGuardedEndpoints := protectedEndpoints(headModel)
 
 	baseByID := make(map[model.ID]model.Endpoint, len(baseModel.Endpoints))
 	for _, e := range baseModel.Endpoints {

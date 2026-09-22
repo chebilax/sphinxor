@@ -18,6 +18,23 @@ import (
 type Snapshot struct {
 	Model    *model.Model
 	Findings []model.Finding
+	// AllowlistedEndpoints is the set of endpoints carrying a
+	// sphinxor-allow marker in this snapshot, as
+	// internal/allowlist.Outcome reports it.
+	//
+	// Carried explicitly rather than derived from Findings, and that is
+	// measured rather than assumed — docs/decisions/0036-became-public-gates-ci.md
+	// §4. A GET endpoint that loses its @PreAuthorize and gains a marker
+	// produces ZERO findings: the marker is matched (no
+	// stale-allow-marker is emitted for it) but
+	// mutating-endpoint-without-access-control does not fire on a read,
+	// so no finding exists to carry Allowlisted: true. Deriving the set
+	// from findings would gate a deliberately-public GET with the
+	// author's marker one line above the handler.
+	//
+	// nil is a valid empty set: a caller that does not populate it gets
+	// today's behaviour for cases (a) and (b), which do not consult it.
+	AllowlistedEndpoints map[model.ID]bool
 }
 
 // Result is the outcome of comparing a base Snapshot to a head one —
@@ -68,6 +85,14 @@ type RegressionReason string
 const (
 	ReasonNew              RegressionReason = "new"
 	ReasonAllowlistRemoved RegressionReason = "allowlist-removed"
+	// ReasonBecamePublic is ADR 0036 §1's case (c): an endpoint present
+	// on both sides, protected in base, unprotected in head, and not
+	// allowlisted in head.
+	//
+	// It is the only regression reason whose Finding no lint rule
+	// produces — it is a fact about a transition, meaningless in a single
+	// snapshot, so `sphinxor lint` can never emit it (§7).
+	ReasonBecamePublic RegressionReason = "became-public"
 )
 
 // Compare diffs base against head.
@@ -85,7 +110,7 @@ func Compare(base, head Snapshot) Result {
 	headRefsByKey := indexRoleReferences(head.Model, guardAppByID(head.Model))
 	r.AddedRoleReferences, r.RemovedRoleReferences = diffRoleReferences(baseRefsByKey, headRefsByKey)
 
-	r.BecamePublic = becamePublic(base.Model, head.Model, baseGuardsByKey, headGuardsByKey)
+	r.BecamePublic = becamePublic(base.Model, head.Model)
 
 	r.Regressions = diffRegressions(base, head)
 
