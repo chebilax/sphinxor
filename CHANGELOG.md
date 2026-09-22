@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-22
+
+Two decisions, and the second one can turn a green pipeline red. `sphinxor diff`
+now fails the build when an endpoint loses its access control — which `README.md`
+had been claiming since 0.7.0 and the code did not do. Read *Effect on CI* below
+before upgrading a pipeline.
+
 ### Added
 
 - **The model carries a permission, not only a role.** A Spring Security
@@ -39,7 +46,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RuoYi-Vue`'s omissions previously said the requirement *could not be
   determined*, which stopped being true. Exporting permissions is a later step.
 
-### Effect on CI — `sphinxor diff` can now fail where it passed before
+### Effect on CI
+
+**The permission work changes nothing.** No finding count moves anywhere in the
+20-repository corpus or in any vendored fixture, and `empty-role` — the only
+High-confidence, build-gating lint rule — fires zero times before and after. The
+`sphinxor diff` change below is the one thing in this release that can turn a green
+pipeline red.
+
+#### `sphinxor diff` can now fail where it passed before
 
 **This is an exit-code change.** A pipeline that was green can go red, and that is
 the point of it, but it is not something to discover from a diff.
@@ -72,14 +87,13 @@ What does **not** gate, each a decision rather than an omission:
 once before upgrading the pipeline, and `sphinxor-allow` anything it names that is
 public on purpose.
 
-### Effect on CI from the permission work
+#### Why the permission work is a CI no-op, given what it touched
 
-**None.** No finding count changes anywhere in the 20-repository corpus or in any
-vendored fixture, and `empty-role` — the only High-confidence, build-gating rule —
-fires zero times before and after. A permission-bearing `@PreAuthorize` reads as
-`DeclaresRoles: true` with no role references, which is character for character
-`empty-role`'s trigger; `DeclaresPermissions` is what keeps it off, and the
-regression bar for this change was that count staying at zero.
+A permission-bearing `@PreAuthorize` reads as `DeclaresRoles: true` with no role
+references, which is character for character `empty-role`'s trigger.
+`DeclaresPermissions` is what keeps it off, and the regression bar for that change
+was the count staying at zero — verified across all 20 repositories and all four
+vendored fixtures.
 
 `sphinxor diff` does not yet compare permissions — a permission added or removed
 between two runs is invisible to it. That is stated in
