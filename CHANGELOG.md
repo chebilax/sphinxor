@@ -46,6 +46,37 @@ before upgrading a pipeline.
   `RuoYi-Vue`'s omissions previously said the requirement *could not be
   determined*, which stopped being true. Exporting permissions is a later step.
 
+### What is still not read
+
+Stated here rather than only in the ADRs, because a release note that lists what a
+tool gained and not what it still cannot see reads as a bigger claim than it is.
+
+- **Bean calls naming no literal — 150 of the 355 in the corpus**, all 140 of
+  `apolloconfig/apollo`'s among them. `@unifiedPermissionValidator.isSuperAdmin()`
+  and `@validator.hasModifyNamespacePermission(#appId, #env, …)` encode their
+  requirement in the bean method's *name*, not in a string, so there is nothing to
+  read. Those endpoints keep `?` in Roles and Permissions, and the run still counts
+  them.
+- **`hasPermission(...)`**, Spring Security's own permission expression, and Spring's
+  `@Secured` / `@RolesAllowed` / `@PostAuthorize`: zero uses across the corpus, and
+  not read for that reason.
+- **NestJS permissions.** [ADR 0035](docs/decisions/0035-permissions-in-the-model.md)
+  is Spring Security only. Every figure in `docs/limitations.md`'s NestJS survey
+  stands unchanged — `@Allow(Permission.ReadProduct)`, `@Acl(...)`,
+  `@Authenticated({ permission })` are all still invisible.
+- **Everything [ADR 0029](docs/decisions/0029-spring-security-scope.md) §1 puts out
+  of scope**: Shiro's 416 permission literals, nacos's 419 `resource`/`action` pairs,
+  dataease's 97 `@DePermit`, `spring-cloud-dataflow`'s 66 YAML rules, and every
+  in-handler check. Against the 1,133 permission declarations `docs/limitations.md`
+  counts, this release gives a home to **212**.
+- **`sphinxor diff` does not compare permissions.** A permission added or removed
+  between two runs is invisible to it.
+
+Two further limits belong to the *gate* rather than to extraction, and are in the
+table under *Effect on CI*: a privilege **widened** from `ADMIN` to `USER` is not
+caught, and an endpoint **renamed** in the same change that drops its guard is
+visible in the diff but does not fail the build.
+
 ### Effect on CI
 
 **The permission work changes nothing.** No finding count moves anywhere in the
