@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/chebilax/sphinxor/internal/diff"
+	"github.com/chebilax/sphinxor/internal/model"
 )
 
 // WriteDiff renders a diff.Result to w in the given format, per
@@ -57,12 +58,27 @@ func writeDiffMarkdown(w io.Writer, result diff.Result) error {
 	}
 	b.WriteString("\n")
 
+	// Every became-public transition is listed, gated or not — ADR 0036
+	// §7: an allowlisted one stays visible rather than vanishing from the
+	// report because it was excused. It is marked, though, so a reader
+	// who sees "0 regression(s)" above an endpoint listed here is not
+	// left to work out why it did not fail the build.
+	gated := make(map[model.ID]bool, len(result.Regressions))
+	for _, reg := range result.Regressions {
+		if reg.Reason == diff.ReasonBecamePublic {
+			gated[reg.Finding.SubjectID] = true
+		}
+	}
 	b.WriteString("## Became Public\n\n")
 	if len(result.BecamePublic) == 0 {
 		b.WriteString("None.\n")
 	}
 	for _, e := range result.BecamePublic {
-		fmt.Fprintf(&b, "- %s %s\n", e.HTTPMethod, e.Path)
+		marker := ""
+		if !gated[e.ID] {
+			marker = " (allowlisted — does not fail the build)"
+		}
+		fmt.Fprintf(&b, "- %s %s%s\n", e.HTTPMethod, e.Path, marker)
 	}
 	b.WriteString("\n")
 

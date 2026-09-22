@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/chebilax/sphinxor/internal/model"
@@ -84,11 +85,62 @@ func diffRegressions(base, head Snapshot) []Regression {
 		}
 	}
 
+	out = append(out, becamePublicRegressions(base, head)...)
+
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Finding.RuleID != out[j].Finding.RuleID {
 			return out[i].Finding.RuleID < out[j].Finding.RuleID
 		}
 		return out[i].Finding.SubjectID < out[j].Finding.SubjectID
 	})
+	return out
+}
+
+// becamePublicRuleID names ADR 0036 §1's case (c) in the report.
+//
+// It is NOT a lint rule and `sphinxor lint` never emits it: it is a fact
+// about a transition between two snapshots, meaningless in one, absent
+// from lint.DefaultRules(), and not among docs/vision.md's three rules.
+// Synthesizing a model.Finding is how it reaches the existing report row
+// and JSON shape without a parallel structure (ADR 0036 §7).
+const becamePublicRuleID = "endpoint-became-public"
+
+// becamePublicRegressions implements ADR 0036 §1 case (c): an endpoint
+// present in both snapshots, protected in base, unprotected in head, and
+// not allowlisted in head.
+//
+// It reuses Result.BecamePublic's own computation — via becamePublic —
+// rather than recomputing the transition, so the gated set can never
+// drift from the set the report prints. The one thing it adds is the
+// allowlist filter, and the report deliberately keeps showing an
+// allowlisted transition (ADR 0036 §7): excused is not the same as
+// invisible.
+func becamePublicRegressions(base, head Snapshot) []Regression {
+	var out []Regression
+	for _, e := range becamePublic(base.Model, head.Model) {
+		if head.AllowlistedEndpoints[e.ID] {
+			// ADR 0036 §4: the marker is the author's statement about
+			// the code as it now stands, which is exactly this case.
+			continue
+		}
+		out = append(out, Regression{
+			Finding: model.Finding{
+				// Same shape lint.Run assigns, so a JSON consumer sees
+				// no empty field where every other finding has an ID.
+				// Positional within the run, exactly as lint.Run's is;
+				// what is stable across runs is SubjectID, which is
+				// derived from method and path (model.NewEndpointID).
+				ID:          model.ID(fmt.Sprintf("%s-%d", becamePublicRuleID, len(out)+1)),
+				RuleID:      becamePublicRuleID,
+				Confidence:  model.ConfidenceHigh,
+				SubjectID:   e.ID,
+				SubjectKind: model.SubjectEndpoint,
+				Message: fmt.Sprintf(
+					"%s %s had access control in the base and has none in the head",
+					e.HTTPMethod, e.Path),
+			},
+			Reason: ReasonBecamePublic,
+		})
+	}
 	return out
 }

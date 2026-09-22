@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`sphinxor diff` gates on an endpoint that lost its protection**
+  ([ADR 0036](docs/decisions/0036-became-public-gates-ci.md)). See *Effect on CI*
+  below — this is the one change in this release that can turn a green pipeline red.
 - **The unrecovered-requirement warning names a different example**, because its
   old one — `@ss.hasPermi('...')` — is now read. It counts endpoints whose
   requirement could not be read at all, and its Roles/Permissions `?` marking is
@@ -36,7 +39,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RuoYi-Vue`'s omissions previously said the requirement *could not be
   determined*, which stopped being true. Exporting permissions is a later step.
 
-### Effect on CI
+### Effect on CI — `sphinxor diff` can now fail where it passed before
+
+**This is an exit-code change.** A pipeline that was green can go red, and that is
+the point of it, but it is not something to discover from a diff.
+
+`sphinxor diff` now fails the build when **an endpoint had access control in the base
+and has none in the head** — [ADR 0036](docs/decisions/0036-became-public-gates-ci.md)
+§1 case (c). This was already computed and printed under *Became Public*; it simply
+never gated, so `README.md`'s claim that diff "fails the build on an endpoint that
+newly lost its protection" was **false for the whole of 0.7.x**. A removed
+`@PreAuthorize` exited 0. The README sentence is corrected in the same release.
+
+What "protection" means is deliberately broad (§2): a guard, a URL-layer grant, a
+permission, an authentication requirement — **and an authorization annotation
+Sphinxor recognizes without understanding**, such as Apache Shiro's
+`@RequiresPermissions` or nacos's `@Secured`. Measured across the corpus, counting
+only guards would be blind on **seven repositories and 1,902 endpoints**, where
+removing an annotation was not previously reported as a transition at all.
+
+What does **not** gate, each a decision rather than an omission:
+
+| | |
+|---|---|
+| A new unprotected endpoint | `mutating-endpoint-without-access-control` stays **Low and ungated** (§6). It fires 1,313 times across 16 corpus repositories, almost all false positives in the safe direction; gating it would fail nearly every PR that adds a route to such a project. |
+| An endpoint made public **deliberately** | Mark it `// sphinxor-allow: <reason>` and it does not gate (§4). The transition still appears in the report — excused, not hidden. |
+| A requirement that merely **changed** | `hasRole('ADMIN')` → `hasRole('USER')` does not gate. Sphinxor holds no ordering over roles, so a privilege *widening* is not caught (§2). |
+| A readable requirement becoming **unreadable** | `hasRole('ADMIN')` → `@ss.hasPermi('x')` or `@validator.check(#id)` is still protected and does not gate (§3). |
+| A **renamed** endpoint | An identity change is removed-plus-added, so a rename combined with an unguard in one PR does not gate (§5). |
+
+**To adopt without a red build**: run `sphinxor diff` against your reference branch
+once before upgrading the pipeline, and `sphinxor-allow` anything it names that is
+public on purpose.
+
+### Effect on CI from the permission work
 
 **None.** No finding count changes anywhere in the 20-repository corpus or in any
 vendored fixture, and `empty-role` — the only High-confidence, build-gating rule —
