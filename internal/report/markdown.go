@@ -18,16 +18,17 @@ func writeMarkdown(w io.Writer, matrix Matrix) error {
 		len(matrix.Rows), len(matrix.Findings), blocking, warnings, allowlisted)
 
 	b.WriteString("## Endpoints\n\n")
-	b.WriteString("| Method | Path | Handler | Controller | Guards | Roles | Findings |\n")
-	b.WriteString("|---|---|---|---|---|---|---|\n")
+	b.WriteString("| Method | Path | Handler | Controller | Guards | Roles | Permissions | Findings |\n")
+	b.WriteString("|---|---|---|---|---|---|---|---|\n")
 	for _, row := range matrix.Rows {
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n",
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s |\n",
 			row.Method,
 			renderPath(row),
 			row.Handler,
 			row.Controller,
 			renderGuards(row),
 			renderRoles(row),
+			renderPermissions(row),
 			findingSummaries(row.Findings),
 		)
 	}
@@ -95,6 +96,30 @@ func renderRoles(row Row) string {
 		return "?"
 	}
 	return strings.Join(row.Roles, ", ") + ", ?"
+}
+
+// renderPermissions shows an endpoint's named requirements that are not
+// roles, each with the bean call that named it
+// (docs/decisions/0035-permissions-in-the-model.md §5).
+//
+// The "?"/"-" discipline is ADR 0020 Amendment 3 §11's, driven by the same
+// flag as renderRoles: an unread expression leaves the requirement unknown
+// without saying which kind it names, so "-" here would be a claim.
+//
+// This column is why renderRoles's "-" is safe on a permission-bearing
+// endpoint. PUT /system/user in RuoYi-Vue renders Guards "-" (a
+// role-declaring guard is surfaced under Roles, not Guards) and Roles "-"
+// (the expression was read and names no role). Without this cell the row
+// reads "- | -": a stronger and entirely false claim than the "?" it
+// replaced.
+func renderPermissions(row Row) string {
+	if !row.RolesUnresolved {
+		return joinOrDash(row.Permissions)
+	}
+	if len(row.Permissions) == 0 {
+		return "?"
+	}
+	return strings.Join(row.Permissions, ", ") + ", ?"
 }
 
 func joinOrDash(items []string) string {

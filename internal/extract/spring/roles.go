@@ -47,6 +47,13 @@ func roleLiteralsOf(ann annotationCall, src []byte) []string {
 			return nil
 		}
 		result := parseSpEL(lit)
+		// Only spelRoles. spelPermissions must NOT reach here (ADR 0035
+		// §7): a permission literal entering usedLiterals would make
+		// extractRoleDeclarations treat any Java constant whose value is
+		// "system:user:edit" as a RoleDeclaration, and
+		// permission-declared-but-unreferenced would then fire on it.
+		// The corpus has zero such constants today; this equality is
+		// what keeps that zero from depending on luck.
 		if result.Kind != spelRoles {
 			return nil
 		}

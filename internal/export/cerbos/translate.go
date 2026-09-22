@@ -145,6 +145,18 @@ const (
 	// claim is narrower, that no role is safe to export here, not that
 	// nobody can ever reach it.
 	ReasonNoCommonRole OmissionReason = "no-common-role"
+	// ReasonPermissionNotExportable: the endpoint's requirement WAS read
+	// and it is a permission, not a role — docs/decisions/0035-permissions-in-the-model.md
+	// §7. Cerbos rules grant to roles, so there is nothing to put in a
+	// `roles:` list, and inventing one from a permission string would
+	// assert a role the application does not have.
+	//
+	// It is separated from ReasonNoRole because that reason's detail says
+	// the requirement could NOT be determined, which stopped being true
+	// for these endpoints the moment ADR 0035 read them. 113 of
+	// RuoYi-Vue's omissions carried that wrong sentence. Exporting
+	// permissions at all is step 2, and this reason is where it attaches.
+	ReasonPermissionNotExportable OmissionReason = "permission-not-exportable"
 )
 
 // Omission records one endpoint that could not become part of any Rule,
@@ -266,6 +278,15 @@ func Translate(m *model.Model) Result {
 	for _, g := range m.GuardApplications {
 		guardAppByID[g.ID] = g
 		guardedEndpoints[g.EndpointID] = true
+	}
+	// Endpoints whose requirement was read and is a permission (ADR 0035
+	// §7). Nothing new is exported for them; they get their own omission
+	// reason instead of ReasonNoRole's now-wrong explanation.
+	permissionEndpoints := make(map[model.ID]bool, len(m.PermissionReferences))
+	for _, ref := range m.PermissionReferences {
+		if app, ok := guardAppByID[ref.GuardApplicationID]; ok {
+			permissionEndpoints[app.EndpointID] = true
+		}
 	}
 
 	// Grants are collected per layer, not into one flat set, before being
@@ -454,7 +475,14 @@ func Translate(m *model.Model) Result {
 					continue
 				}
 				reason, detail := ReasonNoGuard, "no access control detected for this endpoint"
-				if guardedEndpoints[en.endpoint.ID] {
+				if permissionEndpoints[en.endpoint.ID] {
+					// ADR 0035 §7. Read, understood, and not a role.
+					reason, detail = ReasonPermissionNotExportable,
+						"requires a permission rather than a role ("+permissionDetail(m, en.endpoint.ID)+"). "+
+							"Cerbos rules grant to roles, so nothing was exported — this is a limit of the "+
+							"export, not a gap in what Sphinxor read. The endpoint's requirement is in the "+
+							"RBAC matrix's Permissions column"
+				} else if guardedEndpoints[en.endpoint.ID] {
 					// Endpoints genuinely "authenticated, any role" export
 					// via AuthenticationRequirement (ADR 0010) instead of
 					// landing here — this branch is only reached now by a
@@ -551,6 +579,33 @@ func collisionDetail(resource, action string, all []endpointEntry, self endpoint
 		" — Sphinxor maps one Cerbos action per HTTP method on a resource and can't tell these routes" +
 		" apart by path, so since they don't all need the same access, none of them were exported for" +
 		" this action rather than risk granting the wrong one"
+}
+
+// permissionDetail renders an endpoint's permissions for an omission
+// comment — "@ss.hasPermi('system:user:edit')" — with the bean call
+// included, because ADR 0035 §3 does not interpret it and a bare literal
+// in a Cerbos file would look like a role name.
+func permissionDetail(m *model.Model, endpointID model.ID) string {
+	guardAppByID := make(map[model.ID]model.GuardApplication, len(m.GuardApplications))
+	for _, g := range m.GuardApplications {
+		guardAppByID[g.ID] = g
+	}
+	var parts []string
+	seen := map[string]bool{}
+	for _, ref := range m.PermissionReferences {
+		app, ok := guardAppByID[ref.GuardApplicationID]
+		if !ok || app.EndpointID != endpointID {
+			continue
+		}
+		rendered := ref.Via + "('" + ref.RawLiteral + "')"
+		if seen[rendered] {
+			continue
+		}
+		seen[rendered] = true
+		parts = append(parts, rendered)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
 }
 
 // noCommonRoleDetail explains a ReasonNoCommonRole omission in plain

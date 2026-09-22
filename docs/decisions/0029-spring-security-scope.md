@@ -62,7 +62,9 @@ Every Spring Security mechanism, with exactly one status:
 | SpEL `hasRole` / `hasAnyRole` / `hasAuthority` / `hasAnyAuthority` | read | [0011](0011-spring-second-framework.md) §1 |
 | SpEL `isAuthenticated()` | read | [0010](0010-authenticated-any-role.md), [0017](0017-declaresroles-excludes-isauthenticated.md) |
 | SpEL `permitAll()` / `denyAll()` | read (as no role list) | [0017](0017-declaresroles-excludes-isauthenticated.md), [0020](0020-unanalyzable-is-unknown-not-absent.md) Am3 §10 |
-| SpEL outside that subset — bean calls, boolean combinations, `#param` comparisons | **detected and announced** (`?` in Roles, warning names the count) | [0020](0020-unanalyzable-is-unknown-not-absent.md) Am3 §9/§11 |
+| SpEL bean call whose arguments are all literals — `@ss.hasPermi('system:user:edit')` | read (as a **permission**, not a role) | [0035](0035-permissions-in-the-model.md) §2 |
+| SpEL outside that subset — a bean call naming no readable literal, boolean combinations, `#param` comparisons | **detected and announced** (`?` in Roles and Permissions, warning names the count) | [0020](0020-unanalyzable-is-unknown-not-absent.md) Am3 §9/§11, [0035](0035-permissions-in-the-model.md) §2 |
+| `hasPermission(...)`, Spring's own permission expression | **detected and announced** (zero corpus uses; not read for that reason) | [0035](0035-permissions-in-the-model.md) §2 |
 | A same-named annotation from another package | detected and announced | [0022](0022-annotation-identity-and-unrecognized-authorization.md) §2/§3a |
 | `@EnableMethodSecurity` / `@EnableGlobalMethodSecurity`, and its absence | read; absence announced | [0015](0015-inert-method-security-guard.md), [0020](0020-unanalyzable-is-unknown-not-absent.md) §4 |
 | `@EnableReactiveMethodSecurity` | read | [0015](0015-inert-method-security-guard.md) Am1 |
@@ -151,6 +153,11 @@ Three things remain open and are **not** on this list, by construction:
 - Reading the *content* of what is announced — an unreadable SpEL expression, a
   `RouterFunction` builder's routes, an external interface's mappings. Each is a
   resolution decision with its own cost, recorded in `docs/limitations.md`.
+  [ADR 0035](0035-permissions-in-the-model.md) took the first of these, for one
+  shape: a bean call whose arguments are all literals is now read. §3's definition
+  of done is unaffected — it never required reading content — and the two rows
+  that split above were *detected and announced* before and after, so the
+  checklist stays empty of `silent`.
 - Everything §1 puts out of scope: other systems, and Kotlin source.
 - **Whether test sources should be analyzed at all.** `parseProject` skips
   directories named `test` and files ending `Test`/`Tests`/`IT`, which is a

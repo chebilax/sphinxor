@@ -18,6 +18,18 @@ import (
 // symbol (see internal/extract/nestjs's role-resolution limitation), is
 // invisible to this rule. A flagged role may genuinely be dead, or may
 // just be used somewhere this extractor doesn't look.
+//
+// This rule is named for permissions and operates on RoleDeclarations, and
+// docs/decisions/0035-permissions-in-the-model.md §6 deliberately left it
+// that way when the model gained model.PermissionReference. Extending it
+// would need a PermissionDeclaration to compare references against, and
+// there is nothing in Java source to build one from: across the
+// 20-repository corpus, no project declares a permission in code.
+// RuoYi-Vue's registry is sys_menu.perms in sql/ry_20260417.sql and
+// eladmin's is sys_menu.permission in sql/eladmin.sql — database seeds
+// this extractor does not read. A rule that could never fire would be
+// worse than one honestly out of scope, so the name stays aspirational and
+// the reason is recorded here rather than rediscovered.
 type PermissionDeclaredButUnreferenced struct{}
 
 func (PermissionDeclaredButUnreferenced) ID() string {

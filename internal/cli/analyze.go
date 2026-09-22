@@ -301,11 +301,12 @@ func projectWarnings(m *model.Model) []string {
 	// stop. The matrix marks each such cell "?"; this says what the mark
 	// means and in which direction the reader should be wrong.
 	if n := unresolvedRoleEndpoints(m); n > 0 {
-		out = append(out, "the role requirement could not be read for "+strconv.Itoa(n)+" endpoint(s) carrying an\n"+
-			"         access-control annotation (a @PreAuthorize bean call such as @ss.hasPermi('...'), a SpEL\n"+
-			"         expression outside the recognized subset, or a same-named annotation from another\n"+
-			"         framework). Their Roles column is marked ? and UNDERSTATES what the application\n"+
-			"         requires — an empty or partial cell there is not evidence that no role is needed.")
+		out = append(out, "the requirement could not be read for "+strconv.Itoa(n)+" endpoint(s) carrying an\n"+
+			"         access-control annotation (a @PreAuthorize bean call naming no readable literal, such\n"+
+			"         as @el.check() or @validator.hasPermission(#id), a SpEL expression outside the\n"+
+			"         recognized subset, or a same-named annotation from another framework). Their Roles\n"+
+			"         and Permissions columns are marked ? and UNDERSTATE what the application requires —\n"+
+			"         an empty or partial cell there is not evidence that nothing is needed.")
 	}
 
 	// ADR 0021 §2: a GraphQL API this tool deliberately does not analyze.
@@ -390,10 +391,17 @@ func unresolvedPaths(m *model.Model) unresolvedPathCount {
 }
 
 // unresolvedRoleEndpoints counts endpoints carrying at least one
-// GuardApplication whose role list could not be read
+// GuardApplication whose requirement could not be read
 // (docs/decisions/0020-unanalyzable-is-unknown-not-absent.md Amendment 3
 // §9). Counted per endpoint rather than per annotation, so the warning's
 // number matches the rows a reader would go and look at.
+//
+// The warning's example changed with
+// docs/decisions/0035-permissions-in-the-model.md: it used to offer
+// @ss.hasPermi('...') as the unreadable case, which is precisely the case
+// that decision now READS. Leaving it would have pointed a reader at a
+// shape the run no longer reports. The count fell RuoYi-Vue 116 -> 0,
+// eladmin 99 -> 10 and the vendored ruoyi-vue-pro fixture 5 -> 0.
 func unresolvedRoleEndpoints(m *model.Model) int {
 	affected := make(map[model.ID]bool)
 	for _, g := range m.GuardApplications {
