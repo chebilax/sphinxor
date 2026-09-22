@@ -88,3 +88,67 @@ func TestWrite_UnknownFormat(t *testing.T) {
 		t.Fatal("expected an error for an unknown format, got nil")
 	}
 }
+
+// TestRenderPermissions_QuestionMarkDiscipline pins
+// docs/decisions/0035-permissions-in-the-model.md §5: the "?"/"-"
+// distinction ADR 0020 Amendment 3 §11 established applies to the new
+// column, driven by the same flag.
+//
+// "-" says no permission is required. "?" says a requirement exists and
+// was not recovered. An unread expression leaves the requirement unknown
+// WITHOUT saying which kind of requirement it names, which is why one
+// flag drives both cells.
+func TestRenderPermissions_QuestionMarkDiscipline(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		row  Row
+		want string
+	}{
+		{"nothing read, nothing found", Row{}, "-"},
+		{"read as a permission", Row{Permissions: []string{"@ss.hasPermi('system:user:edit')"}}, "@ss.hasPermi('system:user:edit')"},
+		{"two permissions", Row{Permissions: []string{"@el.check('user:list')", "@el.check('dept:list')"}}, "@el.check('user:list'), @el.check('dept:list')"},
+		{"unread: the requirement exists and was not recovered", Row{RolesUnresolved: true}, "?"},
+		{"partially read", Row{RolesUnresolved: true, Permissions: []string{"@ss.hasPermi('a')"}}, "@ss.hasPermi('a'), ?"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := renderPermissions(tc.row); got != tc.want {
+				t.Errorf("renderPermissions() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMarkdown_PermissionRowIsNotAllDashes is the rendered form of ADR
+// 0035 §5's own argument for adding the column in the same change as the
+// model term, taken from the real RuoYi-Vue row the PR shows:
+//
+//	PUT /system/user  @PreAuthorize("@ss.hasPermi('system:user:edit')")
+//
+// Guards is "-" because a role-declaring guard is surfaced under Roles,
+// not Guards. Roles is "-" because the expression was read end to end and
+// names no role. Without the Permissions cell that row reads "- | -" — a
+// stronger and entirely false claim than the "?" it replaced. This test
+// fails if the column is ever dropped while the model term stays.
+func TestMarkdown_PermissionRowIsNotAllDashes(t *testing.T) {
+	var b strings.Builder
+	matrix := Matrix{Rows: []Row{{
+		Controller:  "SysUserController",
+		Method:      model.MethodPut,
+		Path:        "/system/user",
+		Handler:     "edit",
+		Permissions: []string{"@ss.hasPermi('system:user:edit')"},
+	}}}
+	if err := writeMarkdown(&b, matrix); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "| Guards | Roles | Permissions | Findings |") {
+		t.Errorf("the Permissions column is missing from the header:\n%s", out)
+	}
+	if !strings.Contains(out, "@ss.hasPermi('system:user:edit')") {
+		t.Errorf("the permission is not rendered with the bean call that named it (ADR 0035 §3):\n%s", out)
+	}
+	if strings.Contains(out, "| - | - | - |") {
+		t.Errorf("the row renders as all dashes, claiming nothing is required on an endpoint whose requirement was read:\n%s", out)
+	}
+}

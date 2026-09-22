@@ -45,6 +45,12 @@ var uninterpretedSpringAuth = map[string]bool{
 type pendingGuard struct {
 	guardName string // "PreAuthorize" | "Secured" | "RolesAllowed"
 	roles     []roleArg
+	// permissions are the named requirements that are not roles, and via
+	// is the bean call that named them — ADR 0035 §1/§2. Never populated
+	// together with roles: §2 reads a whole-expression bean call only, so
+	// one annotation yields one kind or the other.
+	permissions []string
+	via         string
 	// declaresRoles is false only for @PreAuthorize("isAuthenticated()") —
 	// docs/decisions/0017-declaresroles-excludes-isauthenticated.md. True
 	// for every other recognized shape, including permitAll()/denyAll()/
@@ -59,8 +65,12 @@ type pendingGuard struct {
 	// Amendment 3 §9. It is never true together with a non-empty roles
 	// slice: either the list was read, or it was not.
 	rolesUnresolved bool
-	file            string
-	line            int
+	// declaresPermissions mirrors declaresRoles for the permission term
+	// (ADR 0035 §4). It is what keeps empty-role off a guard that read
+	// its requirement and found a permission rather than a role.
+	declaresPermissions bool
+	file                string
+	line                int
 }
 
 // pendingUnrecognized is one annotation that carried a recognized name
@@ -179,6 +189,23 @@ func springGuard(ann annotationCall, src []byte, file string, line int, roleByNa
 			return []pendingGuard{{guardName: ann.Name, declaresRoles: false, authCandidate: true, file: file, line: line}}
 		case spelRoles:
 			return []pendingGuard{{guardName: ann.Name, roles: resolveRoleArgs(result.Roles, roleByName), declaresRoles: true, file: file, line: line}}
+		case spelPermissions:
+			// ADR 0035 §4. DeclaresRoles stays true — ADR 0011 §1's
+			// fusion of "this is protected" and "this is what it
+			// requires" is unchanged, and the annotation IS the
+			// role-carrier even when what it carries is not a role.
+			// rolesUnresolved goes false because the expression was
+			// read end to end; empty-role is kept off it by
+			// declaresPermissions, NOT by leaving it unresolved.
+			return []pendingGuard{{
+				guardName:           ann.Name,
+				permissions:         result.Permissions,
+				via:                 result.Via,
+				declaresRoles:       true,
+				declaresPermissions: true,
+				file:                file,
+				line:                line,
+			}}
 		case spelNoRole:
 			// permitAll()/denyAll(): read, and resolving to no role
 			// list. ADR 0017 decided these keep DeclaresRoles: true and
@@ -246,15 +273,26 @@ func (b *builder) applyGuards(endpointID model.ID, guards []pendingGuard, scope 
 		appID := b.nextIDFor("guardapp")
 		b.guardOwner = append(b.guardOwner, b.curEndpoint)
 		b.model.GuardApplications = append(b.model.GuardApplications, model.GuardApplication{
-			ID:              appID,
-			EndpointID:      endpointID,
-			GuardName:       g.guardName,
-			AppliedAt:       scope,
-			File:            g.file,
-			Line:            g.line,
-			DeclaresRoles:   g.declaresRoles,
-			RolesUnresolved: g.rolesUnresolved,
+			ID:                  appID,
+			EndpointID:          endpointID,
+			GuardName:           g.guardName,
+			AppliedAt:           scope,
+			File:                g.file,
+			Line:                g.line,
+			DeclaresRoles:       g.declaresRoles,
+			RolesUnresolved:     g.rolesUnresolved,
+			DeclaresPermissions: g.declaresPermissions,
 		})
+		for _, p := range g.permissions {
+			b.model.PermissionReferences = append(b.model.PermissionReferences, model.PermissionReference{
+				ID:                 b.nextIDFor("permref"),
+				GuardApplicationID: appID,
+				RawLiteral:         p,
+				Via:                g.via,
+				File:               g.file,
+				Line:               g.line,
+			})
+		}
 		for _, r := range g.roles {
 			b.model.RoleReferences = append(b.model.RoleReferences, model.RoleReference{
 				ID:                 b.nextIDFor("roleref"),

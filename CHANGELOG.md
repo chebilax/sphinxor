@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The model carries a permission, not only a role.** A Spring Security
+  `@PreAuthorize` whose whole expression is a bean call with all-literal
+  arguments — `@ss.hasPermi('system:user:edit')`, `@el.check('user:list','dept:list')` —
+  is read, and its literals are recorded as `PermissionReference`s alongside the
+  bean call that named them. The RBAC matrix gains a **Permissions** column
+  (`permissions` in JSON). This is step 1 of
+  [ADR 0035](docs/decisions/0035-permissions-in-the-model.md), measured across the
+  20-repository Java corpus: **212 literal occurrences at 205 sites**, in
+  `RuoYi-Vue` (116) and `eladmin` (89), on endpoints whose Roles column has always
+  read `?`.
+
+  Sphinxor does not interpret the bean. It records that the annotation names this
+  literal *through that call*, which is why the matrix renders
+  `@ss.hasPermi('system:user:edit')` rather than a bare string in a column headed
+  Permissions.
+
+### Changed
+
+- **The unrecovered-requirement warning names a different example**, because its
+  old one — `@ss.hasPermi('...')` — is now read. It counts endpoints whose
+  requirement could not be read at all, and its Roles/Permissions `?` marking is
+  unchanged. The count falls `RuoYi-Vue` 116 → 0 and `eladmin` 99 → 10.
+- **`export cerbos` has a new omission reason, `permission-not-exportable`.** A
+  permission is not a Cerbos role, so nothing new is exported — but 113 of
+  `RuoYi-Vue`'s omissions previously said the requirement *could not be
+  determined*, which stopped being true. Exporting permissions is a later step.
+
+### Effect on CI
+
+**None.** No finding count changes anywhere in the 20-repository corpus or in any
+vendored fixture, and `empty-role` — the only High-confidence, build-gating rule —
+fires zero times before and after. A permission-bearing `@PreAuthorize` reads as
+`DeclaresRoles: true` with no role references, which is character for character
+`empty-role`'s trigger; `DeclaresPermissions` is what keeps it off, and the
+regression bar for this change was that count staying at zero.
+
+`sphinxor diff` does not yet compare permissions — a permission added or removed
+between two runs is invisible to it. That is stated in
+[ADR 0035](docs/decisions/0035-permissions-in-the-model.md) §7 as a deferred gap,
+not an oversight.
+
 ## [0.7.0] - 2026-09-21
 
 Every Spring Security mechanism Sphinxor enumerates is now either read or

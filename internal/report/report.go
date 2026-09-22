@@ -58,6 +58,16 @@ type Row struct {
 	// Roles already listed are still real — they are just not known to be
 	// the whole requirement.
 	RolesUnresolved bool `json:"rolesUnresolved,omitempty"`
+	// Permissions are the endpoint's named requirements that are not
+	// roles, each rendered with the bean call that named it —
+	// `@ss.hasPermi('system:user:edit')` — because
+	// docs/decisions/0035-permissions-in-the-model.md §3 does not
+	// interpret the bean and the callee has to reach the reader.
+	//
+	// RolesUnresolved marks this cell "?" too, for the same reason it
+	// marks Roles: an expression that could not be read leaves the
+	// requirement unknown without saying which kind it names.
+	Permissions []string `json:"permissions,omitempty"`
 	// UnrecognizedAuth marks an endpoint carrying an access-control
 	// annotation this tool could not identify (ADR 0022 §2). Markdown
 	// renders the Guards cell "?" rather than "-": "-" says nothing
@@ -112,6 +122,15 @@ func BuildMatrix(m *model.Model, findings []model.Finding) Matrix {
 		rolesByEndpoint[app.EndpointID] = appendUnique(rolesByEndpoint[app.EndpointID], ref.RawLiteral)
 	}
 
+	permissionsByEndpoint := make(map[model.ID][]string)
+	for _, ref := range m.PermissionReferences {
+		app, ok := guardAppByID[ref.GuardApplicationID]
+		if !ok {
+			continue
+		}
+		permissionsByEndpoint[app.EndpointID] = appendUnique(permissionsByEndpoint[app.EndpointID], ref.Via+"('"+ref.RawLiteral+"')")
+	}
+
 	findingsByEndpoint := make(map[model.ID][]model.Finding)
 	for _, f := range findings {
 		if f.SubjectKind == model.SubjectEndpoint {
@@ -134,6 +153,7 @@ func BuildMatrix(m *model.Model, findings []model.Finding) Matrix {
 			Guards:            guardsByEndpoint[e.ID],
 			Roles:             rolesByEndpoint[e.ID],
 			RolesUnresolved:   rolesUnresolvedByEndpoint[e.ID],
+			Permissions:       permissionsByEndpoint[e.ID],
 			UnrecognizedAuth:  unrecognizedByEndpoint[e.ID],
 			Findings:          findingsByEndpoint[e.ID],
 		})

@@ -24,6 +24,21 @@ import (
 //     which Spring accepts and this extractor cannot resolve. empty-role
 //     must not fire, because nothing is known about what it requires.
 //
+// docs/decisions/0035-permissions-in-the-model.md §9 changed one case here
+// and added another, deliberately rather than by flipping an expectation
+// until the suite passed. @ss.hasPermi('system:user:edit') is now READ as
+// a permission, so its RolesUnresolved is false — and empty-role is kept
+// off it by DeclaresPermissions instead, which is the single condition
+// standing between this change and 205 High-confidence false positives.
+//
+// Flipping that case alone would have left @Secured(Roles.ADMIN) holding
+// the unread side up on its own, and the unread side would no longer have
+// contained a BEAN CALL — the shape that supplied the hazard. So
+// unreadArgumentlessBeanCall was added: eladmin's @el.check(), which means
+// "requires admin" rather than "requires nothing" because its varargs
+// implementation short-circuits on an empty array. Both halves of the
+// distinction stay pinned by live assertions.
+//
 // The nacos shape that supplied 392 of the 675 — @Secured(resource = ...,
 // action = ...) from com.alibaba.nacos.auth.annotation — is deliberately
 // NOT tested here. Under ADR 0022 it is not a Spring annotation at all
@@ -44,8 +59,12 @@ public class ThingController {
     public void unreadConstantReference() {}
 
     @PreAuthorize("@ss.hasPermi('system:user:edit')")
-    @PostMapping("/unread-bean-call")
-    public void unreadBeanCall() {}
+    @PostMapping("/read-bean-call")
+    public void readBeanCall() {}
+
+    @PreAuthorize("@el.check()")
+    @PostMapping("/unread-argumentless-bean-call")
+    public void unreadArgumentlessBeanCall() {}
 
     @Secured({"ROLE_ADMIN"})
     @PostMapping("/resolved")
@@ -64,26 +83,31 @@ public class ThingController {
 	for _, g := range b.model.GuardApplications {
 		byHandler[endpointHandler[g.EndpointID]] = g
 	}
-	if len(byHandler) != 4 {
-		t.Fatalf("got guards on %d handlers, want 4: %+v", len(byHandler), byHandler)
+	if len(byHandler) != 5 {
+		t.Fatalf("got guards on %d handlers, want 5: %+v", len(byHandler), byHandler)
 	}
 
 	for _, tc := range []struct {
-		handler        string
-		wantUnresolved bool
-		why            string
+		handler         string
+		wantUnresolved  bool
+		wantPermissions bool
+		why             string
 	}{
-		{"declaredEmpty", false, "@Secured({}) is an empty array literal: read, and genuinely empty"},
-		{"unreadConstantReference", true, "@Secured(Roles.ADMIN) is a constant reference, not a readable string array"},
-		{"unreadBeanCall", true, "a bean-call SpEL expression is outside the recognized subset"},
-		{"resolved", false, "@Secured({\"ROLE_ADMIN\"}) resolves normally"},
+		{"declaredEmpty", false, false, "@Secured({}) is an empty array literal: read, and genuinely empty"},
+		{"unreadConstantReference", true, false, "@Secured(Roles.ADMIN) is a constant reference, not a readable string array"},
+		{"readBeanCall", false, true, "@ss.hasPermi('system:user:edit') is a bean call with an all-literal argument list: read as a permission (ADR 0035 §2)"},
+		{"unreadArgumentlessBeanCall", true, false, "@el.check() names no literal, and an unreadable argument list is never an empty requirement (ADR 0035 §2)"},
+		{"resolved", false, false, "@Secured({\"ROLE_ADMIN\"}) resolves normally"},
 	} {
 		g := byHandler[tc.handler]
 		if !g.DeclaresRoles {
-			t.Errorf("%s: DeclaresRoles should stay true (ADR 0011 §1 fusion is unchanged by Amendment 3)", tc.handler)
+			t.Errorf("%s: DeclaresRoles should stay true (ADR 0011 §1 fusion is unchanged by Amendment 3, and by ADR 0035 §4)", tc.handler)
 		}
 		if g.RolesUnresolved != tc.wantUnresolved {
 			t.Errorf("%s: RolesUnresolved = %v, want %v — %s", tc.handler, g.RolesUnresolved, tc.wantUnresolved, tc.why)
+		}
+		if g.DeclaresPermissions != tc.wantPermissions {
+			t.Errorf("%s: DeclaresPermissions = %v, want %v — %s", tc.handler, g.DeclaresPermissions, tc.wantPermissions, tc.why)
 		}
 	}
 

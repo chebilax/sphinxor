@@ -3,6 +3,7 @@ package spring
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/chebilax/sphinxor/internal/lint"
@@ -200,5 +201,106 @@ public class BResource {
 	}
 	if m.RouteCollisions[0].GuardsDiffer {
 		t.Errorf("both sides require ROLE_ADMIN; the merged handler's duplicate annotation must not read as a difference")
+	}
+}
+
+// TestExtract_CollidingRoutesDifferingOnlyByPermission is ADR 0035 §7's
+// collide.go consumer, and the reason it needs its own test is that
+// nothing else reaches it.
+//
+// guardSignatures compares what protects each side of a collision. Before
+// ADR 0035 it compared guard names plus role literals; two sides both
+// carrying @PreAuthorize but requiring DIFFERENT permissions signed
+// identically as "PreAuthorize()" and the guard-differing warning was
+// silently suppressed — reporting one endpoint's protection against
+// another, which is exactly what §8's criterion exists to prevent.
+//
+// SYNTHETIC, and labelled as such per docs/testing.md rather than left to
+// look like an oversight. No repository in the 20-project corpus and no
+// vendored fixture contains this shape: ruoyi-vue-pro's colliding sides
+// differ by one carrying an annotation and the other carrying none, so
+// TestExtract_CollidingRouteWithDifferingGuardsIsRecorded passes with or
+// without the permission term. A real fixture can reveal nothing here that
+// this pair of controllers does not, because by the time guardSignatures
+// runs its input is already a set of literal strings — testing.md's own
+// carve-out for downstream logic whose input is framework-independent.
+func TestExtract_CollidingRoutesDifferingOnlyByPermission(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"A.java": `package a;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.security.access.prepost.PreAuthorize;
+
+@RestController
+@RequestMapping("/api/things")
+public class AResource {
+    @PostMapping("/update")
+    @PreAuthorize("@ss.hasPermi('thing:update')")
+    public String update() { return ""; }
+}
+`,
+		"B.java": `package b;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.security.access.prepost.PreAuthorize;
+
+@RestController
+@RequestMapping("/api/things")
+public class BResource {
+    @PostMapping("/update")
+    @PreAuthorize("@ss.hasPermi('thing:admin')")
+    public String update() { return ""; }
+}
+`,
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m, _, err := Extract(dir)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(m.RouteCollisions) != 1 {
+		t.Fatalf("got %d collisions, want 1: %+v", len(m.RouteCollisions), m.RouteCollisions)
+	}
+	if !m.RouteCollisions[0].GuardsDiffer {
+		t.Error("two sides requiring different permissions must read as differing protection; without permissions in the signature both sides sign as \"PreAuthorize()\" and the warning is silently lost (ADR 0035 §7)")
+	}
+}
+
+// TestExtract_CollidingRoutesSharingAPermissionStayQuiet is the other side
+// of the criterion, so the term added above cannot make every permission
+// collision noisy. Synthetic for the same stated reason.
+func TestExtract_CollidingRoutesSharingAPermissionStayQuiet(t *testing.T) {
+	dir := t.TempDir()
+	for name, pkg := range map[string]string{"A.java": "a", "B.java": "b"} {
+		src := "package " + pkg + `;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.security.access.prepost.PreAuthorize;
+
+@RestController
+@RequestMapping("/api/things")
+public class ` + strings.ToUpper(pkg) + `Resource {
+    @PostMapping("/update")
+    @PreAuthorize("@ss.hasPermi('thing:update')")
+    public String update() { return ""; }
+}
+`
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m, _, err := Extract(dir)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(m.RouteCollisions) != 1 {
+		t.Fatalf("got %d collisions, want 1: %+v", len(m.RouteCollisions), m.RouteCollisions)
+	}
+	if m.RouteCollisions[0].GuardsDiffer {
+		t.Error("both sides require the same permission; that must not read as a difference")
 	}
 }

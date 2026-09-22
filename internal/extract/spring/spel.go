@@ -39,12 +39,31 @@ const (
 	// Amendment 3 §10 leaves whether empty-role should fire on
 	// permitAll() at all as an open question for its own ADR.
 	spelNoRole
+	// spelPermissions is a whole-expression call to a Spring BEAN whose
+	// arguments are all quoted literals — @ss.hasPermi('system:user:edit'),
+	// @el.check('user:list','dept:list') —
+	// docs/decisions/0035-permissions-in-the-model.md §2. The literals are
+	// named requirements that are not roles, and Permissions carries them
+	// in written order.
+	//
+	// 205 sites across the corpus, in RuoYi-Vue and eladmin. Every other
+	// bean-call shape stays spelUnrecognized and keeps today's behaviour:
+	// no arguments (73 sites), any non-literal argument (77 sites), a
+	// negation, or a boolean combination.
+	spelPermissions
 )
 
 // spelResult is what parseSpEL recognized in one @PreAuthorize string.
 type spelResult struct {
 	Kind  spelKind
 	Roles []string // populated only for spelRoles, in written order
+	// Permissions is populated only for spelPermissions, in written
+	// order, and Via is the bean call that named them, verbatim
+	// ("@ss.hasPermi"). Via is not decoration: ADR 0035 §3 does not
+	// interpret the bean, so the callee has to travel with the literal
+	// all the way to the matrix.
+	Permissions []string
+	Via         string
 }
 
 // spelRoleFuncs are the recognized role/authority-bearing SpEL calls, per
@@ -81,6 +100,33 @@ func parseSpEL(expr string) spelResult {
 		return spelResult{Kind: spelNoRole}
 	}
 
+	// ADR 0035 §2: a bean call. The leading @ is Spring's bean-reference
+	// sigil and is the ONLY thing separating a project bean whose method
+	// happens to be called hasPermission from Spring Security's own
+	// built-in hasPermission(...) expression, which this parser
+	// deliberately does not read. The vendored ruoyi-vue-pro fixture
+	// writes @ss.hasPermission('member:user:update') and spel_test.go
+	// pins bare hasPermission('ADMIN') as unrecognized; those two are a
+	// regression pair and neither may be dropped.
+	//
+	// splitCall has already anchored the call at both ends, so a boolean
+	// combination containing a bean call does not reach here. A negated
+	// call, !@bean.method('x'), fails isBeanReference because the name
+	// starts with '!' rather than '@' — deliberately, since a negated
+	// requirement is not a requirement (ADR 0035 §2).
+	if isBeanReference(name) {
+		perms, ok := parseQuotedArgList(argsText)
+		if !ok || len(perms) == 0 {
+			// No arguments, or an argument that is not a clean literal.
+			// NOT an empty requirement: eladmin's @el.check() means
+			// "requires admin", because its varargs implementation
+			// short-circuits on an empty array. Unread, exactly as
+			// before this decision (ADR 0020 Amendment 3 §9).
+			return spelResult{Kind: spelUnrecognized}
+		}
+		return spelResult{Kind: spelPermissions, Permissions: perms, Via: name}
+	}
+
 	if !spelRoleFuncs[name] {
 		return spelResult{Kind: spelUnrecognized}
 	}
@@ -102,11 +148,39 @@ func splitCall(expr string) (name, argsText string, ok bool) {
 		return "", "", false
 	}
 	name = expr[:open]
-	if !isIdentifier(name) {
+	// A plain identifier (hasRole, isAuthenticated) or a bean reference
+	// (@ss.hasPermi). Nothing else: a name carrying anything but those
+	// shapes — a leading "!", an operator, stray text — is not a call
+	// this parser claims to understand, and the whole expression stays
+	// unrecognized rather than being partially read (ADR 0011 §1).
+	if !isIdentifier(name) && !isBeanReference(name) {
 		return "", "", false
 	}
 	argsText = strings.TrimSpace(expr[open+1 : len(expr)-1])
 	return name, argsText, true
+}
+
+// isBeanReference reports whether name is a Spring bean reference of the
+// form @bean.method or @bean.nested.method — an "@" followed by at least
+// two dot-separated identifiers.
+//
+// The dot is required. A bare "@bean" is not a call this parser
+// understands, and accepting one would mean treating the bean itself as
+// the requirement.
+func isBeanReference(name string) bool {
+	if !strings.HasPrefix(name, "@") {
+		return false
+	}
+	parts := strings.Split(name[1:], ".")
+	if len(parts) < 2 {
+		return false
+	}
+	for _, p := range parts {
+		if !isIdentifier(p) {
+			return false
+		}
+	}
+	return true
 }
 
 func isIdentifier(s string) bool {

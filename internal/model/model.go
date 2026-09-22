@@ -74,11 +74,18 @@ const (
 // every entity extraction found, plus every finding the lint rules
 // produced from them.
 type Model struct {
-	Controllers                []Controller
-	Endpoints                  []Endpoint
-	GuardApplications          []GuardApplication
-	RoleDeclarations           []RoleDeclaration
-	RoleReferences             []RoleReference
+	Controllers       []Controller
+	Endpoints         []Endpoint
+	GuardApplications []GuardApplication
+	RoleDeclarations  []RoleDeclaration
+	RoleReferences    []RoleReference
+	// PermissionReferences are named requirements that are not roles —
+	// docs/decisions/0035-permissions-in-the-model.md §1. There is
+	// deliberately no PermissionDeclarations counterpart: the surveyed
+	// corpus declares permissions in a database seed rather than in
+	// source, so a declaration collection would be empty in every
+	// project and no rule could consult it (that ADR §1).
+	PermissionReferences       []PermissionReference
 	AuthenticationRequirements []AuthenticationRequirement
 	Findings                   []Finding
 	// MethodSecurity is the project-wide fact of whether, and how,
@@ -674,7 +681,31 @@ type GuardApplication struct {
 	// existing construction path (NestJS's @Roles(), a resolved
 	// @Secured({"ROLE_A"}), a genuinely empty @Secured({})) keeps its
 	// current behavior with no explicit initialization.
+	//
+	// It also drives BOTH the Roles and the Permissions cells of the
+	// matrix (ADR 0035 §5): an expression that could not be read leaves
+	// the requirement unknown without saying which KIND of requirement it
+	// names, so a "-" in either column would be a claim. A second,
+	// permission-specific unresolved flag becomes necessary only when a
+	// boolean combination is read — roles recovered, permissions not, on
+	// one annotation — which ADR 0035 §2 deliberately does not do.
 	RolesUnresolved bool
+	// DeclaresPermissions is true when this GuardApplication's associated
+	// PermissionReferences constitute its requirement —
+	// docs/decisions/0035-permissions-in-the-model.md §4.
+	//
+	// Explicit rather than inferred from len(permissionRefs) > 0, for the
+	// reason DeclaresRoles exists: ADR 0011 §1 found two consumers
+	// deriving that fact independently, and a second framework would have
+	// made both silently wrong rather than visibly broken.
+	//
+	// internal/lint/empty_role.go is the consumer that must read it. A
+	// guard this field is true for has DeclaresRoles: true,
+	// RolesUnresolved: false and zero RoleReferences — which is precisely
+	// that rule's trigger. Without this field it would fire 205 times at
+	// High confidence across RuoYi-Vue and eladmin, recreating the
+	// 675-finding defect ADR 0020 Amendment 3 exists to have fixed.
+	DeclaresPermissions bool
 }
 
 // RoleDeclarationKind records how a role's canonical declaration was
@@ -715,6 +746,54 @@ type RoleReference struct {
 	RawLiteral         string
 	File               string
 	Line               int
+}
+
+// PermissionReference is one place in the code where a named requirement
+// that is NOT a role is required — Spring's
+// @PreAuthorize("@ss.hasPermi('system:user:edit')") — attached to a
+// GuardApplication, exactly as RoleReference is
+// (docs/decisions/0035-permissions-in-the-model.md §1).
+//
+// It exists because GuardApplication{GuardName} plus RoleReference{RawLiteral}
+// had no slot meaning "requires permission P", which docs/limitations.md
+// records as the largest gap in the model. Recording such a literal as a
+// RoleReference instead would make the matrix state that PUT /system/user
+// requires the *role* "system:user:edit", and would feed the literal into
+// the role-declaration usage filter, turning any Java constant with that
+// value into a RoleDeclaration. Two false claims to avoid one collection.
+//
+// There is deliberately no PermissionDeclarationID counterpart to
+// RoleReference.RoleDeclarationID, and that is measured rather than
+// assumed: across the 20-repository corpus no project declares a
+// permission in Java source. RuoYi-Vue's registry is sys_menu.perms in
+// sql/ry_20260417.sql and eladmin's is sys_menu.permission in
+// sql/eladmin.sql — database seeds this extractor does not read. "No
+// declaration found" here is a fact about where the registry lives, not a
+// gap in extraction (ADR 0035 §1, §6).
+type PermissionReference struct {
+	ID                 ID
+	GuardApplicationID ID
+	// RawLiteral is the permission string exactly as written in source.
+	RawLiteral string
+	// Via is the callee that named it, verbatim — "@ss.hasPermi",
+	// "@el.check". It is what keeps this type honest, because Sphinxor
+	// does NOT interpret the bean (ADR 0035 §3): it records that the
+	// annotation names this literal through that call, never what the
+	// call means.
+	//
+	// The corpus contains one case this matters for. RuoYi-Vue's
+	// GenController writes @ss.hasRole('admin') — same bean, same shape,
+	// and the literal is a role. It is recorded here, mislabelled by the
+	// collection's name and correctly labelled by this field, because the
+	// alternatives are a name heuristic (rejected for third-party
+	// annotations by ADR 0023 §1, for the reason that applies unchanged
+	// here) or resolving the bean, which bottoms out in a parameter's
+	// name one level deeper. Rendering Via alongside RawLiteral means
+	// nothing a reader sees is wrong. ADR 0035 §3 records the open
+	// obligation this leaves for the Cerbos export.
+	Via  string
+	File string
+	Line int
 }
 
 // AuthenticationRequirement is a positive, confirmed fact about an

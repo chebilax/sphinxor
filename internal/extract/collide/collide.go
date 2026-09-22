@@ -142,9 +142,18 @@ func Resolve(in Input) {
 	m.RouteCollisions = collisions
 }
 
-// guardSignatures renders each endpoint's guards and roles as one
-// comparable string, so two colliding endpoints can be asked whether they
-// actually differ.
+// guardSignatures renders each endpoint's guards, roles and permissions as
+// one comparable string, so two colliding endpoints can be asked whether
+// they actually differ.
+//
+// Permissions are part of the signature for the reason roles are
+// (ADR 0035 §7): two sides both carrying @PreAuthorize but requiring
+// different permissions are different protection, and without them the
+// signature is "PreAuthorize()" on both and the warning is silently
+// suppressed. No corpus repository and no vendored fixture reaches this —
+// ruoyi-vue-pro's colliding sides differ by one having no annotation at
+// all — so it is covered by a synthetic test that says so in its own
+// comment, per docs/testing.md.
 //
 // It compares what extraction *sees*. An endpoint whose protection is
 // invisible here (an unrecognized composite decorator, a global guard)
@@ -155,6 +164,12 @@ func guardSignatures(m *model.Model, guardOwner []int) map[int]string {
 	rolesByGuard := make(map[model.ID][]string)
 	for _, r := range m.RoleReferences {
 		rolesByGuard[r.GuardApplicationID] = append(rolesByGuard[r.GuardApplicationID], r.RawLiteral)
+	}
+	for _, p := range m.PermissionReferences {
+		// Via is included, not just the literal: two beans requiring the
+		// same string are not obviously the same requirement, and this
+		// package does not interpret either one (ADR 0035 §3).
+		rolesByGuard[p.GuardApplicationID] = append(rolesByGuard[p.GuardApplicationID], p.Via+"("+p.RawLiteral+")")
 	}
 
 	parts := make(map[int][]string)

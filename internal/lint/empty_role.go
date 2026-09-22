@@ -37,6 +37,25 @@ import (
 // location confirms it, and no global guard or unread indirection changes
 // what an empty argument list says.
 //
+// Since docs/decisions/0035-permissions-in-the-model.md that citation is
+// live rather than historical, and it is why DeclaresPermissions is in the
+// trigger below. @PreAuthorize("@ss.hasPermi('system:user:edit')") is now
+// READ: DeclaresRoles: true, RolesUnresolved: false, zero RoleReferences —
+// which is character for character this rule's trigger. Without that term
+// it would fire on all 205 such annotations in RuoYi-Vue and eladmin, at
+// High confidence, which gates CI. The same 675-finding defect, in the
+// change that improved the same code.
+//
+// The distinction the term expresses: this rule's subject is a role list
+// the source states as EMPTY. An annotation declaring a permission and no
+// role has not left a role list empty — it has not declared one. That is
+// ADR 0017's isAuthenticated() exclusion reached from the other side.
+//
+// A permission list that could not be read never arrives here either: ADR
+// 0035 §2 leaves such an annotation RolesUnresolved, so eladmin's
+// @el.check() — which means "requires admin", not "requires nothing" — is
+// excluded by the existing term rather than by the new one.
+//
 // permitAll()/denyAll() deliberately still fire here, per ADR 0017's
 // boundary and Amendment 3 §10: they are read, not unread, and whether
 // they should be flagged is a separate open question.
@@ -71,7 +90,9 @@ func (r EmptyRole) Check(m *model.Model) []model.Finding {
 	for _, g := range m.GuardApplications {
 		// RolesUnresolved: the list was not read, so its emptiness is a
 		// fact about extraction, not about the endpoint (Amendment 3 §9).
-		if !g.DeclaresRoles || g.FromComposite || g.RolesUnresolved || refCount[g.ID] > 0 {
+		// DeclaresPermissions: the requirement WAS read and is not a role
+		// list at all (ADR 0035 §6).
+		if !g.DeclaresRoles || g.DeclaresPermissions || g.FromComposite || g.RolesUnresolved || refCount[g.ID] > 0 {
 			continue
 		}
 		e := endpointByID[g.EndpointID]

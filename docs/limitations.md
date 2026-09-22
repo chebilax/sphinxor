@@ -54,7 +54,11 @@ A composite outside this bounded shape isn't guessed at — it falls back to exa
 
 ## Permissions as metadata: the model has no concept for how production code actually authorizes
 
-This is the largest gap recorded in this file, and it is **not an extraction gap**. Extending composite-decorator resolution cannot close it at any depth. It is a question about [ADR 0002](decisions/0002-intermediate-model-structure.md)'s model, and it is deliberately left open here rather than answered — **no ADR closes it, and nothing below proposes one.** [ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) Amendment 3, referenced under *Consequence today*, fixed how one consequence of this gap was *reported*; it did not make the tool understand a permission, and it was never meant to.
+This is the largest gap recorded in this file, and it is **not an extraction gap**. Extending composite-decorator resolution cannot close it at any depth. It is a question about [ADR 0002](decisions/0002-intermediate-model-structure.md)'s model.
+
+**[ADR 0035](decisions/0035-permissions-in-the-model.md) closes one slice of it and leaves the rest open**, and the slice is small on purpose: a permission named by a **literal** inside a Spring Security annotation. The model now carries `PermissionReference`, the matrix has a Permissions column, and 212 literal occurrences at 205 sites in RuoYi-Vue and eladmin have somewhere to go. Measured against the 1,133 permission declarations counted below, that is **212 of them** — because most of the rest are declared by mechanisms [ADR 0029](decisions/0029-spring-security-scope.md) §1 puts out of scope, not because the in-scope part was half-done. Everything else in this entry stands unchanged, and the numbered survey below is the state *before* that ADR, kept as the measurement that motivated it.
+
+[ADR 0020](decisions/0020-unanalyzable-is-unknown-not-absent.md) Amendment 3, referenced under *Consequence today*, fixed how one consequence of this gap was *reported*; it did not make the tool understand a permission, and it was never meant to.
 
 It was first found on NestJS and recorded here as a NestJS finding, with whether it generalized left explicitly unanswered. It has since been surveyed on Spring as well. **It generalizes**: the same model gap, under syntax that looks nothing alike. Both surveys are below, along with the one place the two frameworks genuinely differ, which is not smoothed over.
 
@@ -101,10 +105,10 @@ Spring's version of "requirement as metadata" is a permission string in an annot
 | `alibaba/nacos` | `@Secured(resource=…, action=ActionTypes.WRITE)` — alibaba's own annotation, not Spring's | 419 | 392 unrecognized annotations, no guard, zero roles |
 | `jeecgboot/JeecgBoot` | Shiro `@RequiresPermissions("airag:knowledge:add")`, `@RequiresRoles("admin")` | 223 + 27 | recorded as unrecognized (ADR 0023); no permission read |
 | `apolloconfig/apollo` | `@PreAuthorize(value = "@unifiedPermissionValidator.hasCreateNamespacePermission(#appId)")` | 140 | 68 guards, zero roles |
-| `yangzongzhuan/RuoYi-Vue` | `@PreAuthorize("@ss.hasPermi('system:user:edit')")` | 116 | 116 guards, zero roles |
+| `yangzongzhuan/RuoYi-Vue` | `@PreAuthorize("@ss.hasPermi('system:user:edit')")` | 116 | 116 guards, zero roles — **since ADR 0035, 116 permissions on 116 endpoints** |
 | `apache/streampark` | Shiro `@RequiresPermissions("yarnQueue:create")` | 101 | recorded as unrecognized (ADR 0023); no permission read |
 | `apache/shenyu` | Shiro `@RequiresPermissions("system:pluginHandler:edit")` | 100 | nothing — all 100 sit in controllers extraction never recognizes, so even ADR 0023 cannot see them |
-| `elunez/eladmin` | `@PreAuthorize("@el.check('deploy:edit')")` | 99 | 99 guards, zero roles |
+| `elunez/eladmin` | `@PreAuthorize("@el.check('deploy:edit')")` | 99 | 99 guards, zero roles — **since ADR 0035, 96 permissions on 89 endpoints**; the other 10 are `@el.check()`, which names none |
 | `spring-cloud/spring-cloud-dataflow` | YAML: `- POST /apps => hasRole('ROLE_CREATE')` | 66 | nothing — it is not a `.java` file |
 | `apache/fineract` | in-handler `context.authenticatedUser().validateHasReadPermission("LOAN")` | 389 | nothing — and only 1 of its ~966 routes is even seen (JAX-RS) |
 | `apache/dolphinscheduler` | in-handler/service `canOperator(...)`, `resourcePermissionCheckService.*` | 60 | nothing |
@@ -165,7 +169,14 @@ But the scale should be stated plainly for both: on a production application in 
 
 **What to do about it today**: nothing at the endpoint level recovers the permission — `sphinxor-allow` marks an endpoint as reviewed, it does not read what the endpoint requires. Treat the matrix for such a project as a route inventory with authentication hints, not as an authorization model.
 
-**Status**: open, and framed here rather than decided. Closing it means amending ADR 0002 to carry a requirement that is neither a guard nor a role. That amendment has not been written. What the Spring survey changes is the scope of the question, not its answer: it is now known to be a model-level gap that surfaces in both supported frameworks, not a NestJS-specific one.
+**Status**: **partly closed, and the open part is the larger one.** [ADR 0035](decisions/0035-permissions-in-the-model.md) made the ADR 0002 amendment this entry said had not been written — the model carries a requirement that is neither a guard nor a role — for literal permissions inside Spring Security annotations. What it does **not** cover, each measured rather than estimated:
+
+- **150 of the 355 bean-call sites in the corpus**, all of apollo's 140 among them: a bean call with no arguments (73) or with `#param` arguments (77). Those name no literal — apollo's requirement lives in the bean method's *name* — so they stay `?`, and the run still counts them.
+- **Everything ADR 0029 §1 puts out of scope**: Shiro's 416 permission literals, nacos's 419 `resource`/`action` pairs, dataease's 97 `@DePermit`, SCDF's 66 YAML rules, and every in-handler check. A zero on those is correct behaviour, not a gap, and ADR 0035 changed nothing about them.
+- **NestJS**, which has no equivalent work. Every number in the NestJS survey above stands exactly as written.
+- **The Cerbos export.** A permission is not a Cerbos role, so these endpoints are still omitted — now under their own `permission-not-exportable` reason rather than under one claiming the requirement could not be determined. Exporting them at all is a separate decision.
+
+So the headline claim of this entry survives: on a production application in either framework, the RBAC matrix has **no role data in it**, with `thingsboard` the single surveyed exception. What changed is that on two of those applications it now has *permission* data, which is a different column and a different claim.
 
 ## Spring route shapes outside ADR 0011 §1's scope — and the recognized-endpoint count is not the API surface
 

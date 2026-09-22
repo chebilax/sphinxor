@@ -41,25 +41,40 @@ type authCandidate struct {
 // (e.g. a redundant class- and method-level pair, both layerMethod)
 // would otherwise produce two AuthenticationRequirements for one fact.
 func computeAuthenticationRequirements(m *model.Model, candidates []authCandidate, next func() model.ID) []model.AuthenticationRequirement {
-	roleRefCountByGuard := make(map[model.ID]int, len(m.RoleReferences))
+	// Permissions count alongside roles here, not instead of them
+	// (ADR 0035 §7). isAuthenticated() only wins when nothing stricter
+	// was found on the same layer, and a named permission requirement is
+	// stricter — an endpoint with both @PreAuthorize("isAuthenticated()")
+	// and @PreAuthorize("@ss.hasPermi('x')") on one layer requires the
+	// permission, so recording it as "authenticated, any role" would
+	// understate it and export a Cerbos `*` rule for it.
+	//
+	// Corpus effect: zero. No endpoint in the three repositories that
+	// carry bean calls also carries isAuthenticated(), which is exactly
+	// why this consumer would have gone wrong unnoticed — the
+	// DeclaresRoles failure mode ADR 0011 §1 recorded.
+	refCountByGuard := make(map[model.ID]int, len(m.RoleReferences)+len(m.PermissionReferences))
 	for _, r := range m.RoleReferences {
-		roleRefCountByGuard[r.GuardApplicationID]++
+		refCountByGuard[r.GuardApplicationID]++
+	}
+	for _, p := range m.PermissionReferences {
+		refCountByGuard[p.GuardApplicationID]++
 	}
 	type endpointLayer struct {
 		endpoint model.ID
 		url      bool
 	}
-	roleRefCountByLayer := make(map[endpointLayer]int, len(m.GuardApplications))
+	refCountByLayer := make(map[endpointLayer]int, len(m.GuardApplications))
 	for _, g := range m.GuardApplications {
 		k := endpointLayer{endpoint: g.EndpointID, url: g.AppliedAt == model.ScopeRequestMatcher}
-		roleRefCountByLayer[k] += roleRefCountByGuard[g.ID]
+		refCountByLayer[k] += refCountByGuard[g.ID]
 	}
 
 	seen := make(map[endpointLayer]bool, len(candidates))
 	var out []model.AuthenticationRequirement
 	for _, c := range candidates {
 		k := endpointLayer{endpoint: c.EndpointID, url: c.AppliedAt == model.ScopeRequestMatcher}
-		if seen[k] || roleRefCountByLayer[k] > 0 {
+		if seen[k] || refCountByLayer[k] > 0 {
 			continue
 		}
 		seen[k] = true
