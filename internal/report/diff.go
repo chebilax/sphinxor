@@ -116,6 +116,26 @@ func writeDiffMarkdown(w io.Writer, result diff.Result) error {
 	if len(result.AddedRoleReferences) == 0 && len(result.RemovedRoleReferences) == 0 {
 		b.WriteString("No change.\n")
 	}
+	b.WriteString("\n")
+
+	// Each entry reproduces the source form — @ss.hasPermi('system:user:edit') —
+	// which is the same string the matrix column shows (ADR 0035 §5), so a
+	// reader comparing the two sees one spelling rather than two. Rendering
+	// the bare literal would be the false claim Via exists to prevent:
+	// RuoYi-Vue's one @ss.hasRole('admin') under a heading reading
+	// "Permission References" would assert exactly what ADR 0035 §3 declined
+	// to decide. File:line locates the change, since PermissionReference is
+	// attached to a guard application rather than to an endpoint.
+	b.WriteString("## Permission References\n\n")
+	for _, p := range result.AddedPermissionReferences {
+		fmt.Fprintf(&b, "+ %s (%s:%d)\n", renderPermissionReference(p), p.File, p.Line)
+	}
+	for _, p := range result.RemovedPermissionReferences {
+		fmt.Fprintf(&b, "- %s (%s:%d)\n", renderPermissionReference(p), p.File, p.Line)
+	}
+	if len(result.AddedPermissionReferences) == 0 && len(result.RemovedPermissionReferences) == 0 {
+		b.WriteString("No change.\n")
+	}
 
 	_, err := io.WriteString(w, b.String())
 	return err
