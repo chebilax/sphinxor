@@ -2,7 +2,8 @@
 
 ## Status
 
-**Proposed.** It applies [ADR 0020](0020-unanalyzable-is-unknown-not-absent.md) §2's
+**Accepted** (2026-09-29), with the owner's condition that detection follow ADR 0027's
+rule: match a declaration, never a mention (§1). It applies [ADR 0020](0020-unanalyzable-is-unknown-not-absent.md) §2's
 principle ("unanalyzable is unknown, not absent") to a boundary
 [ADR 0011](0011-spring-second-framework.md) §1 and [ADR 0029](0029-spring-security-scope.md)
 §2 draw: Kotlin source is out of scope. It does not bring Kotlin into scope. Parsing
@@ -56,13 +57,37 @@ which is why this never surfaced in a corpus measurement.
 
 ## Decision (proposed)
 
-### §1 Kotlin source files are counted, never parsed
+### §1 Kotlin source files are counted, never parsed, and only declarations count
 
 The Spring extractor counts `.kt` files under the analyzed tree, with the same exclusions
-as `.java` (test directories and test file names). Their content is searched as **text**
-for a fixed set of annotation and type names. Nothing is parsed, and nothing found in a
-Kotlin file becomes an endpoint, a guard or a role. ADR 0029 §1 draws the line this way:
+as `.java` (test directories and test file names). Nothing is parsed, and nothing found in
+a Kotlin file becomes an endpoint, a guard or a role. ADR 0029 §1 draws the line this way:
 "detecting that another system is present is not interpreting it".
+
+**What counts is a declaration, never a mention**, which is ADR 0027's rule. A plain text
+search would announce Kotlin security configuration for a KDoc naming
+`SecurityFilterChain`, an import of it, or a log message. So each file first goes
+through a lexer's pass:
+- comments are removed, nested block comments included, as Kotlin allows;
+- string and character literals are removed, raw `"""` strings included;
+- `import` and `package` lines are removed.
+
+Only then are declaration shapes matched:
+- an annotation applied: `@RestController`/`@Controller`, and the method-security
+  enablers;
+- a function whose declared return type is `SecurityFilterChain` or
+  `SecurityWebFilterChain`;
+- a class whose header extends `WebSecurityConfigurerAdapter`.
+
+A test covers each mention form: a line comment, a nested block comment, an import, a
+string and a raw string. Disabling the lexer's pass fails the comment and string cases.
+The import case is also excluded by the declaration shape itself (an import line never
+has one), with import stripping as a second layer.
+
+**What this misses is stated:** a chain bean written as an expression body with no
+declared return type (`fun chain(http: HttpSecurity) = http.build()`). The file still
+counts as Kotlin and is announced as such; only the security-configuration part of the
+warning, and §3, would not fire for it.
 
 ### §2 One project warning, naming what the Kotlin files hold
 
@@ -130,3 +155,24 @@ existing "recognized no endpoints" line stays.
   - fixture: the constructed project, synthetic by necessity. The corpus has no Kotlin,
     and the sample's Kotlin projects are AGPL-3.0 (gameyfin, DuDoong) or EUPL-1.2
     (encore), which ADR 0005's note on copyleft shapes puts outside vendoring.
+
+### Measured, as implemented
+
+`main` at `12b6fc6` against this implementation.
+
+- **The corpus and fixtures:** all 42 targets byte-identical in lint JSON, policies,
+  report, exit code and stderr. None contains Kotlin.
+- **The constructed mixed project:**
+  - the warning names both Kotlin files, controller and security configuration;
+  - the URL layer is unknown, with the reason *"URL authorization is configured in
+    Kotlin"*;
+  - the method-security caveat reads "unknown" instead of "NOT protected";
+  - `export cerbos` **omits** the Java endpoint instead of granting it to `ADMIN`
+    (`TestKotlin_SecurityConfigMakesTheURLLayerUnknown`).
+- **gameyfin and encore** (wholly Kotlin): *"… 277 Kotlin source file(s), 3 declaring
+  Spring controllers and 1 declaring Spring Security configuration, but Kotlin is not
+  parsed …"*, where they used to get "no supported framework detected".
+- **DuDoong-Backend** (845 Kotlin files, 11 Java): its URL layer is unknown for the Kotlin
+  reason, and the Kotlin warning names its controllers, beside the existing "recognized no
+  endpoints" line.
+

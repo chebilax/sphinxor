@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Kotlin source is announced instead of passed over.** A Spring project with Kotlin
+  files was analyzed as if they did not exist: a Kotlin controller's endpoints were silently
+  missing, and a Kotlin `SecurityFilterChain` left the URL layer recorded as absent, so the
+  Cerbos export could grant from the method layer alone. Now:
+  - the run counts the Kotlin files and names those declaring controllers or security
+    configuration;
+  - Kotlin URL security makes the URL layer unknown, so the export omits instead of
+    granting;
+  - a wholly Kotlin project says Kotlin is why nothing was analyzed.
+
+  Only declarations count, never a mention in a comment, import or string. Kotlin is still
+  not parsed. See [ADR 0042](docs/decisions/0042-kotlin-sources-announced.md).
 - **JSR-250 `@PermitAll` is announced.** It is Spring Security method security and was
   silently unrecognized. It is now counted and named in a warning. What a permit-all
   declaration means is not yet decided, so endpoints carrying it are still analyzed as

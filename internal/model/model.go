@@ -101,6 +101,9 @@ type Model struct {
 	// MethodSecurityFilters counts @PreFilter/@PostFilter, which are
 	// announced and deliberately reach no rule (ADR 0030 §4).
 	MethodSecurityFilters MethodSecurityFilterStatus
+	// Kotlin records Kotlin source files, which are not parsed, and what
+	// they declare (ADR 0042).
+	Kotlin KotlinStatus
 	// PermitAll counts JSR-250 @PermitAll annotations, announced and not
 	// read until a permit-all declaration's meaning is decided (ADR 0012
 	// Amendment 1). Nothing attaches them to an endpoint.
@@ -944,3 +947,18 @@ type PermitAllStatus struct {
 	Count   int
 	Classes []string
 }
+
+// KotlinStatus records the Kotlin source files under the analyzed tree —
+// docs/decisions/0042-kotlin-sources-announced.md. Kotlin is not parsed:
+// these are counts of files whose declarations (never their mentions)
+// show a Spring controller or Spring Security configuration, so the run
+// can say what it did not analyze.
+type KotlinStatus struct {
+	Files              int
+	ControllerFiles    int
+	URLSecurityFiles   int // a SecurityFilterChain/SecurityWebFilterChain bean, or a WebSecurityConfigurerAdapter
+	MethodEnablerFiles int // @EnableMethodSecurity and its siblings
+	ControllerExamples []string
+	SecurityExamples   []string
+}
+

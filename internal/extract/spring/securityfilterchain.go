@@ -194,6 +194,9 @@ type urlLayerForms struct {
 	// Shiro is not Spring Security and nothing here parses it; recording
 	// that the layer exists is not interpreting it (ADR 0027, Context).
 	shiro int
+	// kotlin is Kotlin files declaring URL security configuration, which
+	// is not parsed (ADR 0042 §3).
+	kotlin int
 
 	// ADR 0040 §5: among the servlet chains, what blocks reading several
 	// of them together — named in the warning, instead of the count alone.
@@ -203,7 +206,7 @@ type urlLayerForms struct {
 }
 
 func (f urlLayerForms) any() bool {
-	return f.servlet > 0 || f.reactive > 0 || f.legacyAdapter > 0 || f.shiro > 0
+	return f.servlet > 0 || f.reactive > 0 || f.legacyAdapter > 0 || f.shiro > 0 || f.kotlin > 0
 }
 
 func countChainBeans(files []parsedFile) urlLayerForms {

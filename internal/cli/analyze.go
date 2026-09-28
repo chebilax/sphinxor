@@ -40,6 +40,16 @@ func resolveFramework(dir, override string) (extract.Framework, string, error) {
 	case 1:
 		return detected[0], "detected", nil
 	case 0:
+		// ADR 0042 §5: a wholly Kotlin Spring project is not an
+		// unrecognized project — it is one Sphinxor cannot parse, and the
+		// error should say so instead of suggesting --framework.
+		if k, err := extract.Kotlin(dir); err == nil && k.ControllerFiles+k.URLSecurityFiles+k.MethodEnablerFiles > 0 {
+			return "", "", fmt.Errorf(
+				"no supported framework detected in %s: it has %d Kotlin source file(s), %d declaring Spring "+
+					"controllers and %d declaring Spring Security configuration, but Kotlin is not parsed "+
+					"(docs/decisions/0011-spring-second-framework.md §1), so there is nothing here Sphinxor can analyze",
+				dir, k.Files, k.ControllerFiles, k.URLSecurityFiles+k.MethodEnablerFiles)
+		}
 		return "", "", fmt.Errorf(
 			"no supported framework detected in %s (looked for: %s)\n"+
 				"If this is a supported project, pass --framework explicitly",
@@ -175,7 +185,14 @@ func projectWarnings(m *model.Model) []string {
 	// in a parent module or unparsed Kotlin) — but silence here reads as
 	// confirmation, and the consequence if they really are inert is that
 	// every role shown for them is imaginary.
-	if !m.MethodSecurity.Found && hasMethodSecurityAnnotations(m) {
+	if !m.MethodSecurity.Found && hasMethodSecurityAnnotations(m) && m.Kotlin.MethodEnablerFiles > 0 {
+		// ADR 0042 §4: the enabler exists, in Kotlin, and is not read. The
+		// truthful statement is that whether it enables these is unknown —
+		// not that they are unprotected.
+		out = append(out, "method-security annotations were found, and an enabling annotation (@EnableMethodSecurity or a\n"+
+			"         sibling) is declared in Kotlin, which is not parsed. Whether it enables these annotations is\n"+
+			"         unknown: the endpoints they appear to protect may or may not be protected.")
+	} else if !m.MethodSecurity.Found && hasMethodSecurityAnnotations(m) {
 		out = append(out, "method-security annotations were found, but no @EnableMethodSecurity /\n"+
 			"         @EnableGlobalMethodSecurity / @EnableReactiveMethodSecurity was located in the analyzed\n"+
 			"         source. If it isn't enabled elsewhere (a parent module, Kotlin config), those annotations\n"+
@@ -186,6 +203,26 @@ func projectWarnings(m *model.Model) []string {
 	// the annotations are there, and worded so nobody reads them as
 	// access control — neither ever denies a call, so an endpoint
 	// carrying one is exactly as protected as it would be without it.
+	// ADR 0042 §2: Kotlin source is not parsed, and saying so is what makes
+	// that exclusion safe. Named with what the files declare, so a reader
+	// knows whether routes or security configuration are missing.
+	if k := m.Kotlin; k.Files > 0 {
+		msg := strconv.Itoa(k.Files) + " Kotlin source file(s) were found and not analyzed (Kotlin is not parsed, ADR 0011 §1)"
+		var parts []string
+		if k.ControllerFiles > 0 {
+			parts = append(parts, strconv.Itoa(k.ControllerFiles)+" declaring controllers ("+strings.Join(k.ControllerExamples, ", ")+
+				"): their routes are absent from the matrix, along with any access control on them")
+		}
+		if k.URLSecurityFiles+k.MethodEnablerFiles > 0 {
+			parts = append(parts, "Spring Security configuration is declared in Kotlin ("+strings.Join(k.SecurityExamples, ", ")+
+				"): it is not read")
+		}
+		if len(parts) > 0 {
+			msg += "; " + strings.Join(parts, "; ")
+		}
+		out = append(out, wrapIndented(msg+".", 9, 100)[9:])
+	}
+
 	// ADR 0012 Amendment 1: JSR-250 @PermitAll is Spring Security method
 	// security, so it must not be silent (ADR 0029 §3), but what a
 	// permit-all declaration means for lint and the diff is not decided.

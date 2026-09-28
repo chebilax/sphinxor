@@ -538,3 +538,21 @@ func TestAnalyzeDirectory_MatchingGuardCollisionStaysQuiet(t *testing.T) {
 		t.Errorf("identical-guard collision must not warn, got:\n%s", notices.String())
 	}
 }
+
+// TestResolveFramework_WhollyKotlinSpringNamesKotlin is ADR 0042 §5: a
+// Spring project written in Kotlin is not an unrecognized project, and the
+// error must say Kotlin is why, not suggest --framework.
+func TestResolveFramework_WhollyKotlinSpringNamesKotlin(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "src", "main", "kotlin", "app", "Api.kt")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("package app\n@RestController\nclass Api\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := resolveFramework(dir, "")
+	if err == nil || !strings.Contains(err.Error(), "Kotlin is not parsed") {
+		t.Errorf("err = %v, want one naming Kotlin", err)
+	}
+}

@@ -113,7 +113,10 @@ JAX-RS routing, runtime path prefixes, authorization declared in YAML, and
 project-local authorization annotations are neither read nor detected, and a zero on
 them is correct.
 
-Kotlin source is also out of scope, per [ADR 0011](0011-spring-second-framework.md) §1 —
+Kotlin source is also out of scope, per [ADR 0011](0011-spring-second-framework.md) §1, and
+since [ADR 0042](0042-kotlin-sources-announced.md) it is **detected and announced**: counted,
+with the controllers and Spring Security configuration its files declare named, and Kotlin
+URL security configuration makes the URL layer unknown —
 a language boundary rather than a framework one, and the only item here that would
 be reached by parsing more rather than by deciding more.
 
