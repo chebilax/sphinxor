@@ -162,7 +162,7 @@ func isConfirmedInert(g model.GuardApplication, status model.MethodSecurityStatu
 		return !status.PrePostEnabled
 	case "Secured":
 		return !status.SecuredEnabled
-	case "RolesAllowed":
+	case "RolesAllowed", "DenyAll":
 		return !status.Jsr250Enabled
 	default:
 		return false // NestJS guards, or anything not method-security-gated

@@ -171,6 +171,14 @@ const (
 	// its declaration does not say whether they combine as any-of or
 	// all-of — both readings exist in real beans (ADR 0041 §2).
 	ReasonCombinationNotDeclared OmissionReason = "combination-not-declared"
+
+	// ReasonDeniedToAll: a denyAll() guards the endpoint, in the
+	// SecurityFilterChain or a @PreAuthorize. It admits no one, so no rule
+	// is the faithful policy: Cerbos denies by default (ADR 0012
+	// Amendment 1). Before, a URL-layer denyAll() was read as "no
+	// requirement" and the method layer's roles were exported — a grant
+	// the application refuses to everyone.
+	ReasonDeniedToAll OmissionReason = "denied-to-all"
 )
 
 // Omission records one endpoint that could not become part of any Rule,
@@ -308,9 +316,13 @@ func TranslateWith(m *model.Model, d Declarations) Result {
 
 	guardAppByID := make(map[model.ID]model.GuardApplication, len(m.GuardApplications))
 	guardedEndpoints := make(map[model.ID]bool, len(m.GuardApplications))
+	deniedToAll := make(map[model.ID]bool)
 	for _, g := range m.GuardApplications {
 		guardAppByID[g.ID] = g
 		guardedEndpoints[g.EndpointID] = true
+		if g.DeniesAll {
+			deniedToAll[g.EndpointID] = true
+		}
 	}
 	// Endpoints whose requirement was read and is a permission (ADR 0035
 	// §7). Nothing new is exported for them; they get their own omission
@@ -450,6 +462,18 @@ func TranslateWith(m *model.Model, d Declarations) Result {
 				Detail: "this handler answers every HTTP verb (a @RequestMapping with no method attribute), " +
 					"so it has no single action to name: \"any\" is not an action a request carries, and " +
 					"granting all eight would grant verbs the handler may never have been meant to serve",
+			})
+			continue
+		}
+		// ADR 0012 Amendment 1: denied to everyone, at either layer. No
+		// rule is the policy — checked before anything could grant.
+		if deniedToAll[e.ID] {
+			pathOmissions = append(pathOmissions, Omission{
+				Endpoint: e,
+				Resource: resource,
+				Reason:   ReasonDeniedToAll,
+				Detail: "a denyAll() guards this endpoint, so the application admits no one; no rule is " +
+					"exported, and Cerbos's default deny is exactly that policy",
 			})
 			continue
 		}

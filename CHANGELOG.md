@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that shape. The report lists the declarations verbatim, and the contract the calling
   service must meet. See [ADR 0041](docs/decisions/0041-permission-export.md).
 
+### Changed
+
+- **JSR-250 `@PermitAll` is announced.** It is Spring Security method security and was
+  silently unrecognized. It is now counted and named in a warning. What a permit-all
+  declaration means is not yet decided, so endpoints carrying it are still analyzed as
+  unannotated. A guard replaced by `@PermitAll` still fails the build.
+
 ### Fixed
 
 - **SecurityFilterChain rules written on one line were evaluated in reverse.** Rules were
@@ -31,6 +38,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then grant a role the URL layer does not allow. Rules are now ordered by exact source
   position, the declaration order ADR 0012 specifies. No corpus repository or fixture
   writes its rules this way, and all are byte-identical.
+- **`denyAll()` is read as admitting no one.** A SecurityFilterChain `denyAll()` was
+  treated like `permitAll()`, as "no requirement", so the Cerbos export could grant the
+  method layer's roles on a path the application refuses to everyone. Now it is a guard:
+  - the export omits the endpoint (`denied-to-all`);
+  - `mutating-endpoint-without-access-control` does not fire behind it;
+  - removing it trips the became-public gate;
+  - a method-level `@PreAuthorize("denyAll()")` no longer raises `empty-role`.
+
+  JSR-250 `@DenyAll` is read the same way, under `jsr250Enabled`. `permitAll()` is
+  unchanged. No corpus repository was affected. See
+  [ADR 0012](docs/decisions/0012-securityfilterchain-effective-policy.md) Amendment 1.
 
 ### Effect on CI
 

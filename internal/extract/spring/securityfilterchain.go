@@ -20,10 +20,12 @@ const (
 	chainUnrecognized chainTerminalKind = iota
 	chainRoles
 	chainAuthenticated
-	// chainNoRequirement is .permitAll()/.denyAll() — a real, recognized
+	// chainNoRequirement is .permitAll() — a real, recognized
 	// terminal that contributes no requirement (ADR 0012 §1: "permitAll()
 	// contributes no requirement... this layer has nothing to add").
 	chainNoRequirement
+	// chainDenyAll is .denyAll(): admits no one (ADR 0012 Amendment 1).
+	chainDenyAll
 )
 
 // chainRoleFuncs are .hasRole/.hasAnyRole/.hasAuthority/.hasAnyAuthority —
@@ -452,7 +454,11 @@ func chainRuleFromTerminal(terminal *sitter.Node, src []byte, ctx chainContext) 
 	case tname == "authenticated" && argCount(terminal) == 0:
 		base.kind = chainAuthenticated
 		return base, true
-	case tname == "permitAll" && argCount(terminal) == 0, tname == "denyAll" && argCount(terminal) == 0:
+	case tname == "denyAll" && argCount(terminal) == 0:
+		// ADR 0012 Amendment 1: admits no one — not "no requirement".
+		base.kind = chainDenyAll
+		return base, true
+	case tname == "permitAll" && argCount(terminal) == 0:
 		base.kind = chainNoRequirement
 		return base, true
 	default:
@@ -661,6 +667,19 @@ func (b *builder) applySecurityFilterChain(rules []filterChainRule, file string,
 			continue // no rule matches at all: URL layer contributes nothing, same as no SecurityFilterChain
 		}
 		switch rule.kind {
+		case chainDenyAll:
+			// ADR 0012 Amendment 1: a guard that admits no one. Lint and
+			// the diff read it as protection; the export omits the
+			// endpoint, which in Cerbos is exactly "no one".
+			b.model.GuardApplications = append(b.model.GuardApplications, model.GuardApplication{
+				ID:         b.nextIDFor("guardapp"),
+				EndpointID: e.ID,
+				GuardName:  "denyAll",
+				AppliedAt:  model.ScopeRequestMatcher,
+				File:       file,
+				Line:       rule.line,
+				DeniesAll:  true,
+			})
 		case chainUnrecognized, chainNoRequirement:
 			// Nothing contributed — unresolved (ADR 0018) or an explicit
 			// non-requirement (permitAll/denyAll, ADR 0012 §1).
