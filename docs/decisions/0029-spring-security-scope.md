@@ -81,7 +81,8 @@ Every Spring Security mechanism, with exactly one status:
 | `WebSecurityConfigurerAdapter` (pre-5.7) | detected and announced | [0027](0027-unannounced-url-layers.md) §1 |
 | `.access(...)` custom `AuthorizationManager` | detected (rule-local: stops evaluation, grants nothing) | [0018](0018-unrecognized-rule-stops-evaluation.md) |
 | A matcher whose pattern cannot be read (regex, custom bean, `mvc.matcher`) | detected (rule-local, as above) | [0020](0020-unanalyzable-is-unknown-not-absent.md) §1 |
-| `RoleHierarchy` | detected and announced (roles shown are narrower) | [0031](0031-role-hierarchy.md) §1/§2 |
+| `RoleHierarchy` — rules a constant string, literal or same-project constants | read and stated in the warning, not expanded into grants (roles shown are narrower) | [0038](0038-role-hierarchy-read.md) §1/§2/§12 |
+| `RoleHierarchy` — any other construction (configuration, database, project-defined class) | detected and announced, with the reason it was not read | [0031](0031-role-hierarchy.md) §1/§2, [0038](0038-role-hierarchy-read.md) §1 |
 
 #### Endpoint discovery
 

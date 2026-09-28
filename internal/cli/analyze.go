@@ -262,14 +262,7 @@ func projectWarnings(m *model.Model) []string {
 	// reader to work out which way the numbers are wrong, and the two
 	// directions call for opposite responses.
 	if h := m.RoleHierarchy; h.Found {
-		msg := "this project declares a Spring Security role hierarchy"
-		if len(h.DeclaredIn) > 0 {
-			msg += " in: " + strings.Join(h.DeclaredIn, ", ")
-		}
-		out = append(out, msg+".\n"+
-			"         Its rules are not read, so the roles shown below are NARROWER than what the\n"+
-			"         application actually grants: a role that implies another reaches every endpoint\n"+
-			"         the implied one does. Every role shown is real; the list is not exhaustive.")
+		out = append(out, roleHierarchyWarning(h))
 	}
 
 	// ADR 0035 Amendment 1: a permission read from a bean call is what the
@@ -443,6 +436,144 @@ func unresolvedRoleEndpoints(m *model.Model) int {
 		}
 	}
 	return len(affected)
+}
+
+// roleHierarchyWarning renders ADR 0038 Stage 1's warning: the rules
+// when they were read, both readings when the version decides them, the
+// reason when they could not be read — and in every case the direction of
+// the error ADR 0031 §2 requires, plus any version the run had to assume.
+func roleHierarchyWarning(h model.RoleHierarchyStatus) string {
+	head := "this project declares a Spring Security role hierarchy"
+	if len(h.DeclaredIn) > 0 {
+		head += " in: " + strings.Join(h.DeclaredIn, ", ")
+	}
+	var body []string
+	switch {
+	case h.Read:
+		head += ": " + formatHierarchy(h.Edges) + "."
+		body = append(body, "Roles are shown as declared, without it, so they are NARROWER than what the application "+
+			"grants wherever it applies: a role placed above another also reaches every endpoint the lower one does.")
+	case len(h.From52) > 0 || len(h.UpTo50) > 0:
+		head += "."
+		body = append(body, "Its rules are written in a form Spring Security reads differently by version: up to 5.0 as "+
+			orNothing(formatHierarchy(h.UpTo50))+"; from 5.2 as "+orNothing(formatHierarchy(h.From52))+".")
+		if hasSpacedRole(h.From52) || hasSpacedRole(h.UpTo50) {
+			body = append(body, "A quoted role containing spaces matches no authority.")
+		}
+		body = append(body, "Nothing in the analyzed source fixes the version, so the roles below are shown as declared "+
+			"and may be NARROWER than what the application grants.")
+	default:
+		head += "."
+		reason := ""
+		if h.NotRead != "" {
+			reason = ": " + h.NotRead + "."
+		} else {
+			reason = "."
+		}
+		body = append(body, "Its rules are not read"+reason+" The roles shown below are therefore NARROWER than what "+
+			"the application actually grants: a role that implies another reaches every endpoint the implied one does. "+
+			"Every role shown is real; the list is not exhaustive.")
+	}
+	if h.Condition != "" {
+		body = append(body, "It is declared under "+h.Condition+", which Sphinxor does not evaluate: it applies only "+
+			"when that condition holds.")
+	}
+	if len(h.AssumedReach) > 0 {
+		body = append(body, assumedReachSentence(h.AssumedReach))
+	}
+	return head + "\n" + wrapIndented(strings.Join(body, " "), 9, 100)
+}
+
+// assumedReachSentence states ADR 0038 §12's assumption: the hierarchy is
+// taken to reach every layer whose use of it depends on the Spring
+// Security version, with the versions that makes true. The numbers come
+// from §13 and are re-checked on every major version.
+func assumedReachSentence(reach []string) string {
+	var method []string
+	url := false
+	for _, r := range reach {
+		if r == "authorizeHttpRequests" {
+			url = true
+		} else {
+			method = append(method, r)
+		}
+	}
+	var parts []string
+	if len(method) > 0 {
+		parts = append(parts, strings.Join(method, " and "))
+	}
+	if url {
+		parts = append(parts, "authorizeHttpRequests rules")
+	}
+	version := "6.3 or later"
+	switch {
+	case url && len(method) > 0:
+		version = "6.3 or later; 6.1 for authorizeHttpRequests"
+	case url:
+		version = "6.1 or later"
+	}
+	return "Whether it applies to " + strings.Join(parts, " and to ") + " depends on the Spring Security version, " +
+		"which nothing in the analyzed source fixes. This assumes it does (" + version + "). " +
+		"On an earlier version the roles shown there are exact."
+}
+
+// formatHierarchy renders edges as Spring's own notation, joining a run
+// of edges that form a chain ("A > B > C") and quoting a role name that
+// contains whitespace, so a malformed reading is visible as one.
+func formatHierarchy(edges []model.RoleHierarchyEdge) string {
+	role := func(r string) string {
+		if strings.ContainsAny(r, " \t") {
+			return strconv.Quote(r)
+		}
+		return r
+	}
+	var chains []string
+	for i := 0; i < len(edges); {
+		chain := role(edges[i].Higher) + " > " + role(edges[i].Lower)
+		j := i + 1
+		for ; j < len(edges) && edges[j].Higher == edges[j-1].Lower; j++ {
+			chain += " > " + role(edges[j].Lower)
+		}
+		chains = append(chains, chain)
+		i = j
+	}
+	return strings.Join(chains, ", ")
+}
+
+func orNothing(s string) string {
+	if s == "" {
+		return "no rule at all"
+	}
+	return s
+}
+
+func hasSpacedRole(edges []model.RoleHierarchyEdge) bool {
+	for _, e := range edges {
+		if strings.ContainsAny(e.Higher, " \t") || strings.ContainsAny(e.Lower, " \t") {
+			return true
+		}
+	}
+	return false
+}
+
+// wrapIndented word-wraps text to width, every line indented by indent
+// spaces — the layout the fixed-text warnings above are written in by
+// hand, for a warning whose content is not fixed.
+func wrapIndented(text string, indent, width int) string {
+	pad := strings.Repeat(" ", indent)
+	var lines []string
+	line := pad
+	for _, w := range strings.Fields(text) {
+		if len(line) > indent && len(line)+1+len(w) > width {
+			lines = append(lines, line)
+			line = pad
+		}
+		if len(line) > indent {
+			line += " "
+		}
+		line += w
+	}
+	return strings.Join(append(lines, line), "\n")
 }
 
 // permissionCallees returns the distinct callees through which the model's

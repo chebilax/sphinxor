@@ -40,6 +40,14 @@ func writeExportMarkdown(w io.Writer, result cerbos.Result) error {
 	fmt.Fprintf(&b, "%d rule(s) exported, %d omission(s), %d unverified role reference(s).\n\n",
 		len(result.Rules), len(result.Omissions), len(result.UnverifiedRoles))
 
+	if len(result.Caveats) > 0 {
+		b.WriteString("## Caveats\n\n")
+		for _, c := range result.Caveats {
+			b.WriteString("- " + c + "\n")
+		}
+		b.WriteString("\n")
+	}
+
 	b.WriteString("## Omissions\n\n")
 	if len(result.Omissions) == 0 {
 		b.WriteString("None.\n\n")

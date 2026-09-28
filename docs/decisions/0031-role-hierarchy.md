@@ -4,6 +4,12 @@
 
 Accepted.
 
+**§1 amended by [ADR 0038](0038-role-hierarchy-read.md).** A hierarchy built from a
+constant string is now read and quoted in the warning, and its reach assumptions are
+stated. It is still not expanded into any grant; that is ADR 0038's Stage 2, deferred.
+The corpus measurement below is unchanged: ADR 0038 re-measured it and found zero
+again. Real applications outside the corpus carry hierarchies often.
+
 ## Context
 
 [ADR 0029](0029-spring-security-scope.md) §2 lists `RoleHierarchy` as **silent**,

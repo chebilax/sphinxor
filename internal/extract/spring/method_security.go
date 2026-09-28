@@ -75,6 +75,12 @@ func scanMethodSecurityStatus(root *sitter.Node, src []byte, status *model.Metho
 					continue
 				}
 				status.Found = true
+				switch ann.Name {
+				case "EnableMethodSecurity":
+					status.Modern = true
+				case "EnableGlobalMethodSecurity":
+					status.Legacy = true
+				}
 				status.PrePostEnabled = status.PrePostEnabled || boolAttribute(ann.Args, src, "prePostEnabled", defaults.prePostEnabled)
 				status.SecuredEnabled = status.SecuredEnabled || boolAttribute(ann.Args, src, "securedEnabled", defaults.securedEnabled)
 				status.Jsr250Enabled = status.Jsr250Enabled || boolAttribute(ann.Args, src, "jsr250Enabled", defaults.jsr250Enabled)

@@ -1,6 +1,7 @@
 package cerbos
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/chebilax/sphinxor/internal/model"
@@ -240,5 +241,35 @@ func TestResourceKind(t *testing.T) {
 		if got := ResourceKind(in); got != want {
 			t.Errorf("ResourceKind(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestTranslate_RoleHierarchyCaveat is ADR 0038 Stage 1's export line. The
+// hierarchy is not applied, so the exported rules are narrower than the
+// application: the report says so. The rules themselves are unchanged, and
+// a project with no hierarchy gets no caveat, which keeps its JSON exactly
+// as it was before the field existed.
+func TestTranslate_RoleHierarchyCaveat(t *testing.T) {
+	m := &model.Model{
+		Controllers: []model.Controller{{ID: "c1", Name: "UsersController"}},
+		Endpoints:   []model.Endpoint{{ID: "e1", HTTPMethod: model.MethodGet, Path: "/users", ControllerID: "c1"}},
+		GuardApplications: []model.GuardApplication{
+			{ID: "g1", EndpointID: "e1", GuardName: "PreAuthorize"},
+		},
+		RoleReferences: []model.RoleReference{{ID: "ref1", GuardApplicationID: "g1", RawLiteral: "ROLE_USER"}},
+	}
+	if c := Translate(m).Caveats; c != nil {
+		t.Fatalf("no hierarchy, want no caveat, got %v", c)
+	}
+
+	m.RoleHierarchy = model.RoleHierarchyStatus{Found: true, DeclaredIn: []string{"SecurityConfig"}, Read: true,
+		Edges: []model.RoleHierarchyEdge{{Higher: "ROLE_ADMIN", Lower: "ROLE_USER"}}}
+	result := Translate(m)
+	if len(result.Caveats) != 1 || !strings.Contains(result.Caveats[0], "does not apply") ||
+		!strings.Contains(result.Caveats[0], "SecurityConfig") {
+		t.Errorf("caveats = %v, want one naming SecurityConfig and saying the hierarchy is not applied", result.Caveats)
+	}
+	if len(result.Rules) != 1 || len(result.Rules[0].Roles) != 1 || result.Rules[0].Roles[0] != "ROLE_USER" {
+		t.Errorf("rules = %+v, want ROLE_USER alone — Stage 1 exports no implied role", result.Rules)
 	}
 }

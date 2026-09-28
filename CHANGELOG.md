@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A Spring Security role hierarchy is read and stated.** Before, a `RoleHierarchy` bean
+  was only announced as existing. Now a hierarchy built from a constant string (a
+  literal, concatenated constants, or enum `.name()`s) is read, and the warning quotes
+  its rules — `ROLE_ADMIN > ROLE_USER`. Where the rules are written in a form Spring
+  Security reads differently by version, the warning gives both readings. Where the
+  version decides whether `@Secured`, `@EnableMethodSecurity` or `authorizeHttpRequests`
+  apply it, the warning says what it assumed. A hierarchy that cannot be read says why.
+  The hierarchy is **not** applied to the matrix, the diff or the export; the Cerbos
+  export report gains a *Caveats* line saying so (in JSON, `Caveats`, omitted when
+  empty). Lint output, policies and exit codes are unchanged. See
+  [ADR 0038](docs/decisions/0038-role-hierarchy-read.md).
 - **`sphinxor diff` compares permissions.** Since ADR 0035 the model carries a
   `PermissionReference`, but a permission added, removed or changed between two runs
   was invisible to the diff — editing a `@PreAuthorize("@ss.hasPermi('…')")` literal

@@ -412,6 +412,47 @@ type RoleHierarchyStatus struct {
 	// DeclaredIn names the classes where it was found, for the warning
 	// text, so a reader can go and look.
 	DeclaredIn []string
+
+	// The fields below are ADR 0038 Stage 1: the hierarchy's rules are
+	// READ and stated in the warning, and still expanded into nothing.
+	// No consumer uses them to decide a grant, a finding or a diff
+	// result, and none should until Stage 2 is accepted.
+
+	// Read is true when the rules were evaluated to one string and parsed
+	// in a form every Spring Security version reads the same way, or in
+	// the form the source proves the version reads (ADR 0038 §2). Edges
+	// then holds them, in source order.
+	Read  bool
+	Edges []RoleHierarchyEdge
+	// UpTo50 and From52 are set instead of Edges when the string was
+	// evaluated but Spring Security reads it differently by version and
+	// nothing in the source fixes the version: both readings are stated
+	// rather than one chosen (ADR 0038 §2, §13).
+	UpTo50 []RoleHierarchyEdge
+	From52 []RoleHierarchyEdge
+	// NotRead is why the rules could not be read at all — a value from
+	// configuration, a project-defined implementation — for the warning.
+	// Empty when Read, or when the two readings above are set.
+	NotRead string
+	// Condition is a @Profile or @Conditional… annotation on the class
+	// declaring the hierarchy, verbatim. Sphinxor evaluates no profile,
+	// so the warning says the rules apply only when it holds.
+	Condition string
+	// AssumedReach names the annotation families and URL rules whose use
+	// of the hierarchy depends on a Spring Security version the source
+	// does not fix. The warning states that it assumed the hierarchy
+	// reaches them (ADR 0038 §12), since that is the direction in which
+	// "roles shown may be narrower" is the safe claim.
+	AssumedReach []string
+}
+
+// RoleHierarchyEdge is one "Higher > Lower" rule of a role hierarchy, as
+// Spring Security itself would split it — including a malformed name
+// containing spaces, which is what some versions make of several pairs
+// written on one line (ADR 0038 Finding 1).
+type RoleHierarchyEdge struct {
+	Higher string
+	Lower  string
 }
 
 // MethodSecurityStatus records whether Spring's @EnableMethodSecurity or
@@ -432,6 +473,13 @@ type MethodSecurityStatus struct {
 	PrePostEnabled bool
 	SecuredEnabled bool
 	Jsr250Enabled  bool
+	// Modern and Legacy record which servlet enabler was located:
+	// @EnableMethodSecurity and @EnableGlobalMethodSecurity respectively.
+	// They apply a RoleHierarchy bean differently — the legacy one to
+	// @PreAuthorize on every version, the modern one to every family only
+	// from 6.3 (ADR 0038 §13) — which is the only reason they are split.
+	Modern bool
+	Legacy bool
 }
 
 // Controller is a NestJS @Controller() class. It is not itself part of the
