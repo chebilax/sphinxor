@@ -4,7 +4,7 @@
 
 **Accepted.** Amends [ADR 0002](0002-intermediate-model-structure.md).
 
-**Amendment 1 (§10–§11): Proposed.** See *Amendment 1* below. A project-level
+**Amendment 1 (§10–§11): Accepted.** See *Amendment 1* below. A project-level
 warning that a permission read from a bean call is what the call names, not what the
 bean decides. No change to the model, the matrix, a finding or a gate.
 
@@ -684,7 +684,7 @@ that is visible rather than argued.
 
 ### Status
 
-Proposed.
+Accepted.
 
 ### Context
 
