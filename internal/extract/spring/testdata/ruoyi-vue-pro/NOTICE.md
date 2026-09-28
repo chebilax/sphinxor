@@ -2,6 +2,7 @@
 
 Vendored, unmodified, from https://github.com/YunaiV/ruoyi-vue-pro,
 commit `8e80602b875f69158faf4c92445e67691821bf0f` (2026-09-19), MIT License.
+The upstream `LICENSE` is copied alongside, as that license's notice condition requires.
 
 Used per docs/testing.md and docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
 Amendment 2 §8: the **configured-path-prefix** fixture, and the project's

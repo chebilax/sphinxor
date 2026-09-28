@@ -2,6 +2,12 @@
 
 Vendored, unmodified, from https://github.com/calcom/cal.com,
 commit `54343aa685ae8f33159d2f485ec4a57bad5c574a` (2026-09-20), MIT License.
+The license copied alongside as `LICENSE` is `apps/api/v2/src/platform/LICENSE`, the
+license file of the directory both vendored files sit in, as that license's notice
+condition requires. The repository root's `LICENSE` is MIT too, with the same copyright
+line. `apps/api/v2/package.json` says `"license": "UNLICENSED"`, which is npm's marker
+for a package that is not published, not a license grant; the directory's own license
+file is what applies to its source.
 
 Used per docs/testing.md and docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
 Amendment 2 §7: the **unreadable-version** fixture, and the only vendored
