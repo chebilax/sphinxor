@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-29
+
+Three ways the Cerbos export could grant access the application denies are closed. The
+export also learns permissions, but only with semantics you declare:
+- **Fixed:** a SecurityFilterChain written on one line was evaluated in reverse.
+- **Fixed:** `denyAll()` was read as "no requirement".
+- **Fixed:** Kotlin security configuration was invisible, so the URL layer looked absent.
+- **Added:** RuoYi-style permissions such as `@ss.hasPermi('x')` can be exported, once
+  you state what the bean call means and its superuser escape.
+
+None of the three defects occurs in the 20-repository corpus. Each would have granted
+access the first time it met real code. Read *Effect on CI* before upgrading: one change
+can turn a `sphinxor diff` red, and one can turn a `sphinxor lint` green.
+
 ### Added
 
 - **Permissions can be exported to Cerbos, with semantics you declare.** A RuoYi-style
@@ -64,8 +78,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Effect on CI
 
-- **None without the new flags.** An export given none of them is byte-identical to
-  before and is never refused, across all 20 corpus repositories and every fixture.
+Measured against the previous binary for every change in this release: **exit codes are
+unchanged on all 20 corpus repositories, every fixture and the ADR 0038 sample.** Two
+changes can move an exit code on other code:
+
+- **`sphinxor diff` can newly fail.** Removing a `denyAll()`, in a chain or a
+  `@PreAuthorize`, is now a loss of protection, and the became-public gate fires. Before,
+  `denyAll()` counted as no requirement, so removing it changed nothing.
+- **`sphinxor lint` can newly pass.** A method-level `@PreAuthorize("denyAll()")` no
+  longer raises `empty-role`, a blocking finding, because a deliberate "no one" is not a
+  role check left empty.
+- **`sphinxor export cerbos` changes no exit code.** Without the new permission flags its
+  output is byte-identical and it never refuses. With them, a missing superuser-escape
+  declaration is refused before anything is written. Projects with Kotlin security
+  configuration now have their endpoints omitted instead of granted from the method layer
+  alone.
+
+### What is still not read
+
+- **What a method-level permit-all means.** `@PreAuthorize("permitAll()")` still raises
+  `empty-role`. JSR-250 `@PermitAll` is announced, not read: upstream yudao has 109 of
+  them, 38 on mutating endpoints. ADR 0043, proposed in
+  [#65](https://github.com/chebilax/sphinxor/pull/65), would treat both as a public
+  declaration. It is not in this release.
+- **Kotlin**, still not parsed: every route, guard and role written in it is absent. The
+  run now says so.
+- **Several `SecurityFilterChain` beans**: 6 corpus repositories, 1,420 endpoints, blocked
+  by runtime activation ([ADR 0040](docs/decisions/0040-multiple-security-filter-chains.md)).
+- **The export's action granularity.** Rules are keyed by controller and HTTP verb.
+  Declared, RuoYi-Vue exports 34 rules for 51 of its 117 permission endpoints, and 77
+  endpoints collide. Across the corpus, collisions would take 317 of thingsboard's
+  endpoints once reachable. This is the export's next decision
+  ([ADR 0041](docs/decisions/0041-permission-export.md) §7).
+- **Permission callees nobody declared** are never interpreted: a negation like
+  `lacksPermi` stays omitted.
 
 ## [0.9.0] - 2026-09-28
 
