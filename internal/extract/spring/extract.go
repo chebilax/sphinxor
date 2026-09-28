@@ -183,9 +183,17 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	// second silently gets treated as the first — which let a two-chain
 	// project export a Cerbos grant the running application denies.
 	forms := countChainBeans(files)
+	// ADR 0042 §3: URL security configured in Kotlin is a layer that
+	// exists and cannot be read — unknown, never absent (ADR 0020 §2).
+	kotlin, err := ScanKotlin(dir)
+	if err != nil {
+		return nil, allowlist.Outcome{}, err
+	}
+	b.model.Kotlin = kotlin
+	forms.kotlin = kotlin.URLSecurityFiles
 	b.model.URLLayer = model.URLLayerStatus{
 		Present:  forms.any(),
-		Analyzed: hasChain && forms.legacyAdapter == 0 && forms.shiro == 0,
+		Analyzed: hasChain && forms.legacyAdapter == 0 && forms.shiro == 0 && forms.kotlin == 0,
 	}
 	if b.model.URLLayer.Unknown() {
 		b.model.URLLayer.Reason = unreadableLayerReason(forms, hasChain)
@@ -410,6 +418,9 @@ func unreadableLayerReason(forms urlLayerForms, servletChainParsed bool) string 
 	}
 	if forms.legacyAdapter > 0 {
 		parts = append(parts, "a WebSecurityConfigurerAdapter was found; this pre-Spring-Security-5.7 URL layer's authorizeRequests rules are not parsed")
+	}
+	if forms.kotlin > 0 {
+		parts = append(parts, "URL authorization is configured in Kotlin, which is not parsed")
 	}
 	if forms.shiro > 0 {
 		// Named as Shiro deliberately: "your URL layer could not be

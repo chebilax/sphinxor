@@ -177,3 +177,10 @@ func Join(fs []Framework) string {
 	}
 	return strings.Join(parts, ", ")
 }
+
+// Kotlin reports the Kotlin sources under dir and what they declare
+// (docs/decisions/0042-kotlin-sources-announced.md), so framework
+// detection can name Kotlin as the reason a Spring project yields nothing.
+func Kotlin(dir string) (model.KotlinStatus, error) {
+	return spring.ScanKotlin(dir)
+}

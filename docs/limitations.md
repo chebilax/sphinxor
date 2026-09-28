@@ -215,6 +215,19 @@ report says so under *Caveats*.
 The version facts were read at the Spring Security releases ADR 0038 §13 lists, and are
 re-checked on every major version.
 
+## Kotlin source is announced, not analyzed
+
+Kotlin is not parsed ([ADR 0011](decisions/0011-spring-second-framework.md) §1). Since
+[ADR 0042](decisions/0042-kotlin-sources-announced.md) the run says so:
+- it counts Kotlin files and names those declaring controllers or Spring Security
+  configuration;
+- Kotlin URL security makes the URL layer unknown, so the export omits every endpoint;
+- a Kotlin method-security enabler makes the method-security caveat say "unknown".
+
+What is still missing: every route, guard and role written in Kotlin. A chain bean with an
+expression body and no declared return type is not recognized as security configuration,
+though its file is still counted.
+
 ## What a permit-all declaration means is not decided
 
 `permitAll()` in a `@PreAuthorize` raises `empty-role`, a build-failing finding, as ADR 0017
