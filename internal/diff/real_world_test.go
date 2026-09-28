@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/chebilax/sphinxor/internal/extract/nestjs"
+	"github.com/chebilax/sphinxor/internal/extract/spring"
 	"github.com/chebilax/sphinxor/internal/lint"
 	"github.com/chebilax/sphinxor/internal/model"
 )
@@ -216,4 +217,100 @@ func hasFinding(findings []model.Finding, ruleID string, allowlisted bool) bool 
 		}
 	}
 	return false
+}
+
+// analyzeSpring mirrors analyze for the Spring extractor, which is where
+// the corpus's permissions live — ADR 0035 read them on Spring only.
+func analyzeSpring(t *testing.T, dir string) Snapshot {
+	t.Helper()
+	m, outcome, err := spring.Extract(dir)
+	if err != nil {
+		t.Fatalf("spring.Extract(%s): %v", dir, err)
+	}
+	findings := lint.Run(m, lint.DefaultRules(), outcome.AllowlistedEndpoints)
+	findings = append(findings, outcome.StaleMarkers...)
+	return Snapshot{Model: m, Findings: findings, AllowlistedEndpoints: outcome.AllowlistedEndpoints}
+}
+
+// TestRealWorldDiff_PermissionChanged makes a real edit to a copy of the
+// vendored ruoyi-vue-pro fixture — the one fixture carrying literal
+// permissions — rather than constructing a model pair, to the same
+// standard TestRealWorldDiff_GuardRemoved is held to.
+//
+// It is the regression test for ADR 0035 §7's stated gap. Before
+// ADR 0037, this edit produced a diff whose every section read "No
+// change" — confirmed on RuoYi-Vue itself at 13db1fc, not only on this
+// fixture, and it matters most on exactly those projects: RuoYi-Vue and
+// eladmin report ZERO roles, so "the diff compares roles" meant the diff
+// compared nothing about what their endpoints require.
+//
+// It also pins the other half of ADR 0037 §3: the change is REPORTED and
+// does NOT gate. Sphinxor holds no ordering over roles (ADR 0031) and
+// strictly less over permissions — under ADR 0035 §3 it does not even
+// decide that @ss.hasPermission denotes a permission check.
+func TestRealWorldDiff_PermissionChanged(t *testing.T) {
+	baseDir := t.TempDir()
+	headDir := t.TempDir()
+	copyTree(t, "../extract/spring/testdata/ruoyi-vue-pro", baseDir)
+	copyTree(t, "../extract/spring/testdata/ruoyi-vue-pro", headDir)
+
+	mustReplace(t,
+		filepath.Join(headDir, "yudao-module-member/src/main/java/cn/iocoder/yudao/module/member/controller/admin/user/MemberUserController.java"),
+		"@PreAuthorize(\"@ss.hasPermission('member:user:update-level')\")",
+		"@PreAuthorize(\"@ss.hasPermission('member:user:audit-level')\")",
+	)
+
+	result := Compare(analyzeSpring(t, baseDir), analyzeSpring(t, headDir))
+
+	if len(result.AddedPermissionReferences) != 1 || result.AddedPermissionReferences[0].RawLiteral != "member:user:audit-level" {
+		t.Errorf("added = %+v, want exactly [member:user:audit-level]", result.AddedPermissionReferences)
+	}
+	if len(result.RemovedPermissionReferences) != 1 || result.RemovedPermissionReferences[0].RawLiteral != "member:user:update-level" {
+		t.Errorf("removed = %+v, want exactly [member:user:update-level]", result.RemovedPermissionReferences)
+	}
+
+	// The endpoint is protected on both sides, so ADR 0036 §2's
+	// presence test does not fire, and nothing else may either.
+	if len(result.BecamePublic) != 0 {
+		t.Errorf("a permission edit is not a became-public transition: %+v", result.BecamePublic)
+	}
+	if result.HasRegressions() {
+		t.Errorf("a permission literal changing must not gate CI: %+v", result.Regressions)
+	}
+
+	// The rest of the structural diff must be silent: nothing about the
+	// endpoint, its guard or any role moved.
+	if len(result.AddedEndpoints)+len(result.RemovedEndpoints) != 0 {
+		t.Errorf("endpoints moved: +%+v -%+v", result.AddedEndpoints, result.RemovedEndpoints)
+	}
+	if len(result.AddedGuardApplications)+len(result.RemovedGuardApplications) != 0 {
+		t.Errorf("guard applications moved: +%+v -%+v", result.AddedGuardApplications, result.RemovedGuardApplications)
+	}
+	if len(result.AddedRoleReferences)+len(result.RemovedRoleReferences) != 0 {
+		t.Errorf("role references moved: +%+v -%+v", result.AddedRoleReferences, result.RemovedRoleReferences)
+	}
+}
+
+// TestRealWorldDiff_SpringFixtureSelfDiffIsANoOp is ADR 0037 §5's first
+// regression bar at fixture scale. A derived key that is not stable
+// across two independent extraction runs of the same source shows up
+// here as phantom additions and removals — five of them on this fixture,
+// 212 across the corpus.
+func TestRealWorldDiff_SpringFixtureSelfDiffIsANoOp(t *testing.T) {
+	dir := "../extract/spring/testdata/ruoyi-vue-pro"
+
+	base := analyzeSpring(t, dir)
+	if len(base.Model.PermissionReferences) != 5 {
+		t.Fatalf("fixture carries %d permission reference(s), want 5 — the vendored fixture may have changed", len(base.Model.PermissionReferences))
+	}
+
+	result := Compare(base, analyzeSpring(t, dir))
+
+	if len(result.AddedPermissionReferences)+len(result.RemovedPermissionReferences) != 0 {
+		t.Errorf("a snapshot compared with itself reported permission changes: +%+v -%+v",
+			result.AddedPermissionReferences, result.RemovedPermissionReferences)
+	}
+	if result.HasRegressions() {
+		t.Errorf("self-diff produced regressions: %+v", result.Regressions)
+	}
 }

@@ -128,7 +128,7 @@ func BuildMatrix(m *model.Model, findings []model.Finding) Matrix {
 		if !ok {
 			continue
 		}
-		permissionsByEndpoint[app.EndpointID] = appendUnique(permissionsByEndpoint[app.EndpointID], ref.Via+"('"+ref.RawLiteral+"')")
+		permissionsByEndpoint[app.EndpointID] = appendUnique(permissionsByEndpoint[app.EndpointID], renderPermissionReference(ref))
 	}
 
 	findingsByEndpoint := make(map[model.ID][]model.Finding)
@@ -196,4 +196,19 @@ func writeJSON(w io.Writer, matrix Matrix) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(matrix)
+}
+
+// renderPermissionReference spells a permission reference the way both
+// the matrix column and the diff's Permission References section show
+// it — @ss.hasPermi('system:user:edit'), the source form.
+//
+// Shared between the two deliberately. ADR 0035 §3 makes Via
+// load-bearing rather than decorative: Sphinxor records that the
+// annotation names this literal THROUGH that call and does not decide
+// what the call means, so a bare literal is half the recorded fact and,
+// for RuoYi-Vue's one @ss.hasRole('admin'), a wrong one. Two call sites
+// building that string independently is how the spellings drift apart,
+// which is the DeclaresRoles lesson ADR 0011 §1 paid for.
+func renderPermissionReference(ref model.PermissionReference) string {
+	return ref.Via + "('" + ref.RawLiteral + "')"
 }

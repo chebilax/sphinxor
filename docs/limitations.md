@@ -176,6 +176,8 @@ But the scale should be stated plainly for both: on a production application in 
 - **NestJS**, which has no equivalent work. Every number in the NestJS survey above stands exactly as written.
 - **The Cerbos export.** A permission is not a Cerbos role, so these endpoints are still omitted — now under their own `permission-not-exportable` reason rather than under one claiming the requirement could not be determined. Exporting them at all is a separate decision.
 
+What has since come off this list: **the diff**. [ADR 0037](decisions/0037-permissions-in-the-diff.md) makes `sphinxor diff` compare permission references, so a permission added, removed or changed between two runs is reported instead of producing a report whose every section reads *No change* — which is what editing a `@PreAuthorize` literal in RuoYi-Vue did before it. That matters most on exactly the two projects this entry is about, since they report zero roles. It changes nothing about what gates: a permission string swapped for another is reported and not failed, because Sphinxor cannot order two opaque strings it does not read.
+
 So the headline claim of this entry survives: on a production application in either framework, the RBAC matrix has **no role data in it**, with `thingsboard` the single surveyed exception. What changed is that on two of those applications it now has *permission* data, which is a different column and a different claim.
 
 ## Spring route shapes outside ADR 0011 §1's scope — and the recognized-endpoint count is not the API surface

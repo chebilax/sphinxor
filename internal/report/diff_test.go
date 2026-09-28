@@ -101,3 +101,76 @@ func TestWriteDiff_ExcusedTransitionIsMarked(t *testing.T) {
 		t.Errorf("the gated transition is missing from Became Public:\n%s", out)
 	}
 }
+
+// TestWriteDiff_PermissionReferencesRenderViaAndLocation pins ADR 0037
+// §2's rendering. The entry must carry the callee, not the bare literal:
+// RuoYi-Vue's one @ss.hasRole('admin') under a heading reading
+// "Permission References" would assert exactly what ADR 0035 §3 declined
+// to decide, and the diff must not be the one place that claim is
+// unqualified.
+func TestWriteDiff_PermissionReferencesRenderViaAndLocation(t *testing.T) {
+	result := diff.Result{
+		AddedPermissionReferences: []model.PermissionReference{
+			{Via: "@ss.hasPermi", RawLiteral: "system:user:remove", File: "SysUserController.java", Line: 149},
+		},
+		RemovedPermissionReferences: []model.PermissionReference{
+			{Via: "@ss.hasRole", RawLiteral: "admin", File: "GenController.java", Line: 128},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteDiff(&buf, result, FormatMarkdown); err != nil {
+		t.Fatalf("WriteDiff: %v", err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, "## Permission References") {
+		t.Errorf("missing section: %s", out)
+	}
+	if !strings.Contains(out, "+ @ss.hasPermi('system:user:remove') (SysUserController.java:149)") {
+		t.Errorf("added permission not rendered in source form with its location: %s", out)
+	}
+	if !strings.Contains(out, "- @ss.hasRole('admin') (GenController.java:128)") {
+		t.Errorf("removed permission not rendered in source form with its location: %s", out)
+	}
+}
+
+// TestWriteDiff_PermissionSpellingMatchesTheMatrix is the point of
+// sharing renderPermissionReference: a reader comparing the diff against
+// the RBAC matrix must see one spelling, not two.
+func TestWriteDiff_PermissionSpellingMatchesTheMatrix(t *testing.T) {
+	ref := model.PermissionReference{Via: "@ss.hasPermi", RawLiteral: "system:user:edit", File: "a.java", Line: 1}
+
+	var buf bytes.Buffer
+	if err := WriteDiff(&buf, diff.Result{AddedPermissionReferences: []model.PermissionReference{ref}}, FormatMarkdown); err != nil {
+		t.Fatalf("WriteDiff: %v", err)
+	}
+
+	matrix := BuildMatrix(&model.Model{
+		Endpoints:            []model.Endpoint{{ID: "PUT /system/user", HTTPMethod: model.MethodPut, Path: "/system/user"}},
+		GuardApplications:    []model.GuardApplication{{ID: "g1", EndpointID: "PUT /system/user", GuardName: "PreAuthorize", DeclaresPermissions: true}},
+		PermissionReferences: []model.PermissionReference{{ID: "p1", GuardApplicationID: "g1", Via: ref.Via, RawLiteral: ref.RawLiteral}},
+	}, nil)
+
+	if len(matrix.Rows) != 1 || len(matrix.Rows[0].Permissions) != 1 {
+		t.Fatalf("matrix did not project the permission: %+v", matrix.Rows)
+	}
+	spelling := matrix.Rows[0].Permissions[0]
+	if !strings.Contains(buf.String(), spelling) {
+		t.Errorf("diff renders a different spelling from the matrix's %q:\n%s", spelling, buf.String())
+	}
+}
+
+// TestWriteDiff_NoPermissionChangeSaysSo keeps the new section's empty
+// state consistent with every other section's, rather than leaving a
+// bare heading a reader has to interpret.
+func TestWriteDiff_NoPermissionChangeSaysSo(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteDiff(&buf, diff.Result{}, FormatMarkdown); err != nil {
+		t.Fatalf("WriteDiff: %v", err)
+	}
+	section := buf.String()[strings.Index(buf.String(), "## Permission References"):]
+	if !strings.Contains(section, "No change.") {
+		t.Errorf("empty permission section should say so: %q", section)
+	}
+}
