@@ -60,6 +60,12 @@ type filterChainRule struct {
 	roles    []string // populated only for chainRoles
 	file     string
 	line     int
+	// offset is the byte offset of the rule's terminal method name, its
+	// exact source position. Rules are ordered by it, not by line: the
+	// tree walk visits a fluent chain from its outermost call, which is
+	// the LAST rule, so several rules on one line sorted by line alone
+	// came out reversed (ADR 0012's declaration order).
+	offset uint32
 
 	// anyRequest marks an explicit .anyRequest() rule: it genuinely
 	// matches every path. Before docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
@@ -108,7 +114,7 @@ func findSecurityFilterChainRules(files []parsedFile, consts *constIndex) (rules
 
 	ctx := chainContext{consts: consts, scope: consts.files[relPaths[0]], class: enclosingClassFQ(lambdas[0], srcs[0])}
 	rules = collectChainRules(lambdas[0], srcs[0], ctx)
-	sort.SliceStable(rules, func(i, j int) bool { return rules[i].line < rules[j].line })
+	sort.SliceStable(rules, func(i, j int) bool { return rules[i].offset < rules[j].offset })
 	return rules, relPaths[0], true
 }
 
@@ -422,6 +428,7 @@ func chainRuleFromTerminal(terminal *sitter.Node, src []byte, ctx chainContext) 
 		anyRequest:        anyRequest,
 		matcherUnreadable: matcherUnreadable,
 		line:              line,
+		offset:            name.StartByte(),
 	}
 	if matcherUnreadable {
 		base.kind = chainUnrecognized

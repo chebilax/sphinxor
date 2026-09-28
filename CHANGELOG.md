@@ -22,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that shape. The report lists the declarations verbatim, and the contract the calling
   service must meet. See [ADR 0041](docs/decisions/0041-permission-export.md).
 
+### Fixed
+
+- **SecurityFilterChain rules written on one line were evaluated in reverse.** Rules were
+  ordered by source line alone, and several rules on one line —
+  `a.requestMatchers("/admin/**").hasRole("SUPERADMIN").anyRequest().authenticated()` —
+  came out last-first, so `authenticated()` answered for `/admin/**`. The export could
+  then grant a role the URL layer does not allow. Rules are now ordered by exact source
+  position, the declaration order ADR 0012 specifies. No corpus repository or fixture
+  writes its rules this way, and all are byte-identical.
+
 ### Effect on CI
 
 - **None without the new flags.** An export given none of them is byte-identical to
