@@ -2,6 +2,16 @@
 
 This describes the real process used on this project, not an aspirational one.
 
+## Setup
+
+After cloning, point git at the repository's hooks:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+`.githooks/commit-msg` rejects a commit message carrying an authorship or tool-credit trailer. Commits are authored by the repository owner only. The hook enforces that for commits; PR descriptions, comments and release notes follow the same rule by hand.
+
 ## Branching
 
 One branch per feature, opened against `main`. No direct commits to `main`.

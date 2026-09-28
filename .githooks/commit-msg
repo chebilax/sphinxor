@@ -1,0 +1,5 @@
+#!/bin/sh
+if grep -qiE 'Co-Authored-By|Generated with|🤖' "$1"; then
+  echo "✗ Commit rejected: remove Co-Authored-By / attribution trailers." >&2
+  exit 1
+fi
