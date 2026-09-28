@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt-check check
+.PHONY: build test vet fmt-check hook-test check
 
 build:
 	go build ./...
@@ -15,4 +15,7 @@ fmt-check:
 		echo "gofmt needed on:"; echo "$$unformatted"; exit 1; \
 	fi
 
-check: fmt-check vet build test
+hook-test:
+	@sh scripts/test-commit-msg-hook.sh
+
+check: fmt-check vet build test hook-test

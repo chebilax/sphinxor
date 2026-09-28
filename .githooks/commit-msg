@@ -1,5 +1,12 @@
 #!/bin/sh
-if grep -qiE 'Co-Authored-By|Generated with|🤖' "$1"; then
-  echo "✗ Commit rejected: remove Co-Authored-By / attribution trailers." >&2
-  exit 1
+# Rejects a commit message carrying attribution: a Co-Authored-By trailer,
+# a "Generated with Claude" credit, or the robot emoji. Ordinary prose that
+# happens to contain "generated with" (say, "generated without a guard")
+# passes. See CONTRIBUTING.md and scripts/test-commit-msg-hook.sh.
+msg=$1
+if grep -qiE '^[[:space:]]*Co-Authored-By:' "$msg" ||
+	grep -qiE 'Generated with \[?Claude' "$msg" ||
+	grep -qF '🤖' "$msg"; then
+	echo "✗ Commit rejected: remove the attribution trailer or credit line." >&2
+	exit 1
 fi
