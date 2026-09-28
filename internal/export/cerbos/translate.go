@@ -189,6 +189,12 @@ type Result struct {
 	Rules           []Rule
 	Omissions       []Omission
 	UnverifiedRoles []UnverifiedRole
+	// Caveats are project-level facts that make the exported rules
+	// narrower than what the application grants, without making any one
+	// of them wrong — so they are stated, not turned into omissions.
+	// Omitted from JSON when empty, so a project with none serializes
+	// exactly as before the field existed.
+	Caveats []string `json:",omitempty"`
 }
 
 // roleGrant is one role name resolved for one endpoint, and whether it
@@ -556,7 +562,7 @@ func Translate(m *model.Model) Result {
 		return unverified[i].Role < unverified[j].Role
 	})
 
-	return Result{Rules: rules, Omissions: omissions, UnverifiedRoles: unverified}
+	return Result{Rules: rules, Omissions: omissions, UnverifiedRoles: unverified, Caveats: caveats(m)}
 }
 
 // collisionDetail explains one action-collision omission in plain terms,
@@ -768,4 +774,25 @@ func sortOmissions(omissions []Omission) {
 		}
 		return omissions[i].Endpoint.HTTPMethod < omissions[j].Endpoint.HTTPMethod
 	})
+}
+
+// caveats lists what the export report must say about the project as a
+// whole. Today that is one thing: a role hierarchy, which ADR 0038 Stage 1
+// reads but does not apply, so a role it places above another is not
+// granted the lower role's endpoints here. The policy then denies access
+// the application allows. That is the safe direction (ADR 0009), and it
+// breaks a migration for exactly the most privileged users, so the report
+// says so. Stage 2 exports the implied roles instead (ADR 0038 §10).
+func caveats(m *model.Model) []string {
+	h := m.RoleHierarchy
+	if !h.Found {
+		return nil
+	}
+	where := ""
+	if len(h.DeclaredIn) > 0 {
+		where = " (in " + strings.Join(h.DeclaredIn, ", ") + ")"
+	}
+	return []string{"The project declares a Spring Security role hierarchy" + where + ", which this export does not apply: " +
+		"a role it places above another is not granted the lower role's endpoints here, so the policy may deny access " +
+		"the application allows. See docs/decisions/0038-role-hierarchy-read.md."}
 }

@@ -182,6 +182,39 @@ What has since come off this list: **the diff**. [ADR 0037](decisions/0037-permi
 
 So the headline claim of this entry survives: on a production application in either framework, the RBAC matrix has **no role data in it**, with `thingsboard` the single surveyed exception. What changed is that on two of those applications it now has *permission* data, which is a different column and a different claim.
 
+## A Spring Security role hierarchy is read, stated, and not applied
+
+[ADR 0038](decisions/0038-role-hierarchy-read.md) Stage 1. A hierarchy built from a
+constant string (a literal, `+` concatenation, a same-project `static final String`, or
+an enum's `.name()`) is **read**, and the run's warning quotes its rules. It is **not
+applied**. Where a row lists `ROLE_USER`, a `ROLE_ADMIN` holder reaches it too, and the
+matrix, the JSON, `sphinxor diff` and the Cerbos export do not show that. The export
+report says so under *Caveats*.
+
+- **Why it is not applied.** On the sample ADR 0038 measured, applying it would change
+  zero matrix rows: the projects with a readable hierarchy keep their roles in a legacy
+  URL layer, behind constants, or on Spring Data REST repositories. Stage 2 waits for a
+  project it would change.
+- **The same literal means different things on different Spring Security versions.**
+  Several pairs on one line — `"A > B B > C"` — are a hierarchy up to 5.0 and one
+  malformed chain from 5.1. A chain — `"A > B > C"` — is one rule up to 5.0 and two from
+  5.1. Where nothing in the source fixes the version, the warning states both readings
+  and chooses neither. A Spring Security upgrade can silently change what such a
+  hierarchy grants, and Sphinxor cannot tell which side of that change a project is on.
+- **Which annotations use it depends on the version too.** `@EnableMethodSecurity`
+  ignores a `RoleHierarchy` bean before 6.3, and `authorizeHttpRequests` before 6.1.
+  Legacy `@EnableGlobalMethodSecurity` never applies one to `@Secured` or
+  `@RolesAllowed`. Where the source does not fix the version, the warning names the
+  layers concerned and says it assumed the hierarchy reaches them.
+- **Not read:** a hierarchy from a configuration property, a database, a static method,
+  a project-defined `RoleHierarchy` class, the 6.3 builder, a text block, or Kotlin. The
+  warning names the reason, except for Kotlin, which is not parsed at all
+  ([ADR 0011](decisions/0011-spring-second-framework.md) §1).
+- **`@Profile` and `@Conditional…`** on the declaring class are named, never evaluated.
+
+The version facts were read at the Spring Security releases ADR 0038 §13 lists, and are
+re-checked on every major version.
+
 ## Spring route shapes outside ADR 0011 §1's scope — and the recognized-endpoint count is not the API surface
 
 Found by the same Spring survey as the entry above, and recorded separately because it is a different gap: this is about **which endpoints exist at all**, not about what authorizes them. Fixing it would surface more endpoints without recording one additional role.
@@ -317,7 +350,7 @@ What's still invisible, per that ADR's stated scope and [ADR 0018](decisions/001
 - **A pre-Spring-Security-5.7 `WebSecurityConfigurerAdapter`** — the older configuration base class, in scope but not parsed. `zalando/nakadi` uses one, and its rules are `.access(hasScope(…))`, which [ADR 0012](decisions/0012-securityfilterchain-effective-policy.md) puts out of scope even in the modern API. Detected and announced since [ADR 0027](decisions/0027-unannounced-url-layers.md).
 - **An Apache Shiro `ShiroFilterFactoryBean`** — a different framework's URL layer, and nothing about it is parsed. Six corpus projects declare one (JeecgBoot, shenyu, streampark, inlong, litemall, metersphere). Announcing it is not interpreting it, the narrower half of [ADR 0023](decisions/0023-third-party-authorization-annotations.md)'s argument: what changes is that a project with a Shiro URL layer stops being reported as though it had none. `inlong`'s, read by hand, ends in a `/**` catch-all applying an `AuthenticationFilter` and a tenant filter — **114 of its mutating routes fall under it and zero are `anon`** — which is why its endpoints showing no per-endpoint authorization must not be read as "anyone can call this".
 - **Non-Ant-pattern matchers**: regex or character-class syntax, a custom `RequestMatcher` bean, `mvc.matcher(...)`, `dispatcherTypeMatchers`. Only literal segments, `*`, `**`, and `{var}`-as-wildcard are matched. A matcher whose pattern cannot be read makes that *rule* unknown (ADR 0020 §1) — it stops evaluation for endpoints it might cover and grants its roles to none of them. The wrapper forms that carry an ordinary readable pattern one call deeper, `requestMatchers(antMatcher("/admin/**"))`, are read normally.
-- **`@PostAuthorize`/`@PreFilter`/`@PostFilter`**, composed/meta-annotations, `RoleHierarchy` resolution, and Kotlin source remain out of scope, per ADR 0011.
+- **`@PostAuthorize`/`@PreFilter`/`@PostFilter`**, composed/meta-annotations, and Kotlin source remain out of scope, per ADR 0011. `RoleHierarchy` has its own entry below.
 
 **Consequence**: an endpoint whose real access control depends on any of the above is reported using whatever the method layer alone establishes (or as unguarded, if the method layer has nothing either) — under-reporting relative to a rule Sphinxor can't read, never over-reporting a grant that isn't real, consistent with the intersection's own soundness-not-completeness property. Where the gap is project-wide rather than rule-local — the multi-chain and reactive cases — the run says so explicitly instead of leaving the reader to infer it from this file.
 

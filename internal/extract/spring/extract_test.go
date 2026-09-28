@@ -204,7 +204,7 @@ func TestExtract_Pharmacy_Guards(t *testing.T) {
 	// defaults true, secured/jsr250 default false — Spring's own
 	// documented defaults (docs/decisions/0015-inert-method-security-guard.md),
 	// not this project's assumption.
-	want := model.MethodSecurityStatus{Found: true, PrePostEnabled: true, SecuredEnabled: false, Jsr250Enabled: false}
+	want := model.MethodSecurityStatus{Found: true, PrePostEnabled: true, SecuredEnabled: false, Jsr250Enabled: false, Modern: true}
 	if m.MethodSecurity != want {
 		t.Errorf("MethodSecurity = %+v, want %+v", m.MethodSecurity, want)
 	}
@@ -303,7 +303,7 @@ func TestExtract_BlogAPI(t *testing.T) {
 	// test instead, per docs/testing.md: this MethodSecurityStatus value
 	// is what real extraction produces from real annotation syntax, and
 	// isConfirmedInert is a pure function of that value once produced.
-	wantStatus := model.MethodSecurityStatus{Found: true, PrePostEnabled: false, SecuredEnabled: false, Jsr250Enabled: false}
+	wantStatus := model.MethodSecurityStatus{Found: true, PrePostEnabled: false, SecuredEnabled: false, Jsr250Enabled: false, Modern: true}
 	if m.MethodSecurity != wantStatus {
 		t.Errorf("MethodSecurity = %+v, want %+v", m.MethodSecurity, wantStatus)
 	}

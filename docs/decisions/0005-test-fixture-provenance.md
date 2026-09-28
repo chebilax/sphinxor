@@ -42,9 +42,12 @@ Recorded so the threshold above is reached deliberately rather than discovered l
 
 That is still comfortably inside what vendoring is worth paying, and **no action is taken here**.
 
-**Recounted 2026-09-28**, adding `trackr-backend` for [ADR 0038](0038-role-hierarchy-read.md):
-**nine repositories and 2,696 lines** (2,566 before it — the "seven" above was already
-eight by then). That is within about 300 lines of the re-evaluation point below, so the
-next fixture should come with that re-evaluation rather than after it. The point of the number is the trajectory: if it continues at this rate, this ADR should be re-evaluated against the clone-on-demand alternative at around 3,000 lines, while the decision is still cheap to change — not at 8,000, when it isn't.
+**Recounted 2026-09-28**, adding `trackr-backend` and `videochat` for
+[ADR 0038](0038-role-hierarchy-read.md): **ten repositories and 2,747 lines**. There were
+2,566 before them, and the "seven" above was already eight by then. That is within about
+250 lines of the re-evaluation point below. The re-evaluation is due **before** the next
+fixture is added, not with it.
+
+The point of the number is the trajectory: if it continues at this rate, this ADR should be re-evaluated against the clone-on-demand alternative at around 3,000 lines, while the decision is still cheap to change — not at 8,000, when it isn't.
 
 **A note on what counts.** `internal/extract/nestjs/testdata/ghostfolio-shape/` is *not* vendored source and does not count toward the figure above. Its shape comes from `ghostfolio/ghostfolio`, which is AGPL-3.0, where this repository and every fixture in it are permissive; the files were written for this repository instead of copied, and its `NOTICE.md` says so. That is a licensing decision, not a change to this ADR: vendoring remains the pattern for permissively licensed fixtures. A second copyleft-only shape would be worth surfacing as its own decision rather than settling by precedent here.

@@ -304,6 +304,61 @@ func TestProjectWarnings(t *testing.T) {
 			want: "BROADER than the Permissions column",
 		},
 		{
+			// ADR 0038 Stage 1: rules read, quoted in the first line,
+			// with the direction ADR 0031 §2 requires still stated.
+			name: "role hierarchy read quotes its rules",
+			build: func(m *model.Model) {
+				guardedEndpoint(m)
+				m.MethodSecurity = model.MethodSecurityStatus{Found: true}
+				m.RoleHierarchy = model.RoleHierarchyStatus{
+					Found: true, DeclaredIn: []string{"SecurityConfig"}, Read: true,
+					Edges: []model.RoleHierarchyEdge{{Higher: "ROLE_SUPER", Lower: "ROLE_ADMIN"}, {Higher: "ROLE_ADMIN", Lower: "ROLE_USER"}},
+				}
+			},
+			want: "SecurityConfig: ROLE_SUPER > ROLE_ADMIN > ROLE_USER.",
+		},
+		{
+			// ADR 0038 §2: both readings, a malformed name quoted so it
+			// is visible as one.
+			name: "role hierarchy read differently by version states both readings",
+			build: func(m *model.Model) {
+				guardedEndpoint(m)
+				m.MethodSecurity = model.MethodSecurityStatus{Found: true}
+				m.RoleHierarchy = model.RoleHierarchyStatus{
+					Found:  true,
+					UpTo50: []model.RoleHierarchyEdge{{Higher: "A", Lower: "B"}, {Higher: "B", Lower: "C"}},
+					From52: []model.RoleHierarchyEdge{{Higher: "A", Lower: "B B"}, {Higher: "B B", Lower: "C"}},
+				}
+			},
+			want: `up to 5.0 as A > B > C; from 5.2 as A > "B B" > C.`,
+		},
+		{
+			// ADR 0038 §12: where the version decides whether the
+			// hierarchy applies, the warning says what it assumed.
+			name: "role hierarchy states the version it assumed",
+			build: func(m *model.Model) {
+				guardedEndpoint(m)
+				m.MethodSecurity = model.MethodSecurityStatus{Found: true}
+				m.RoleHierarchy = model.RoleHierarchyStatus{
+					Found: true, Read: true, Edges: []model.RoleHierarchyEdge{{Higher: "ROLE_ADMIN", Lower: "ROLE_USER"}},
+					AssumedReach: []string{"@Secured", "authorizeHttpRequests"},
+				}
+			},
+			want: "This assumes it does (6.3 or later; 6.1 for authorizeHttpRequests).",
+		},
+		{
+			name: "role hierarchy names its profile",
+			build: func(m *model.Model) {
+				guardedEndpoint(m)
+				m.MethodSecurity = model.MethodSecurityStatus{Found: true}
+				m.RoleHierarchy = model.RoleHierarchyStatus{
+					Found: true, NotRead: "they are built by code Sphinxor does not evaluate",
+					Condition: `@Profile("prod")`,
+				}
+			},
+			want: `@Profile("prod")`,
+		},
+		{
 			// The same caveat must not fire on NestJS, where
 			// MethodSecurity.Found is false only because the concept does
 			// not exist. Before this case it did, on every project using
@@ -359,7 +414,11 @@ func TestProjectWarnings(t *testing.T) {
 			if len(got) != 1 {
 				t.Fatalf("want exactly 1 warning, got %d: %q", len(got), got)
 			}
-			if !strings.Contains(got[0], tc.want) {
+			// Compared with whitespace collapsed: the role hierarchy
+			// warning is word-wrapped around content of variable length,
+			// so a phrase can straddle a line break.
+			flat := func(s string) string { return strings.Join(strings.Fields(s), " ") }
+			if !strings.Contains(flat(got[0]), flat(tc.want)) {
 				t.Errorf("warning = %q, want it to contain %q", got[0], tc.want)
 			}
 		})

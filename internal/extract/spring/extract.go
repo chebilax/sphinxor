@@ -81,14 +81,16 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	// matter, but it must complete before any consumer reads
 	// b.model.MethodSecurity (none does yet in this package — recorded for
 	// internal/lint's use, per that ADR's Consequences).
+	var hierarchy hierarchyScan
 	for _, f := range files {
 		scanMethodSecurityStatus(f.tree.RootNode(), f.src, &b.model.MethodSecurity)
 		// ADR 0030 §4: @PreFilter/@PostFilter, counted in the same pass.
 		// Announced only — nothing downstream reads this to decide
 		// whether an endpoint is protected.
 		scanMethodSecurityFilters(f.tree.RootNode(), f.src, &b.model.MethodSecurityFilters)
-		// ADR 0031: a role hierarchy, recorded as existing and not read.
-		scanRoleHierarchy(f.tree.RootNode(), f.src, &b.model.RoleHierarchy)
+		// ADR 0031: a role hierarchy, detected. Its rules are read after
+		// every file is seen (ADR 0038 Stage 1, below).
+		scanRoleHierarchy(f.tree.RootNode(), f.src, &b.model.RoleHierarchy, &hierarchy)
 		// ADR 0033: methods building WebFlux functional routes.
 		scanFunctionalRouting(f.tree.RootNode(), f.src, &b.model.FunctionalRouting)
 	}
@@ -185,6 +187,12 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	if b.model.URLLayer.Unknown() {
 		b.model.URLLayer.Reason = unreadableLayerReason(forms, hasChain)
 	}
+
+	// ADR 0038 Stage 1: read the role hierarchy's rules, for the warning
+	// only. After the URL layer, because an analyzed authorizeHttpRequests
+	// layer is one whose use of the hierarchy depends on the version.
+	resolveRoleHierarchy(files, &hierarchy, b.model.MethodSecurity,
+		b.model.URLLayer.Analyzed, forms.servlet > 0, &b.model.RoleHierarchy)
 
 	// Pass 4: authentication requirements (ADR 0010), per layer (ADR 0011
 	// §3) — derived from the fully-assembled RoleReference collection

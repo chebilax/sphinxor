@@ -2,14 +2,20 @@
 
 ## Status
 
-**Proposed.** Amends [ADR 0031](0031-role-hierarchy.md) §1 and reopens the alternative
-that ADR rejected — *"expand the hierarchy into the matrix"* — on the condition it gave
-for reopening it: *"if a real project ever needs it."*
+**Accepted, staged (§12).** Stage 1 — read the hierarchy and state it — is implemented.
+Stage 2 — expand implied roles into the matrix, the diff and the export — is **deferred**
+until a real project has matrix rows for it to change. Amends [ADR 0031](0031-role-hierarchy.md)
+§1 and reopens the alternative that ADR rejected — *"expand the hierarchy into the
+matrix"* — on the condition it gave for reopening it: *"if a real project ever needs it."*
 
-**Read §12 before accepting.** The measurement below finds hierarchies common in real
-applications and mostly readable. But on the sample, **expanding them changes zero
-matrix rows**, for reasons that have nothing to do with the hierarchy. §12 proposes
-staging the work so that the part with no measured beneficiary waits for one.
+The measurement below finds hierarchies common in real applications and mostly readable,
+but on the sample **expanding them changes zero matrix rows**, for reasons that have
+nothing to do with the hierarchy. That is the evidence bar this project applies
+elsewhere, and it is why Stage 2 waits.
+
+**This decision is version-bound.** §13 records which Spring Security releases the
+parser and wiring behaviour were read from, and that the conclusion is re-checked on
+every Spring Security major version.
 
 ## Context
 
@@ -102,27 +108,37 @@ A project using any of them is on the ≥ 5.2 grammar.
 
 ### Finding 2: which layer a hierarchy reaches depends on wiring and version
 
-A `@Bean RoleHierarchy` is picked up automatically by some configurers and not others,
-read at the tags (`getBeanNamesForType(RoleHierarchy.class)` /
-`ObjectProvider<RoleHierarchy>`):
+A `@Bean RoleHierarchy` is picked up automatically by some configurers and not others.
+Read at the tags listed in §13 (`getBeanNamesForType` / `ObjectProvider<RoleHierarchy>` /
+an `@Autowired(required = false) setRoleHierarchy`):
 
-| Layer | Picks up a `RoleHierarchy` bean |
+| Layer | Applies a `RoleHierarchy` bean |
 |---|---|
-| legacy `@EnableGlobalMethodSecurity` | yes, from ≤ 5.0 |
-| legacy `authorizeRequests()` / `WebSecurityConfigurerAdapter` | yes, from ≤ 5.7 |
+| legacy `@EnableGlobalMethodSecurity`, `@PreAuthorize` | yes, every version read — set on the default expression handler |
+| legacy `@EnableGlobalMethodSecurity`, `@Secured` / `@RolesAllowed` | **no**, every version read — they go through a plain `RoleVoter` |
+| legacy `authorizeRequests()` / `WebSecurityConfigurerAdapter` | yes, every version read |
 | `authorizeHttpRequests()` | from **6.1** |
-| `@EnableMethodSecurity` | from **6.3** — not on 6.0–6.2 |
+| `@EnableMethodSecurity` (`@PreAuthorize`, `@Secured`, `@RolesAllowed`) | from **6.3** — not on 5.6–6.2, and not backported to 6.2.8 |
 
 An explicit `setRoleHierarchy(…)` on a handler reaches that handler's layer on every
-version, which is what trackr (method handler) and SMSC (web handler) do. Both also pair
-the bean with `@EnableGlobalMethodSecurity`, which picks it up on every version anyway.
+version. trackr sets it on the method expression handler and SMSC on the web one; both
+also carry `@EnableGlobalMethodSecurity`.
 
-The version-dependent case is in the sample, though. videochat pairs a hierarchy bean
-with `@EnableMethodSecurity` and `authorizeHttpRequests`, and builds it with
-`new RoleHierarchyImpl()` + `setHierarchy`, not `fromHierarchy`. So nothing in its source
-pins 6.3. On 6.0–6.2 its method annotations do not see the hierarchy; on 6.3+ they do.
-Expanding its method-layer roles unconditionally would be a claim the source does not
-support.
+videochat is the case where the version can matter. It carries `@EnableMethodSecurity`
+and `authorizeHttpRequests`, and builds its hierarchy with `new RoleHierarchyImpl()` +
+`setHierarchy`, not `fromHierarchy`, so nothing in its source pins 6.3. It also sets the
+hierarchy on its own `MethodSecurityExpressionHandler` bean. `@EnableMethodSecurity`
+uses such a bean on every version read, so its `@PreAuthorize` receives the hierarchy
+whatever the version. Only its `@Secured` (`securedEnabled = true`) and its URL layer
+depend on the version.
+
+The first draft of this finding said all of videochat's method-layer reach was
+version-dependent. Reading the expression-handler wiring falsified that. It is recorded
+here rather than quietly corrected, for the reason ADR 0015 Amendment 1 §2 gives.
+
+Its build file says Spring Boot 3.5.6, so Spring Security 6.5, where every layer applies
+the hierarchy. Sphinxor does not read build files (see Alternatives), so the run cannot
+know that, and the warning states what it assumed (§12).
 
 ### Finding 3: in the sample, expansion changes no matrix row
 
@@ -198,15 +214,20 @@ reading may be the one that runs. The warning quotes both readings in that case:
 
 ```
 warning: this project declares a Spring Security role hierarchy in: MethodSecurityConfiguration.
-         Its rules put several pairs on one line, which Spring Security reads differently by version:
-         up to 5.0 as ROLE_ADMIN > ROLE_SUPERVISOR > ROLE_EMPLOYEE > ROLE_ANONYMOUS; from 5.1 as one
-         malformed chain in which ROLE_ADMIN reaches only ROLE_ANONYMOUS. Nothing here fixes the
-         version, so the roles below are shown as declared and may be NARROWER than what the
-         application grants.
+         Its rules are written in a form Spring Security reads differently by version: up to 5.0 as
+         ROLE_ADMIN > ROLE_SUPERVISOR > ROLE_EMPLOYEE > ROLE_ANONYMOUS; from 5.2 as ROLE_ADMIN >
+         "ROLE_SUPERVISOR ROLE_SUPERVISOR" > "ROLE_EMPLOYEE ROLE_EMPLOYEE" > ROLE_ANONYMOUS. A
+         quoted role containing spaces matches no authority. Nothing in the analyzed source fixes
+         the version, so the roles below are shown as declared and may be NARROWER than what the
+         application grants. It is declared under @Profile("granular-security"), which Sphinxor does
+         not evaluate: it applies only when that condition holds.
 ```
 
-That is strictly more than a reader gets today, it changes no fact in the matrix, and it
-is correct under both readings.
+That is the output on the trackr fixture, verbatim. It is strictly more than a reader got
+before, it changes no fact in the matrix, and it is correct under both readings. It says
+"from 5.2" rather than "from 5.1" because 5.1's exact-separator parser agrees with 5.2's
+on this string, and in general the run compares only the ≤5.0 and ≥5.2 readings. Where
+those two agree, the string is read. 5.1 was one minor line, and §13 records the choice.
 
 A cycle is not read either. Spring rejects one at startup, so the source is not the
 running configuration.
@@ -215,7 +236,8 @@ running configuration.
 
 | Layer | Reach established by |
 |---|---|
-| method | `setRoleHierarchy(…)` on a method-security expression handler; **or** a hierarchy bean with `@EnableGlobalMethodSecurity`; **or** a hierarchy bean with `@EnableMethodSecurity` **and** a 6.3 floor (`fromHierarchy` / `withDefaultRolePrefix` in the tree) |
+| method, `@PreAuthorize` | `setRoleHierarchy(…)` on a method-security expression handler, including one exposed as a bean; **or** a hierarchy bean with `@EnableGlobalMethodSecurity`; **or** a hierarchy bean with `@EnableMethodSecurity` **and** a 6.3 floor (`fromHierarchy` / `withDefaultRolePrefix` in the tree) |
+| method, `@Secured` / `@RolesAllowed` | a hierarchy bean with `@EnableMethodSecurity` **and** a 6.3 floor. **Never** under `@EnableGlobalMethodSecurity` alone, which does not apply it to them (Finding 2) |
 | URL (`SecurityFilterChain`, `authorizeHttpRequests`) | `setRoleHierarchy(…)` on a web expression handler; **or** a hierarchy bean **and** a 6.1 floor — in practice the same 6.3 evidence, since nothing observable in source pins 6.1 alone |
 
 The legacy URL layer reaches on every version but is not analyzed, so there is no role
@@ -347,10 +369,10 @@ in source, and it carries all three hazards this ADR has to get right:
 - explicit method-layer wiring under the legacy enabler (§3);
 - a `@Profile` on the declaring class (§1).
 
-`TestRoleHierarchy_TrackrFixture` pins today's state: detected, three rows, roles
-exactly as declared.
+`TestRoleHierarchy_TrackrFixture` pinned the state before Stage 1: detected, three rows,
+roles exactly as declared.
 
-**Predicted after implementation, on that fixture:**
+**Predicted before implementation, on that fixture, and confirmed by Stage 1:**
 
 - still **no** expansion — §1 on the profile and §2 on the grammar, either of which
   suffices;
@@ -370,21 +392,74 @@ and its `UserRole` enum (Apache-2.0, `fd28bd4`) are the enum-concatenation case,
 
 - the 20-repository corpus byte-identical in JSON and export, and silent, since none has
   a hierarchy;
-- the four existing fixtures byte-identical;
+- the existing fixtures byte-identical;
 - `empty-role` at zero everywhere, as ADR 0035 §9 left it;
 - on the in-scope sample: edges read for autoplan, YukeSeko, videochat, wallride and
   SMSC; **zero matrix rows changed** in all nine.
 
+**Measured for Stage 1, 2026-09-28**, `main` at `14560dc` against this branch. The runs
+covered all 20 corpus repositories at ADR 0035 §9's commits, all eleven vendored fixtures
+(six Spring, five NestJS) and the nine in-scope sample applications:
+
+- **Lint JSON:** byte-identical on all 40.
+- **Cerbos policy files:** byte-identical on all 40.
+- **Exit codes:** unchanged on all 40.
+- **stderr:** unchanged on every corpus repository and every fixture except the two
+  hierarchy fixtures.
+- **Edges read:** autoplan, YukeSeko, videochat, wallride and SMSC, as predicted.
+- **Both readings stated:** trackr.
+- **Not read, each with its reason:** haven-platform (a project-defined class), molgenis
+  (not a string), SpringUserFramework (a configuration getter).
+- **Export report:** gains its *Caveats* section on exactly the three targets whose URL
+  layer is analyzed — the two new fixtures and videochat. Every other sample project
+  has an unanalyzed legacy URL layer, so every endpoint is already omitted and no
+  caveat is added.
+
 ### §12 Staging: read now, expand when a project needs it
+
+**Accepted as staged.** The owner accepted it on 2026-09-28, on the grounds this section
+gives: an expansion that changes zero matrix rows in the sample does not meet the
+project's evidence bar yet.
 
 The design above is settled so that it does not have to be re-derived. The measurement
 says its two halves differ in value today:
 
-- **Stage 1 — read and quote.** §1, §2, §4's field, and §7's warnings:
+- **Stage 1 — read and quote.** §1, §2, and the warnings below:
   - the edges are parsed and quoted in the warning;
   - trackr's two readings are stated;
   - each not-read reason is named;
+  - a `@Profile` / `@Conditional…` on the declaring class is named. The rules are still
+    quoted, because quoting them asserts nothing about any endpoint;
+  - where the hierarchy's reach depends on a version the source does not fix, the
+    warning states the assumption it made (below);
   - the export report gains its line.
+
+  **The assumption, stated.** Stage 1 assumes the hierarchy *does* reach every
+  version-dependent layer. That is the direction in which the warning's claim — *roles
+  shown may be NARROWER* — is the safe one to make. The run names each such layer and the
+  version it assumed:
+  - `@PreAuthorize` under `@EnableMethodSecurity`, with no 6.3 floor and no explicit
+    expression-handler wiring: assumed ≥ 6.3;
+  - `@Secured` / `@RolesAllowed` under `@EnableMethodSecurity`, where enabled, with no 6.3
+    floor: assumed ≥ 6.3;
+  - an analyzed `authorizeHttpRequests` URL layer with no 6.3 floor: assumed ≥ 6.1.
+
+  It also says what follows on an earlier version: those roles are exact. For videochat,
+  verbatim, where `@PreAuthorize` is absent from the list because its hierarchy is wired
+  explicitly into its own expression handler:
+
+  ```
+  warning: this project declares a Spring Security role hierarchy in: SecurityRoleConfig: ROLE_ADMIN > ROLE_USER.
+           Roles are shown as declared, without it, so they are NARROWER than what the application
+           grants wherever it applies: a role placed above another also reaches every endpoint the
+           lower one does. Whether it applies to @Secured and to authorizeHttpRequests rules depends
+           on the Spring Security version, which nothing in the analyzed source fixes. This assumes it
+           does (6.3 or later; 6.1 for authorizeHttpRequests). On an earlier version the roles shown
+           there are exact.
+  ```
+
+  §4's `RoleReference.Authority` moves to Stage 2. Stage 1 has no consumer for it, and a
+  field nothing reads is the `DeclaresRoles` hazard ADR 0035 §7 describes.
 
   This improves the output of **every** in-scope project with a hierarchy — five get
   their rules quoted, four get the reason they could not be — and changes no fact in the
@@ -399,6 +474,62 @@ says its two halves differ in value today:
 Accepting this ADR accepts both stages' design and implements Stage 1. Stage 2 is
 implemented when its trigger is met, or sooner by explicit decision. It is not dropped.
 
+### §13 Version provenance, and when this must be re-checked
+
+**Verified against Spring Security 4.2.0, 5.0.0, 5.1.0, 5.1.13, 5.2.0, 5.4.0, 5.5.0,
+5.6.0, 5.7.0, 6.0.0, 6.1.0, 6.2.0, 6.2.8, 6.3.0, 6.5.11, 7.1.1 and `main`, on
+2026-09-28**, by reading `RoleHierarchyImpl`, the three method-security configuration
+classes, `GlobalMethodSecurityConfiguration` and the two URL authorization configurers at
+each tag in `spring-projects/spring-security`. 6.5.x and 7.x are the lines currently
+maintained.
+
+What was established, and where it changes:
+
+- **The parser changed twice.**
+  - ≤ 5.0 matched `X > Y` pairs anywhere in the string.
+  - 5.1 split on newlines, then on the exact separator `" > "`.
+  - From 5.2 it splits on newlines, then on `\s+>\s+` (commit `be0ad673c2`). The same
+    parser is still in 6.5.11, 7.1.1 and `main`.
+
+  So **one literal means different things across 5.1 and 5.2**, and across 5.0 and 5.1
+  (Finding 1). The one form all three agree on is one `X > Y` pair per line, with single
+  spaces around `>`.
+
+  The run compares only the ≤ 5.0 and ≥ 5.2 readings. A string the two agree on is read,
+  even where 5.1 would differ, which happens only with irregular spacing around `>`.
+  5.1 was a single minor line, and naming it in every warning would cost more clarity
+  than it buys.
+- **`@EnableMethodSecurity` ignores a `RoleHierarchy` bean before 6.3.** 5.6–6.2.8 never
+  read one. 6.3–6.4 inject it with `ObjectProvider<RoleHierarchy>`; 6.5.11 and 7.1.1 do
+  so with an `@Autowired(required = false) setRoleHierarchy`. A user-defined
+  `MethodSecurityExpressionHandler` bean is used on every version from 5.6.
+- **`authorizeHttpRequests` ignores a `RoleHierarchy` bean before 6.1.**
+- **Legacy `@EnableGlobalMethodSecurity`** applies it to the expression handler on every
+  version read, and never to `@Secured` / `@RolesAllowed`.
+- **Floors and a ceiling the source can establish:**
+  - `authorizeHttpRequests(…)` ⇒ ≥ 5.5;
+  - `@EnableMethodSecurity` ⇒ ≥ 5.6;
+  - `RoleHierarchyImpl.fromHierarchy(…)` / `withDefaultRolePrefix()` ⇒ ≥ 6.3;
+  - `new RoleHierarchyImpl()` / `setHierarchy(…)` ⇒ **< 7.0**, since 7.x removed the
+    public constructor and `setHierarchy`. That is why 7.x needs no special case: a 7.x
+    project can only build its hierarchy through `fromHierarchy` or the builder, and
+    either proves ≥ 6.3.
+- **`GrantedAuthorityDefaults`** changes the role prefix the method-security handler
+  applies (6.5.11, 7.1.1). §1 already stops reading when one is present.
+
+**Re-check on every Spring Security major version.** The check means reading
+`RoleHierarchyImpl`'s parse method, the `RoleHierarchy` wiring in
+`PrePostMethodSecurityConfiguration`, `SecuredMethodSecurityConfiguration`,
+`Jsr250MethodSecurityConfiguration` and `AuthorizeHttpRequestsConfigurer`, and whether
+the public constructor is still absent. If any line above changes, this section records
+the new version and the grammar and assumption rules change with it. The constants live
+in one place, `internal/extract/spring/role_hierarchy.go`, which points back here.
+
+Like ADR 0015 Amendment 1, this can be falsified by someone else's release rather than by
+a change here. The difference is that the statements here are mostly positives: a parser
+that exists, a setter that is wired. What can go stale is the version numbers the
+warning names, not a finding.
+
 ## Alternatives considered
 
 - **Keep ADR 0031 as is.** Rejected: 9 of the 15 applications carry a live hierarchy in
@@ -406,8 +537,8 @@ implemented when its trigger is met, or sooner by explicit decision. It is not d
   the corpus, not about Spring applications.
 - **Expand immediately, everything in §1, on every layer.** Rejected by Findings 1 and 2.
   On trackr it would assert `ROLE_ADMIN` reaches supervisor endpoints under a grammar
-  that stopped meaning that in 5.1. On videochat it would apply a hierarchy to method
-  annotations that Spring Security 6.0–6.2 would not apply it to.
+  that stopped meaning that in 5.1. On videochat it would apply the hierarchy to `@Secured`,
+  which Spring Security 5.6–6.2 would not apply it to.
 - **Read the Spring Security version from `pom.xml` / `build.gradle`.** It would settle
   Findings 1 and 2 outright, and trackr's `1.5.19.RELEASE` is right there. Rejected for
   this step: it means reading Maven and Gradle files, resolving BOMs and version
@@ -423,25 +554,30 @@ implemented when its trigger is met, or sooner by explicit decision. It is not d
 
 ## Consequences
 
+As implemented for Stage 1:
+
 - `internal/extract/spring`:
-  - `role_hierarchy.go` evaluates and parses (§1–§2);
-  - role-reference construction records `Authority` (§4);
-  - `method_security.go` records the enabler (§3).
+  - `role_hierarchy.go` gathers hierarchy sites per file, then evaluates and parses them
+    project-wide (§1–§2), and computes the §12 assumption;
+  - `method_security.go` records which servlet enabler was found.
 - `internal/model`:
-  - `RoleHierarchyStatus` gains `Read`, the edges and a reason;
-  - `RoleReference` gains `Authority`;
-  - `MethodSecurityStatus` gains the enabler;
-  - Stage 2 adds `ImpliedRoles`.
-- `internal/cli/analyze.go`: the ADR 0031 warning's text becomes conditional (§7).
-- `internal/export/cerbos`: one export-report line (Stage 1); implied roles with comments
-  (Stage 2).
-- `internal/report`, `internal/diff`: Stage 2 only.
-- `internal/lint`: unchanged (§8).
-- [ADR 0029](0029-spring-security-scope.md) §2's `RoleHierarchy` row splits on
-  implementation: a literal or constant hierarchy is **read**, and everything else stays
-  **detected and announced**.
-- `docs/limitations.md` gains an entry recording Finding 1. A hierarchy of several pairs
-  on one line changes meaning on a Spring Security upgrade, and Sphinxor states both
-  readings instead of choosing.
-- [ADR 0005](0005-test-fixture-provenance.md)'s growth note is recounted — nine
-  repositories, 2,696 lines — within about 300 lines of its re-evaluation point.
+  - `RoleHierarchyStatus` gains `Read`, `Edges`, the two readings, `NotRead`,
+    `Condition` and `AssumedReach`, and there is a new `RoleHierarchyEdge`;
+  - `MethodSecurityStatus` gains `Modern` / `Legacy`;
+  - nothing reads either to decide a grant, a finding or a diff result.
+- `internal/cli/analyze.go`: the hierarchy warning is rendered from those fields.
+- `internal/export/cerbos` and `internal/report`: `Result.Caveats`, omitted from JSON when
+  empty, and a *Caveats* section in the markdown report when not.
+- `internal/lint`, `internal/diff`: unchanged (§8, §9).
+- Fixtures: `trackr-backend` (MIT) and `videochat` (Apache-2.0), each with its license
+  copied and a `NOTICE.md`.
+- [ADR 0029](0029-spring-security-scope.md) §2's `RoleHierarchy` row: a literal or
+  constant hierarchy is **read and stated**, and the rest stays **detected and
+  announced**, with its reason.
+- `docs/limitations.md` records Finding 1 and the Stage 2 deferral.
+- [ADR 0005](0005-test-fixture-provenance.md)'s growth note is recounted, to ten
+  repositories.
+
+Deferred to Stage 2, and unchanged here: `RoleReference.Authority` (§4), `ImpliedRoles`
+(§5), the matrix marker (§6), the diff's *Role hierarchy* section (§9) and implied roles
+in the policy (§10).
