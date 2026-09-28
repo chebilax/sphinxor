@@ -2,6 +2,7 @@
 
 Vendored, unmodified, from https://github.com/NarHakobyan/awesome-nest-boilerplate,
 commit `8f1c0a8cded54a198ddbc23922aa755922d2b155` (2026-06-09), MIT License.
+The upstream `LICENSE` is copied alongside, as that license's notice condition requires.
 
 Used per docs/testing.md: empirical validation against real, representative
 NestJS code, not just synthetic fixtures — and per the explicit goal of this

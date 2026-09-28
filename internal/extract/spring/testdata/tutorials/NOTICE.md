@@ -2,6 +2,7 @@
 
 Vendored, unmodified, from https://github.com/eugenp/tutorials,
 commit `f180d9273f5ed1eef5ec8f07a0da9acfdb27f6a4` (2026-09-18), MIT License.
+The upstream `LICENSE` is copied alongside, as that license's notice condition requires.
 
 Used per docs/testing.md and docs/decisions/0020-unanalyzable-is-unknown-not-absent.md
 Amendment 2 §7: the **Spring version** fixture, establishing that §7 is not a

@@ -29,6 +29,11 @@ Keeps foreign source code out of the repository entirely; expanding the corpus i
 
 Test fixture provenance for real-repo validation follows this pattern going forward: a small, curated subset of files (not a full repo clone) vendored under `internal/extract/nestjs/testdata/<repo-name>/`, with a `NOTICE.md` documenting source URL, pinned commit, license, and why each specific file was chosen — not copied wholesale.
 
+Where the license requires its text to travel with the code — MIT's notice condition,
+Apache-2.0 §4(a) — the upstream license file is copied next to the `NOTICE.md`, unmodified.
+Naming the license is not the same as including it. As of 2026-09-28, eight fixtures (seven
+MIT, one Apache-2.0) had only the name, and their license texts were added then.
+
 This scales linearly with corpus size: each additional real repository added for validation (the next planned step is a second one) adds a few more files and a few more KB, not a full checkout. If the corpus eventually grows large enough that this becomes real tree bloat, that's a reason to revisit this ADR with the clone-on-demand alternative back on the table — not a reason to abandon the reliability argument above without one.
 
 ### Growth so far

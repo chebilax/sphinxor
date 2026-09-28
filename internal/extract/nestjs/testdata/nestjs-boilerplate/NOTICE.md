@@ -2,6 +2,7 @@
 
 Vendored, unmodified, from https://github.com/brocoders/nestjs-boilerplate,
 commit `549cc37a3925ab87a4e61b45efb3b86d2d8e234e` (2026-06-13), MIT License.
+The upstream `LICENSE` is copied alongside, as that license's notice condition requires.
 
 Used per docs/testing.md: empirical validation against real, representative
 NestJS code, not just synthetic fixtures. This is a small subset of that

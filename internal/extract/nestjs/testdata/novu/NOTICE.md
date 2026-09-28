@@ -2,6 +2,8 @@
 
 Vendored, unmodified, from https://github.com/novuhq/novu,
 commit `36c5c0cefa400e8edc6ec8b18ac4574288eabd03` (2026-09-18), MIT License.
+The upstream `LICENSE-MIT` is copied alongside as `LICENSE`, as that license's notice
+condition requires.
 
 Novu is split-licensed: `enterprise/packages` is proprietary, everything else
 is MIT (`LICENSE-ENTERPRISE`, first bullet). Both files here are under

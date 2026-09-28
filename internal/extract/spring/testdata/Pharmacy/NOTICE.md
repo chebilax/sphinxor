@@ -2,6 +2,7 @@
 
 Vendored, unmodified, from https://github.com/Kitty-Hivens/Pharmacy,
 commit `f5b760f4a47b6bc48b72757c3a43744d57a4cae8` (2026-07-28), MIT License.
+The upstream `LICENSE` is copied alongside, as that license's notice condition requires.
 
 Used per docs/testing.md and docs/decisions/0011-spring-second-framework.md:
 the conventional, in-scope Spring fixture — a real, standard-practice
