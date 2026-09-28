@@ -374,6 +374,17 @@ func TestProjectWarnings(t *testing.T) {
 			want: "",
 		},
 		{
+			// ADR 0039 §7: a Spring path left unresolved says why.
+			name: "unresolved route path names its reason",
+			build: func(m *model.Model) {
+				m.Controllers = append(m.Controllers, model.Controller{ID: "c1", Name: "A2AServerResource"})
+				m.Endpoints = append(m.Endpoints, model.Endpoint{ID: "e1", ControllerID: "c1", HTTPMethod: model.MethodGet,
+					Path: "/", PathUnresolved: true, PathUnresolvedReason: "a property placeholder, resolved from configuration at runtime"})
+				m.MethodSecurity = model.MethodSecurityStatus{Found: true}
+			},
+			want: "Their path argument is a property placeholder, resolved from configuration at runtime (1).",
+		},
+		{
 			// ADR 0021 §2. The count is part of the message: "uses
 			// GraphQL" and "16 operations were not analyzed" land
 			// differently on a reader deciding whether to care.

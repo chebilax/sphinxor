@@ -378,7 +378,24 @@ Those endpoints now keep an identity synthesized from their controller and handl
 
 **Consequence**: the affected endpoints are analyzed and linted normally, and their findings are real. What is not available is their full path — so they cannot be exported, and if such a path later becomes readable, `sphinxor diff` reports the endpoint once as removed and once as added, because its identity changed.
 
-**What to do about it today**: nothing is required — the analysis is sound. If you want these endpoints exportable, use a string literal in the decorator. Resolving constants to their declarations is a possible future improvement, recorded as the rejected-for-now alternative in that ADR.
+**What to do about it today**: nothing is required — the analysis is sound. If you want these endpoints exportable, use a string literal in the decorator.
+
+**Spring, since [ADR 0039](decisions/0039-route-path-constants.md): read.** A path built from constants is evaluated with Java's own name resolution — same-class, inherited, nested, imported and statically imported `static final String` constants, `+` concatenation (including a `char` literal), enum `.name()` — and an array of paths is one endpoint per path. On the corpus the unreadable-path count fell from 637 to 6. What still stays unreadable, and says why in the warning:
+
+- a path containing a **property placeholder** (`${app.base:/api}`), resolved from configuration at runtime. It is never reported as a path: before ADR 0039, literal placeholders were, verbatim;
+- a constant declared **outside the analyzed source** — a dependency's class, or anything an on-demand import of a package outside the tree could supply;
+- a name that does **not resolve to exactly one declaration** — never a pick;
+- a method call, a non-`final` field, a text block, or Kotlin.
+
+**NestJS: unchanged.** `@Controller(RouteKey.Asset)` and the other forms above are still unread there, as this entry describes.
+
+## Handlers distinguished only by `params` or `headers` are merged into one endpoint
+
+Spring routes `@RequestMapping(method = POST, params = "draft")` and `@RequestMapping(method = POST, params = "publish")` on the same path to different handlers. Endpoint identity is `(method, path)`, so [ADR 0014](decisions/0014-endpoint-identity-and-content-negotiation.md)'s content-negotiation merge folds them into one endpoint that carries every handler's guards. ADR 0014 was written for handlers differing in `produces`, and this reaches further than that.
+
+**Why it matters**: if the merged handlers had different guards, the row would look protected while one variant is not, and the `mutating-endpoint-without-access-control` finding for it would not fire.
+
+**Measured** when [ADR 0039](decisions/0039-route-path-constants.md) made more paths readable: 58 merges across spring-cloud-dataflow, thingsboard and two sample applications (wallride 41, molgenis 15). In every one the handlers carry identical guards, so nothing is hidden today. It is still an **open question**, and it belongs to ADR 0014: whether `params`/`headers` conditions should be part of endpoint identity.
 
 ## GraphQL resolvers are not analyzed
 

@@ -188,65 +188,6 @@ func simpleNameOfClassLiteral(text string) string {
 	return text
 }
 
-// metaBasePath resolves a controller's base path from a meta-annotation
-// use site — ADR 0024 §2/§4.
-//
-// resolved is false only when an argument for the aliased attribute is
-// present and could not be read (a constant reference, a concatenation).
-// That case takes ADR 0020 Amendment 1 §5's existing treatment: the
-// endpoint keeps a synthesized identity, its path is marked …, the run
-// warns, and the Cerbos export omits it. Nothing in the 20-repository
-// corpus exercises it — all 35 of shenyu's uses are string literals —
-// which is precisely why it is specified rather than left to whatever the
-// code happens to do on the first project that differs.
-//
-// No argument at all is *not* unresolved: an annotation used bare, or one
-// whose aliased attribute is simply not passed, declares no base path, the
-// same as a @RestController with no @RequestMapping.
-func metaBasePath(meta controllerMeta, use annotationCall, src []byte) (path string, resolved bool) {
-	if meta.hasDeclaredPath {
-		return meta.declaredPath, true
-	}
-	if meta.pathAttribute == "" || use.Args == nil {
-		return "", true
-	}
-	return namedArgumentValue(use.Args, meta.pathAttribute, src)
-}
-
-// namedArgumentValue reads the argument bound to attr at an annotation's
-// use site. A single positional argument binds to `value`, which is how
-// `@RestApi("/plugin-handle")` reaches the attribute named value.
-//
-// resolved is false when an argument for attr exists but is not a string
-// literal.
-func namedArgumentValue(args *sitter.Node, attr string, src []byte) (value string, resolved bool) {
-	for _, arg := range namedChildren(args) {
-		switch arg.Type() {
-		case "element_value_pair":
-			key := arg.ChildByFieldName("key")
-			if key == nil || key.Content(src) != attr {
-				continue
-			}
-			v, ok := stringLiteralValue(arg.ChildByFieldName("value"), src)
-			return v, ok
-		default:
-			// A positional argument. Java binds it to `value`, so it only
-			// answers for that attribute.
-			if attr != "value" {
-				continue
-			}
-			if arg.Type() == "string_literal" {
-				v, ok := stringLiteralValue(arg, src)
-				return v, ok
-			}
-			// Present, and not a literal — an array of them, a constant
-			// reference, a concatenation.
-			return "", false
-		}
-	}
-	return "", true
-}
-
 // packageOf returns a compilation unit's declared package, or "" for the
 // default package.
 func packageOf(root *sitter.Node, src []byte) string {

@@ -93,7 +93,8 @@ Every Spring Security mechanism, with exactly one status:
 | `@GetMapping` and siblings | read | [0011](0011-spring-second-framework.md) §1 |
 | `@RequestMapping(method = …)`, including multi-verb | read | [0026](0026-requestmapping-method-attribute.md) §1 |
 | A verb-less method-level `@RequestMapping` | read (as `ANY`) | [0028](0028-verbless-request-mapping.md) §1 |
-| A route path or version that cannot be read | detected and announced | [0020](0020-unanalyzable-is-unknown-not-absent.md) Am1 §5, Am2 §7 |
+| A route path built from constants in the analyzed source, or an array of paths | read | [0039](0039-route-path-constants.md) §2/§4 |
+| A route path that cannot be read — a property placeholder, a constant outside the tree, an ambiguous name — or a version that cannot be read | detected and announced, with the reason | [0020](0020-unanalyzable-is-unknown-not-absent.md) Am1 §5, Am2 §7, [0039](0039-route-path-constants.md) §3/§7 |
 | One route declared by two controllers | detected and announced | [0020](0020-unanalyzable-is-unknown-not-absent.md) Am2 §8 |
 | A **method-level** mapping meta-annotation (`@AnonymousGetMapping`) | detected and announced (not resolved) | [0032](0032-controllers-that-yield-no-routes.md) §1 |
 | Routes declared on an **inherited interface** | detected and announced (not resolved) | [0032](0032-controllers-that-yield-no-routes.md) §1 |
