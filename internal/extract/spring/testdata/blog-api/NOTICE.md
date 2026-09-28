@@ -2,7 +2,8 @@
 
 Vendored, unmodified, from https://github.com/categolj/blog-api,
 commit `23ae16bab3f5a50fac932cb51efad5d9d9c41959` (2025-06-24), Apache-2.0
-License.
+License. The upstream `LICENSE` is copied alongside, as section 4(a) of that license
+requires; the repository has no `NOTICE` file for section 4(d) to carry over.
 
 Used per docs/testing.md and docs/decisions/0011-spring-second-framework.md:
 the out-of-scope negative fixture — a real, actively maintained Spring app
