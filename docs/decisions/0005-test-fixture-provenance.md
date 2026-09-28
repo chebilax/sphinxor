@@ -4,7 +4,7 @@
 
 Accepted.
 
-**Amendment 1 (re-evaluation at 2,747 lines): Proposed.** See *Amendment 1* below. It keeps
+**Amendment 1 (re-evaluation at 2,747 lines): Accepted.** See *Amendment 1* below. It keeps
 vendoring and replaces the line-count threshold with triggers tied to what vendoring
 actually costs.
 
@@ -60,7 +60,7 @@ The point of the number is the trajectory: if it continues at this rate, this AD
 
 ### Status
 
-Proposed.
+Accepted.
 
 ### Context
 
