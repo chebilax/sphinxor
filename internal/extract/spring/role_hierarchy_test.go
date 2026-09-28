@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/chebilax/sphinxor/internal/lint"
+	"github.com/chebilax/sphinxor/internal/model"
 )
 
 // TestRoleHierarchy_ThreeShapes covers ADR 0031 §3's enumerated list.
@@ -156,5 +157,55 @@ public class OrgChart {
 	})
 	if m.RoleHierarchy.Found {
 		t.Errorf("an unrelated fromHierarchy call is not Spring's, got %+v", m.RoleHierarchy)
+	}
+}
+
+// TestRoleHierarchy_TrackrFixture is the first real code this decision has
+// had (testdata/trackr-backend/NOTICE.md): a hierarchy written in source,
+// wired into method security, next to endpoints whose roles it would widen.
+//
+// It pins today's behaviour, which is ADR 0031's — detected, announced,
+// not read — so that ADR 0038, if accepted, changes this test deliberately
+// rather than by accident. Under ADR 0038 as proposed the expectation for
+// this fixture does NOT become "expanded": its literal puts three pairs on
+// one line, which Spring Security reads as a hierarchy up to 5.0 and, from
+// 5.1, as one malformed chain in which ROLE_ADMIN reaches only
+// ROLE_ANONYMOUS — and nothing in these files fixes the version.
+func TestRoleHierarchy_TrackrFixture(t *testing.T) {
+	m, _, err := Extract("testdata/trackr-backend")
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if !m.RoleHierarchy.Found {
+		t.Fatal("trackr's hierarchy must be detected (ADR 0031 §3: @Bean returning RoleHierarchy, and setRoleHierarchy)")
+	}
+	if got := m.RoleHierarchy.DeclaredIn; len(got) != 1 || got[0] != "MethodSecurityConfiguration" {
+		t.Errorf("DeclaredIn = %v, want [MethodSecurityConfiguration]", got)
+	}
+
+	guardEndpoint := make(map[model.ID]model.ID, len(m.GuardApplications))
+	for _, g := range m.GuardApplications {
+		guardEndpoint[g.ID] = g.EndpointID
+	}
+	rolesByPath := map[string][]string{}
+	for _, e := range m.Endpoints {
+		for _, r := range m.RoleReferences {
+			if guardEndpoint[r.GuardApplicationID] == e.ID {
+				rolesByPath[string(e.HTTPMethod)+" "+e.Path] = append(rolesByPath[string(e.HTTPMethod)+" "+e.Path], r.RawLiteral)
+			}
+		}
+	}
+	want := map[string]string{
+		"PUT /vacationRequests/{id}/approve":           "ROLE_SUPERVISOR",
+		"PUT /vacationRequests/{id}/reject":            "ROLE_SUPERVISOR",
+		"GET /vacationRequests/daysPerEmployeeBetween": "ROLE_ADMIN",
+	}
+	if len(rolesByPath) != len(want) {
+		t.Errorf("role-carrying endpoints = %v, want exactly %v", rolesByPath, want)
+	}
+	for path, role := range want {
+		if got := rolesByPath[path]; len(got) != 1 || got[0] != role {
+			t.Errorf("%s roles = %v, want exactly [%s] — the hierarchy must not be expanded here", path, got, role)
+		}
 	}
 }
