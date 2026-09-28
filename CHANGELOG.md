@@ -46,8 +46,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are unchanged. See [ADR 0035](docs/decisions/0035-permissions-in-the-model.md)
   Amendment 1.
 
+### Changed
+
+- **The multiple-SecurityFilterChain warning says what blocks reading them.** Instead of
+  "6 SecurityFilterChain beans were found" alone, it counts the chains conditional on
+  `@Profile`/`@Conditional`, those configuring their rules inside a code branch, and those
+  with a `securityMatcher` that is not string literals. The URL layer stays unknown, as
+  before. See [ADR 0040](docs/decisions/0040-multiple-security-filter-chains.md).
+
 ### Fixed
 
+- **A SecurityFilterChain rule whose role is a constant is no longer dropped.**
+  `.requestMatchers("/admin/**").hasAnyRole(ROLE_ADMIN)` used to vanish from the rule list,
+  so the next rule answered for its paths:
+  - with `.anyRequest().permitAll()` next, an ADMIN-only endpoint was reported as
+    unguarded;
+  - with `.anyRequest().authenticated()` next, it was reported as open to any
+    authenticated user, which the Cerbos export would have granted;
+  - a partly literal list, `hasAnyRole("USER", ROLE_ADMIN)`, was read as `USER` alone.
+
+  The role is now resolved through the same constant index as route paths, and a rule
+  whose role cannot be read stops evaluation instead (ADR 0018). No corpus repository had
+  such a rule. See [ADR 0040](docs/decisions/0040-multiple-security-filter-chains.md) §3.
 - **A mapping that names no path is no longer reported as unreadable.** `@GetMapping()`,
   `@RequestMapping(method = RequestMethod.OPTIONS)` and
   `@GetMapping(produces = "application/json")` name no path, so Spring maps them to the

@@ -49,7 +49,7 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	// their role literals (a role referenced only by a SecurityFilterChain
 	// rule, never by any annotation, must still resolve), and the later
 	// application pass (below) needs the same rules again.
-	chainRules, chainFile, hasChain := findSecurityFilterChainRules(files)
+	chainRules, chainFile, hasChain := findSecurityFilterChainRules(files, b.consts)
 
 	// Pass 0: role declarations, project-wide, before resolving any
 	// reference to them — mirrors internal/extract/nestjs/extract.go's own
@@ -383,7 +383,23 @@ func unreadableLayerReason(forms urlLayerForms, servletChainParsed bool) string 
 	var parts []string
 	switch {
 	case forms.servlet > 1:
-		parts = append(parts, fmt.Sprintf("%d SecurityFilterChain beans were found; which one governs a given request depends on @Order/securityMatcher, which is not resolved", forms.servlet))
+		reason := fmt.Sprintf("%d SecurityFilterChain beans were found; which one governs a given request depends on @Order/securityMatcher, which is not resolved", forms.servlet)
+		// ADR 0040 §5: name what blocks reading them, which is what tells a
+		// reader whether anything static ever could.
+		var blockers []string
+		if forms.servletConditional > 0 {
+			blockers = append(blockers, fmt.Sprintf("%d of them conditional on @Profile/@Conditional, so which exist depends on configuration", forms.servletConditional))
+		}
+		if forms.servletBranched > 0 {
+			blockers = append(blockers, fmt.Sprintf("%d configuring their rules inside a code branch", forms.servletBranched))
+		}
+		if forms.servletOpaqueMatcher > 0 {
+			blockers = append(blockers, fmt.Sprintf("%d with a securityMatcher that is not string literals", forms.servletOpaqueMatcher))
+		}
+		if len(blockers) > 0 {
+			reason += " (" + strings.Join(blockers, "; ") + ")"
+		}
+		parts = append(parts, reason)
 	case forms.servlet == 1 && !servletChainParsed:
 		parts = append(parts, "a SecurityFilterChain bean was found but its authorizeHttpRequests rules could not be parsed")
 	}

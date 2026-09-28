@@ -91,7 +91,7 @@ type filterChainRule struct {
 // fixture has more than one SecurityFilterChain bean, so this exclusion
 // isn't itself exercised by real-fixture tests, but it's what ADR 0012 §1
 // already scoped out, implemented rather than silently assumed away.
-func findSecurityFilterChainRules(files []parsedFile) (rules []filterChainRule, file string, ok bool) {
+func findSecurityFilterChainRules(files []parsedFile, consts *constIndex) (rules []filterChainRule, file string, ok bool) {
 	var lambdas []*sitter.Node
 	var srcs [][]byte
 	var relPaths []string
@@ -106,7 +106,8 @@ func findSecurityFilterChainRules(files []parsedFile) (rules []filterChainRule, 
 		return nil, "", false
 	}
 
-	rules = collectChainRules(lambdas[0], srcs[0])
+	ctx := chainContext{consts: consts, scope: consts.files[relPaths[0]], class: enclosingClassFQ(lambdas[0], srcs[0])}
+	rules = collectChainRules(lambdas[0], srcs[0], ctx)
 	sort.SliceStable(rules, func(i, j int) bool { return rules[i].line < rules[j].line })
 	return rules, relPaths[0], true
 }
@@ -185,6 +186,12 @@ type urlLayerForms struct {
 	// Shiro is not Spring Security and nothing here parses it; recording
 	// that the layer exists is not interpreting it (ADR 0027, Context).
 	shiro int
+
+	// ADR 0040 §5: among the servlet chains, what blocks reading several
+	// of them together — named in the warning, instead of the count alone.
+	servletConditional   int // @Profile / @Conditional… on the bean or its class
+	servletBranched      int // authorizeHttpRequests inside a code branch, or more than once
+	servletOpaqueMatcher int // a securityMatcher that is not string literals
 }
 
 func (f urlLayerForms) any() bool {
@@ -194,30 +201,83 @@ func (f urlLayerForms) any() bool {
 func countChainBeans(files []parsedFile) urlLayerForms {
 	var out urlLayerForms
 	for _, f := range files {
-		var walk func(n *sitter.Node)
-		walk = func(n *sitter.Node) {
+		var walk func(n *sitter.Node, class *sitter.Node)
+		walk = func(n *sitter.Node, class *sitter.Node) {
 			switch n.Type() {
 			case "method_declaration":
 				switch {
 				case isSecurityFilterChainBean(n, f.src):
 					out.servlet++
+					if isConditionalBean(n, class, f.src) {
+						out.servletConditional++
+					}
+					if rulesInBranch(n, f.src) {
+						out.servletBranched++
+					}
+					if opaqueSecurityMatcher(n, f.src) {
+						out.servletOpaqueMatcher++
+					}
 				case isReactiveChainBean(n, f.src):
 					out.reactive++
 				case isChainBeanOfType(n, f.src, "ShiroFilterFactoryBean"):
 					out.shiro++
 				}
 			case "class_declaration":
+				class = n
 				if extendsType(n, f.src, "WebSecurityConfigurerAdapter") {
 					out.legacyAdapter++
 				}
 			}
 			for _, c := range namedChildren(n) {
-				walk(c)
+				walk(c, class)
 			}
 		}
-		walk(f.tree.RootNode())
+		walk(f.tree.RootNode(), nil)
 	}
 	return out
+}
+
+// isConditionalBean: a @Profile or @Conditional… on the bean method or its
+// class decides at runtime whether the chain exists (ADR 0040 §4, 1).
+func isConditionalBean(method, class *sitter.Node, src []byte) bool {
+	if conditionOf(method, src) != "" {
+		return true
+	}
+	return class != nil && conditionOf(class, src) != ""
+}
+
+// rulesInBranch: the chain configures authorizeHttpRequests more than
+// once, or inside an if/else/switch, so which rules apply is decided at
+// runtime (ADR 0040 §4, 3) — microcks's `if (keycloakEnabled)`.
+func rulesInBranch(method *sitter.Node, src []byte) bool {
+	calls := findMethodInvocations(method, src, "authorizeHttpRequests")
+	if len(calls) > 1 {
+		return true
+	}
+	for _, c := range calls {
+		for p := c.Parent(); p != nil && p != method; p = p.Parent() {
+			switch p.Type() {
+			case "if_statement", "switch_expression", "switch_statement", "ternary_expression":
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// opaqueSecurityMatcher: a securityMatcher whose arguments are not all
+// string literals — a builder, a runtime value (ADR 0040 §4, 2).
+func opaqueSecurityMatcher(method *sitter.Node, src []byte) bool {
+	for _, name := range []string{"securityMatcher", "securityMatchers"} {
+		for _, c := range findMethodInvocations(method, src, name) {
+			for _, a := range namedChildren(c.ChildByFieldName("arguments")) {
+				if a.Type() != "string_literal" {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // extendsType reports whether a class declaration's superclass is name.
@@ -275,12 +335,35 @@ func findMethodInvocations(n *sitter.Node, src []byte, name string) []*sitter.No
 // fluent chain nests as object fields (the outermost node in the tree is
 // the *last* call written), so a naive pre-order walk would visit rules
 // in reverse.
-func collectChainRules(lambdaBody *sitter.Node, src []byte) []filterChainRule {
+// chainContext is what a chain rule's arguments are evaluated in: the
+// project's constants, and the file and class the chain is declared in
+// (ADR 0040 §3).
+type chainContext struct {
+	consts *constIndex
+	scope  *fileScope
+	class  string
+}
+
+// enclosingClassFQ is the fully qualified class declaring n.
+func enclosingClassFQ(n *sitter.Node, src []byte) string {
+	var root *sitter.Node
+	for p := n; p != nil; p = p.Parent() {
+		root = p
+	}
+	for p := n.Parent(); p != nil; p = p.Parent() {
+		if p.Type() == "class_declaration" {
+			return fqClassOf(p, src, packageOf(root, src))
+		}
+	}
+	return ""
+}
+
+func collectChainRules(lambdaBody *sitter.Node, src []byte, ctx chainContext) []filterChainRule {
 	var out []filterChainRule
 	var walk func(n *sitter.Node)
 	walk = func(n *sitter.Node) {
 		if n.Type() == "method_invocation" {
-			if rule, ok := chainRuleFromTerminal(n, src); ok {
+			if rule, ok := chainRuleFromTerminal(n, src, ctx); ok {
 				out = append(out, rule)
 			}
 		}
@@ -292,7 +375,7 @@ func collectChainRules(lambdaBody *sitter.Node, src []byte) []filterChainRule {
 	return out
 }
 
-func chainRuleFromTerminal(terminal *sitter.Node, src []byte) (filterChainRule, bool) {
+func chainRuleFromTerminal(terminal *sitter.Node, src []byte, ctx chainContext) (filterChainRule, bool) {
 	name := terminal.ChildByFieldName("name")
 	object := terminal.ChildByFieldName("object")
 	if name == nil || object == nil || object.Type() != "method_invocation" {
@@ -347,9 +430,15 @@ func chainRuleFromTerminal(terminal *sitter.Node, src []byte) (filterChainRule, 
 
 	switch tname := name.Content(src); {
 	case chainRoleFuncs[tname]:
-		roles := stringArgValues(terminal.ChildByFieldName("arguments"), src)
-		if len(roles) == 0 {
-			return filterChainRule{}, false
+		// ADR 0040 §3. Every role argument is evaluated — a literal, or a
+		// constant through ADR 0039's index — and a rule with any member
+		// that cannot be read stays a rule: unrecognized, so it stops
+		// evaluation (ADR 0018). It used to be dropped, which let the next
+		// rule answer for it, and a partly literal list was read as its
+		// literals alone.
+		roles, ok := ctx.roleArgs(terminal.ChildByFieldName("arguments"))
+		if !ok || len(roles) == 0 {
+			return base, true // kind stays chainUnrecognized
 		}
 		base.kind, base.roles = chainRoles, roles
 		return base, true
@@ -454,6 +543,23 @@ func httpMethodOf(n *sitter.Node, src []byte) (model.HTTPMethod, bool) {
 	default:
 		return "", false
 	}
+}
+
+// roleArgs evaluates every argument of a role call. ok is false if any one
+// cannot be read: a partial role list is never returned.
+func (ctx chainContext) roleArgs(args *sitter.Node) ([]string, bool) {
+	if ctx.consts == nil || ctx.scope == nil {
+		return nil, false
+	}
+	var out []string
+	for _, n := range namedChildren(args) {
+		v, ok, _, _ := ctx.consts.eval(n, ctx.scope, ctx.class, 0)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, v)
+	}
+	return out, true
 }
 
 func stringArgValues(args *sitter.Node, src []byte) []string {
