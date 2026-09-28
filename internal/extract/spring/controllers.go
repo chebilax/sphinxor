@@ -1,6 +1,8 @@
 package spring
 
 import (
+	"strings"
+
 	sitter "github.com/smacker/go-tree-sitter"
 
 	"github.com/chebilax/sphinxor/internal/allowlist"
@@ -86,6 +88,14 @@ func controllerCandidateClasses(root *sitter.Node) []*sitter.Node {
 }
 
 func extractControllers(root *sitter.Node, src []byte, file string, b *builder, roleByName map[string]model.ID, controllerMetas map[string]controllerMeta) {
+	// Extract builds the index over the whole project first. A caller
+	// extracting one file on its own gets that file's scope here.
+	if b.consts == nil {
+		b.consts = newConstIndex()
+	}
+	if b.consts.files[file] == nil {
+		b.consts.addFile(file, root, src)
+	}
 	// ADR 0022 §1: annotation identity is a per-file question, answered
 	// from this file's own imports. Parsed once per file rather than per
 	// annotation.
@@ -113,26 +123,30 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 		// and in Java the colliding endpoint was dropped outright rather
 		// than merged (ADR 0020 Amendment 1 §5). A controller with no
 		// @RequestMapping genuinely has no prefix and stays resolved.
-		basePath := ""
-		basePathResolved := true
+		// ADR 0039: a path argument is evaluated — literals, constants,
+		// arrays — and only an argument that IS a path and cannot be read
+		// leaves the endpoint unresolved. No path argument at all is the
+		// empty path (§1).
+		className := fqClassOf(decl, src, b.consts.files[file].pkg)
+		bases := routePaths{paths: []string{""}}
 		classVersion := versionDecl{}
 		if reqMapping, ok := findAnnotation(classAnns, "RequestMapping"); ok {
-			if p, ok := pathAttributeValue(reqMapping.Args, src); ok {
-				basePath = p
-			} else if reqMapping.Args != nil {
-				basePathResolved = false
-			}
+			bases = b.evalRoutePaths(reqMapping.Args, "value", file, className)
 			// A class-level version applies to every handler that does not
 			// declare its own (ADR 0020 Amendment 2 §7).
 			classVersion = versionAttributeValue(reqMapping.Args, src)
 		} else if viaMeta {
 			// The base path comes from the meta-annotation: either a
 			// literal on its declaration, or the use site's argument
-			// routed through @AliasFor (ADR 0024 §2/§3). An argument that
-			// exists and cannot be read leaves the path unresolved, which
-			// ADR 0020 Amendment 1 §5 already handles (§4).
-			basePath, basePathResolved = metaBasePath(meta, metaUse, src)
+			// routed through @AliasFor (ADR 0024 §2/§3).
+			switch {
+			case meta.hasDeclaredPath:
+				bases = routePaths{paths: []string{meta.declaredPath}}
+			case meta.pathAttribute != "" && metaUse.Args != nil:
+				bases = b.evalRoutePaths(metaUse.Args, meta.pathAttribute, file, className)
+			}
 		}
+		basePath := bases.first()
 
 		controllerID := b.nextIDFor("controller")
 		b.model.Controllers = append(b.model.Controllers, model.Controller{
@@ -162,11 +176,26 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 				continue
 			}
 
-			subPath, subPathRead := pathAttributeValue(mapping.Args, src)
-			subPathResolved := subPathRead || mapping.Args == nil
+			subs := b.evalRoutePaths(mapping.Args, "value", file, className)
 			handlerName := handlerNameNode.Content(src)
-			path := joinPath(basePath, subPath)
-			pathUnresolved := !basePathResolved || !subPathResolved
+			pathUnresolved := bases.unresolved != "" || subs.unresolved != ""
+			unresolvedReason := bases.unresolved
+			if unresolvedReason == "" {
+				unresolvedReason = subs.unresolved
+			}
+			// Spring combines every class-level path with every
+			// method-level one (ADR 0039 §4). An unresolved endpoint stays
+			// one endpoint, showing only the part that resolved.
+			var paths []string
+			if pathUnresolved {
+				paths = []string{joinPath(bases.first(), subs.first())}
+			} else {
+				for _, bp := range bases.paths {
+					for _, sp := range subs.paths {
+						paths = append(paths, joinPath(bp, sp))
+					}
+				}
+			}
 
 			version := classVersion
 			if v := versionAttributeValue(mapping.Args, src); v.declared {
@@ -179,96 +208,177 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 			// verb. Everything above is shared by all of them — the path,
 			// the version, the annotations — and everything from here
 			// down is per-route (ADR 0026 §1).
-			for _, httpMethod := range httpMethods {
-				// Identity, in order of what is least knowable — the same
-				// ordering and the same reasoning as the NestJS extractor's
-				// (ADR 0020 Amendment 1 §5, Amendment 2 §7). Java's failure
-				// mode differs — a colliding endpoint is dropped below rather
-				// than merged — but the cause and the fix are identical.
-				endpointID := model.NewEndpointID(httpMethod, path)
-				switch {
-				case pathUnresolved:
-					endpointID = model.NewUnresolvedPathEndpointID(httpMethod, nameNode.Content(src), handlerName)
-				case version.unknownVersion():
-					endpointID = model.NewUnresolvedVersionEndpointID(httpMethod, nameNode.Content(src), handlerName)
-				case version.declared:
-					endpointID = model.NewVersionedEndpointID(httpMethod, path, version.value)
-				}
+			for _, path := range paths {
+				for _, httpMethod := range httpMethods {
+					// Identity, in order of what is least knowable — the same
+					// ordering and the same reasoning as the NestJS extractor's
+					// (ADR 0020 Amendment 1 §5, Amendment 2 §7). Java's failure
+					// mode differs — a colliding endpoint is dropped below rather
+					// than merged — but the cause and the fix are identical.
+					endpointID := model.NewEndpointID(httpMethod, path)
+					switch {
+					case pathUnresolved:
+						endpointID = model.NewUnresolvedPathEndpointID(httpMethod, nameNode.Content(src), handlerName)
+					case version.unknownVersion():
+						endpointID = model.NewUnresolvedVersionEndpointID(httpMethod, nameNode.Content(src), handlerName)
+					case version.declared:
+						endpointID = model.NewVersionedEndpointID(httpMethod, path, version.value)
+					}
 
-				// The handler's own starting line. In Java, annotations are
-				// part of method_declaration's modifiers, so the node already
-				// starts at the first annotation (@PostMapping, not the
-				// signature) — verified against real Pharmacy source rather
-				// than assumed from the grammar, and the same line the
-				// Endpoint row records below.
-				b.anchors = append(b.anchors, allowlist.Anchor{
-					EndpointID: endpointID,
-					File:       file,
-					Line:       int(member.StartPoint().Row) + 1,
-				})
-
-				// Two real handlers sharing HTTPMethod+Path (differing only in
-				// `produces`) merge into one Endpoint —
-				// docs/decisions/0014-endpoint-identity-and-content-negotiation.md.
-				// The first encountered wins the Endpoint row itself
-				// (HandlerName/File/Line), but every merged handler's own
-				// guards still get attached below — ADR 0014's Consequences
-				// says so explicitly: "it attaches whatever guards each real
-				// handler carries to the shared Endpoint.ID exactly as
-				// extracted." Skipping guard extraction for a merged-away
-				// handler would silently discard a real annotation.
-				// Two real handlers sharing HTTPMethod+Path (differing only in
-				// `produces`) merge into one Endpoint —
-				// docs/decisions/0014-endpoint-identity-and-content-negotiation.md.
-				// The first encountered wins the Endpoint row itself
-				// (HandlerName/File/Line), but every merged handler's own
-				// guards still get attached below — ADR 0014's Consequences
-				// says so explicitly: "it attaches whatever guards each real
-				// handler carries to the shared Endpoint.ID exactly as
-				// extracted." Skipping guard extraction for a merged-away
-				// handler would silently discard a real annotation — locked in
-				// as a regression test, TestExtractControllers_MergedHandlerRetainsOwnGuard
-				// (guards_test.go), confirmed to actually fail against the
-				// original buggy shape before being kept.
-				// Keyed by controller as well as by ID: a second handler in
-				// the *same* controller is ADR 0014 content negotiation and
-				// merges, while a second *controller* is a route collision
-				// and must keep its own endpoint (ADR 0020 Amendment 2 §8).
-				key := endpointKey{id: endpointID, controller: controllerID}
-				idx, merged := b.seenEndpoints[key]
-				if !merged {
-					b.model.Endpoints = append(b.model.Endpoints, model.Endpoint{
-						ID:                endpointID,
-						HTTPMethod:        httpMethod,
-						Path:              path,
-						HandlerName:       handlerName,
-						PathUnresolved:    pathUnresolved,
-						Version:           version.value,
-						VersionUnresolved: version.unknownVersion(),
-						ControllerID:      controllerID,
-						File:              file,
-						Line:              int(member.StartPoint().Row) + 1,
+					// The handler's own starting line. In Java, annotations are
+					// part of method_declaration's modifiers, so the node already
+					// starts at the first annotation (@PostMapping, not the
+					// signature) — verified against real Pharmacy source rather
+					// than assumed from the grammar, and the same line the
+					// Endpoint row records below.
+					b.anchors = append(b.anchors, allowlist.Anchor{
+						EndpointID: endpointID,
+						File:       file,
+						Line:       int(member.StartPoint().Row) + 1,
 					})
-					idx = len(b.model.Endpoints) - 1
-					b.seenEndpoints[key] = idx
-					// Class-level guards apply once per endpoint, not once per
-					// merged handler — attaching them again for a second
-					// merged handler would duplicate identical
-					// GuardApplications for no reason (both variants share the
-					// exact same class-level annotations by construction).
-					b.curEndpoint = idx
-					b.applyGuards(endpointID, classGuards, model.ScopeClass)
-					b.applyUnrecognized(endpointID, classUnrecognized, model.ScopeClass)
-				}
-				b.anchorOwner = append(b.anchorOwner, idx)
-				b.curEndpoint = idx
 
-				methodGuards, methodUnrecognized := pendingGuardsFromAnnotations(methodAnns, src, file, roleByName, imports)
-				b.applyGuards(endpointID, methodGuards, model.ScopeMethod)
-				b.applyUnrecognized(endpointID, methodUnrecognized, model.ScopeMethod)
+					// Two real handlers sharing HTTPMethod+Path (differing only in
+					// `produces`) merge into one Endpoint —
+					// docs/decisions/0014-endpoint-identity-and-content-negotiation.md.
+					// The first encountered wins the Endpoint row itself
+					// (HandlerName/File/Line), but every merged handler's own
+					// guards still get attached below — ADR 0014's Consequences
+					// says so explicitly: "it attaches whatever guards each real
+					// handler carries to the shared Endpoint.ID exactly as
+					// extracted." Skipping guard extraction for a merged-away
+					// handler would silently discard a real annotation.
+					// Two real handlers sharing HTTPMethod+Path (differing only in
+					// `produces`) merge into one Endpoint —
+					// docs/decisions/0014-endpoint-identity-and-content-negotiation.md.
+					// The first encountered wins the Endpoint row itself
+					// (HandlerName/File/Line), but every merged handler's own
+					// guards still get attached below — ADR 0014's Consequences
+					// says so explicitly: "it attaches whatever guards each real
+					// handler carries to the shared Endpoint.ID exactly as
+					// extracted." Skipping guard extraction for a merged-away
+					// handler would silently discard a real annotation — locked in
+					// as a regression test, TestExtractControllers_MergedHandlerRetainsOwnGuard
+					// (guards_test.go), confirmed to actually fail against the
+					// original buggy shape before being kept.
+					// Keyed by controller as well as by ID: a second handler in
+					// the *same* controller is ADR 0014 content negotiation and
+					// merges, while a second *controller* is a route collision
+					// and must keep its own endpoint (ADR 0020 Amendment 2 §8).
+					key := endpointKey{id: endpointID, controller: controllerID}
+					idx, merged := b.seenEndpoints[key]
+					if !merged {
+						b.model.Endpoints = append(b.model.Endpoints, model.Endpoint{
+							ID:                   endpointID,
+							HTTPMethod:           httpMethod,
+							Path:                 path,
+							HandlerName:          handlerName,
+							PathUnresolved:       pathUnresolved,
+							PathUnresolvedReason: unresolvedReason,
+							Version:              version.value,
+							VersionUnresolved:    version.unknownVersion(),
+							ControllerID:         controllerID,
+							File:                 file,
+							Line:                 int(member.StartPoint().Row) + 1,
+						})
+						idx = len(b.model.Endpoints) - 1
+						b.seenEndpoints[key] = idx
+						// Class-level guards apply once per endpoint, not once per
+						// merged handler — attaching them again for a second
+						// merged handler would duplicate identical
+						// GuardApplications for no reason (both variants share the
+						// exact same class-level annotations by construction).
+						b.curEndpoint = idx
+						b.applyGuards(endpointID, classGuards, model.ScopeClass)
+						b.applyUnrecognized(endpointID, classUnrecognized, model.ScopeClass)
+					}
+					b.anchorOwner = append(b.anchorOwner, idx)
+					b.curEndpoint = idx
+
+					methodGuards, methodUnrecognized := pendingGuardsFromAnnotations(methodAnns, src, file, roleByName, imports)
+					b.applyGuards(endpointID, methodGuards, model.ScopeMethod)
+					b.applyUnrecognized(endpointID, methodUnrecognized, model.ScopeMethod)
+				}
 			}
 		}
 	}
+}
+
+// routePaths is a mapping's evaluated path argument: every path it
+// declares, or — when unresolved is set — why it could not be read.
+type routePaths struct {
+	paths      []string
+	unresolved string
+}
+
+func (r routePaths) first() string {
+	if len(r.paths) == 0 {
+		return ""
+	}
+	return r.paths[0]
+}
+
+// unresolvedPlaceholder is ADR 0039 §3's reason.
+const unresolvedPlaceholder = "a property placeholder, resolved from configuration at runtime"
+
+// evalRoutePaths reads the path argument attr of a mapping annotation
+// (ADR 0039 §1–§4). No arguments, or arguments with no path among them,
+// is the empty path, resolved: @GetMapping() and
+// @RequestMapping(method = GET) name no path, which is not an unreadable
+// one. An array is several paths. A path containing a placeholder is
+// runtime configuration and is unresolved, whether written literally or
+// produced by a constant.
+func (b *builder) evalRoutePaths(args *sitter.Node, attr, file, class string) routePaths {
+	scope := b.consts.files[file]
+	node := pathArgument(args, attr, scope.src)
+	if node == nil {
+		return routePaths{paths: []string{""}}
+	}
+	elements := []*sitter.Node{node}
+	if node.Type() == "element_value_array_initializer" {
+		elements = namedChildren(node)
+		if len(elements) == 0 {
+			return routePaths{paths: []string{""}}
+		}
+	}
+	var out routePaths
+	for _, e := range elements {
+		v, ok, _, reason := b.consts.eval(e, scope, class, 0)
+		if !ok {
+			return routePaths{unresolved: reason}
+		}
+		if strings.Contains(v, "${") {
+			return routePaths{unresolved: unresolvedPlaceholder}
+		}
+		out.paths = append(out.paths, v)
+	}
+	return out
+}
+
+// pathArgument returns the value node of a mapping annotation's path: the
+// positional argument, or path=/value= (Spring aliases the two). For a
+// meta-annotation's own path attribute, attr names it, and a positional
+// argument answers only for "value".
+func pathArgument(args *sitter.Node, attr string, src []byte) *sitter.Node {
+	if args == nil {
+		return nil
+	}
+	for _, a := range namedChildren(args) {
+		if a.Type() == "element_value_pair" {
+			k := a.ChildByFieldName("key")
+			if k == nil {
+				continue
+			}
+			key := k.Content(src)
+			if key == attr || (attr == "value" && key == "path") {
+				return a.ChildByFieldName("value")
+			}
+			continue
+		}
+		if attr == "value" {
+			return a
+		}
+	}
+	return nil
 }
 
 // hasAny reports whether any annotation matches one of names. A

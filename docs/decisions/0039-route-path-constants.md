@@ -2,7 +2,8 @@
 
 ## Status
 
-**Proposed.** Narrows [ADR 0020](0020-unanalyzable-is-unknown-not-absent.md)
+**Accepted** (2026-09-28), with four checks settled before implementation. They are
+recorded in §9, and the measured results in §10. Narrows [ADR 0020](0020-unanalyzable-is-unknown-not-absent.md)
 Amendment 1 §5 to the paths that genuinely cannot be read. It reuses and extends the
 constant evaluation [ADR 0038](0038-role-hierarchy-read.md) §1 introduced.
 
@@ -124,8 +125,25 @@ ADR 0038 §1's forms, with names resolved in the order Java resolves them:
    single-type import, the same package, an on-demand import, or a fully qualified name
    as written.
 
-More than one candidate at any step is unresolved, never a pick, as today. Evaluation
-still stops at the first term it cannot evaluate, and a partial path is never produced.
+**A name that is not found, or found more than once, is unknown — never a pick.**
+Evaluation still stops at the first term it cannot evaluate, and a partial path is never
+produced. Concretely, each of these is unknown, with a test apiece in
+`route_constants_test.go`, the treatment ADR 0022 gave annotation identity:
+
+| Case | Why it cannot be settled from source |
+|---|---|
+| a single-type import of a class outside the tree | that class is the answer, and it is not visible. A same-named class elsewhere in the tree — even in the file's own package — is not taken instead |
+| two on-demand imports that both supply the class | Java itself rejects the name as ambiguous |
+| an on-demand import of a package with no class in the tree | that package could declare the name. This includes `import org.springframework.web.bind.annotation.*;` |
+| two static on-demand imports that both declare the constant | ambiguous, as above |
+| a static on-demand import of a class outside the tree | it could declare the constant |
+| a class with a supertype outside the tree, and the name not found in the known part of its hierarchy | an inherited field would shadow any static import, and it cannot be seen |
+
+Each rule was checked by disabling it and watching exactly its own test fail.
+
+Java compile-time constants also admit a `char` literal inside a String concatenation
+(`API_PATH + '/' + API_VERSION`), which is read. `char + char` is numeric addition in
+Java and stays unknown.
 
 ADR 0038's hierarchy evaluation uses the same index. That only adds resolutions: every
 hierarchy it reads today it still reads, to the same string, because a unique simple
@@ -159,7 +177,8 @@ the endpoint's ID changes and `sphinxor diff` will report it as one endpoint rem
 one added."*
 
 So a diff between a baseline taken before this change and a head taken after it reports
-every affected endpoint as removed and re-added. Predicted from the prototype:
+every affected endpoint as removed and re-added. Predicted from the prototype, and
+measured in §10:
 
 | Repo | Removed (old synthesized ID) | Added (real path) | Why the counts differ |
 |---|---:|---:|---|
@@ -242,6 +261,99 @@ about 230 KB, or roughly 12% of the tracked tree. Every ADR 0005 Amendment 1 tri
 stays unmet: under 1 MB and 25%, and no fixture edited. Group A and arrays of literals
 need no new fixture; the existing fixtures and synthetic tests cover them, and each test
 says so.
+
+### §9 The checks settled before implementation
+
+- **The nacos decoy is a real, unmodified file.** `lock/src/main/java/com/alibaba/nacos/lock/constant/Constants.java`
+  was fetched from GitHub at `b4fec02` and diffed against the vendored copy: identical.
+  It is one of the nine classes named `Constants` that nacos really declares, chosen as
+  the smallest. Nothing was written or edited for the test. The duplicate-name *rule* is
+  also pinned synthetically (§2's table), and those tests say they are synthetic.
+- **Ambiguity stays unknown** — §2's table, one test per case.
+- **The Cerbos export delta is measured per repository** — §10.
+- **"The hierarchy reader can only resolve more" is verified, not assumed.** All nine
+  in-scope hierarchy-sample applications, the two sample-app extras and both hierarchy
+  fixtures were re-run. **13 of 13 hierarchy warnings are byte-identical**: none
+  different, and none newly resolved. The old index never resolved a hierarchy to a
+  wrong class. Where it could not settle a name, the new one could not either, on this
+  sample.
+- **Fixture file counts against ADR 0005 Amendment 1's trigger of about 20 files from
+  one repository:** conductor 3, nacos 3.
+
+### §10 Measured, 2026-09-28
+
+`main` at `530b8d0` against this implementation. The runs covered all 20 corpus
+repositories at ADR 0035 §9's commits, every fixture, and the ADR 0038 sample.
+
+**Unchanged:**
+- the ten corpus repositories with no unreadable path: lint JSON, policy files, export
+  report and stderr all byte-identical;
+- every pre-existing fixture: byte-identical;
+- **exit codes**, everywhere;
+- in the corpus, only the unresolved-path warning's lines moved.
+
+**Identity churn — what `sphinxor diff` reports against a baseline taken before this
+change:**
+
+| Repo | Removed | Added | Endpoints | Unresolved paths |
+|---|---:|---:|---|---|
+| nacos | 378 | 383 | 429 → 434 | 378 → 0 |
+| conductor | 146 | 151 | 184 → 189 | 148 → 6 (placeholders) |
+| thingsboard | 39 | 39 | 551 → 551 | 39 → 0 |
+| dolphinscheduler | 33 | 33 | 239 → 239 | 33 → 0 |
+| hertzbeat | 13 | 13 | 175 → 175 | 13 → 0 |
+| nakadi | 11 | 11 | 51 → 51 | 11 → 0 |
+| spring-cloud-dataflow | 6 | 4 | 115 → 113 | 6 → 0 |
+| shenyu | 3 | 6 | 394 → 397 | 3 → 0 |
+| RuoYi-Vue | 3 | 4 | 147 → 148 | 3 → 0 |
+| metersphere | 3 | 3 | 1053 → 1053 | 3 → 0 |
+
+Across the corpus the unreadable-path count falls from **637 to 6**, all six conductor
+placeholders.
+
+**Cerbos export delta — the check the ADR had missed.**
+- **Exported rules: 0 before and 0 after, in every corpus repository**, so no policy
+  grants anything new.
+- Policy files still differ where the endpoint set changed, because omitted endpoints
+  appear as comments in them.
+- What moves is the omission *reason*:
+
+| Repo | Omissions | Reasons, before → after |
+|---|---|---|
+| conductor | 184 → 189 | `path-unresolved` 148 → 6, `no-guard` 36 → 181, `route-collision` 0 → 2 (`GET /api/secrets`, two controllers) |
+| hertzbeat | 175 → 175 | `path-unresolved` 13 → 0, `no-guard` 162 → 175 |
+| RuoYi-Vue | 147 → 148 | `path-unresolved` 3 → 0, `permission-not-exportable` 113 → 117 |
+| nacos, thingsboard, shenyu, nakadi, spring-cloud-dataflow, dolphinscheduler, metersphere | counts follow the endpoint count | `url-layer-unknown` throughout: these exports omit every endpoint for their URL layer, before and after |
+
+In the ADR 0038 sample, videochat is the one place rules appear: **0 → 3 exported
+rules**, and 29 of its endpoints now show an `action-collision` omission instead of
+`path-unresolved`.
+
+**Two corrections of silently false paths:**
+- conductor's 2 literal-placeholder endpoints, reported until now as
+  `/${conductor.a2a.server.basePath:/api/a2a/workflow}` and similar;
+- in the sample, SpringUserFramework's 13.
+
+Each is now unresolved with its reason. This is the one direction in which the change
+withdraws something the run used to assert.
+
+**Same-path merges (ADR 0014).** A path that becomes readable can equal a sibling's in
+the same controller, and ADR 0014 then merges them into one endpoint:
+- spring-cloud-dataflow 1, thingsboard 1;
+- in the sample, wallride 41 and molgenis 15, where Spring distinguishes the handlers by
+  `params=` (`params="draft"`, `params="publish"`).
+
+A merged endpoint carries every merged handler's guards, so a merge could hide an
+unguarded variant. Measured: **in all 58 merges, the merged handler's guards equal every
+same-verb sibling's**, so nothing is hidden here. ADR 0014's rule is applied unchanged.
+Whether handlers distinguished only by `params` or `headers` should be separate endpoints
+is ADR 0014's question, not this one, and it is recorded as open in `docs/limitations.md`.
+
+**Fixtures.**
+- `testdata/` grows to **3,773 lines** of vendored source and **233 KB**, which is
+  **11.9%** of the tree.
+- All fixtures analyze in well under a second.
+- No ADR 0005 Amendment 1 trigger is met.
 
 ## Alternatives considered
 

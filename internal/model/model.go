@@ -509,6 +509,10 @@ type Endpoint struct {
 	// resolved, which is a fragment of the real route and must never be
 	// presented as the whole of it.
 	PathUnresolved bool
+	// PathUnresolvedReason says why, for the warning: a property
+	// placeholder, a constant declared outside the analyzed source, a name
+	// that does not resolve to one declaration (ADR 0039 §7).
+	PathUnresolvedReason string
 	// Version is the route's declared API version — NestJS's
 	// @Controller({ version }) / @Version(), Spring's `version` attribute
 	// on a mapping annotation — per

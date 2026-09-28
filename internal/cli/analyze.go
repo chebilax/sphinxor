@@ -284,13 +284,22 @@ func projectWarnings(m *model.Model) []string {
 	// matrix marks each one with a leading ellipsis; this says what the
 	// mark means and which controllers to look at, because a fragment
 	// printed bare reads as a route that exists.
-	if u := unresolvedPaths(m); u.endpoints > 0 {
+	if u := unresolvedPaths(m); u.endpoints > 0 && len(u.reasons) == 0 {
 		out = append(out, "the route path could not be read for "+strconv.Itoa(u.endpoints)+" endpoint(s) in: "+
 			strings.Join(u.controllers, ", ")+".\n"+
 			"         Their @Controller/@RequestMapping argument is not a string literal (a route constant or enum),\n"+
 			"         so the paths shown for them are marked \u2026 and are only the part that resolved. They are still\n"+
 			"         analyzed and still linted; `sphinxor export cerbos` omits them, since a policy cannot be named\n"+
 			"         after a fragment of a route.")
+	} else if u.endpoints > 0 {
+		// ADR 0039 §7: the Spring extractor now reads constants, so what
+		// is left has a reason, and the reason is what tells a reader
+		// whether anything could ever read it.
+		out = append(out, "the route path could not be read for "+strconv.Itoa(u.endpoints)+" endpoint(s) in: "+
+			strings.Join(u.controllers, ", ")+".\n"+
+			wrapIndented("Their path argument is "+strings.Join(u.reasons, "; ")+". The paths shown for them are "+
+				"marked \u2026 and are only the part that resolved. They are still analyzed and still linted; "+
+				"`sphinxor export cerbos` omits them, since a policy cannot be named after a fragment of a route.", 9, 100))
 	}
 
 	// Amendment 2 §8: one route declared by two controllers, where the two
@@ -391,6 +400,9 @@ func hasMethodSecurityAnnotations(m *model.Model) bool {
 type unresolvedPathCount struct {
 	controllers []string
 	endpoints   int
+	// reasons are ADR 0039 §7's, with counts; empty for NestJS, whose
+	// extractor records none.
+	reasons []string
 }
 
 // unresolvedPaths gathers those controllers, sorted, for the §5 warning.
@@ -401,11 +413,15 @@ func unresolvedPaths(m *model.Model) unresolvedPathCount {
 		name[c.ID] = c.Name
 	}
 	seen := map[string]bool{}
+	reasonCount := map[string]int{}
 	for _, e := range m.Endpoints {
 		if !e.PathUnresolved {
 			continue
 		}
 		result.endpoints++
+		if e.PathUnresolvedReason != "" {
+			reasonCount[e.PathUnresolvedReason]++
+		}
 		n := name[e.ControllerID]
 		if n != "" && !seen[n] {
 			seen[n] = true
@@ -413,6 +429,10 @@ func unresolvedPaths(m *model.Model) unresolvedPathCount {
 		}
 	}
 	sort.Strings(result.controllers)
+	for r, n := range reasonCount {
+		result.reasons = append(result.reasons, r+" ("+strconv.Itoa(n)+")")
+	}
+	sort.Strings(result.reasons)
 	return result
 }
 

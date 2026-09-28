@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Spring route paths built from constants are read.** `@RequestMapping(Routes.ADMIN)`,
+  a statically imported constant, a nested-class constant, a concatenation, an enum
+  `.name()`: each is resolved with Java's own name resolution, and a name that does not
+  resolve to exactly one declaration in the analyzed source stays unknown, never a guess.
+  An array of paths, `@RequestMapping({"/a", "/b"})`, is now one endpoint per path. On
+  the 20-repository corpus, endpoints with an unreadable path fell from **637 to 6**.
+  See [ADR 0039](docs/decisions/0039-route-path-constants.md).
 - **A Spring Security role hierarchy is read and stated.** Before, a `RoleHierarchy` bean
   was only announced as existing. Now a hierarchy built from a constant string (a
   literal, concatenated constants, or enum `.name()`s) is read, and the warning quotes
@@ -38,6 +45,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of this permission". Warning only: the matrix, JSON output, diff and Cerbos export
   are unchanged. See [ADR 0035](docs/decisions/0035-permissions-in-the-model.md)
   Amendment 1.
+
+### Fixed
+
+- **A mapping that names no path is no longer reported as unreadable.** `@GetMapping()`,
+  `@RequestMapping(method = RequestMethod.OPTIONS)` and
+  `@GetMapping(produces = "application/json")` name no path, so Spring maps them to the
+  class's base path. The extractor marked all of them *path could not be read*, because it
+  treated "has arguments, none of them a readable path" as "unreadable". 66 routes in the
+  corpus: dolphinscheduler 33, hertzbeat 11, nakadi 7, nacos 6, metersphere 3,
+  thingsboard 3, RuoYi-Vue 2, spring-cloud-dataflow 1.
+- **A path that is a property placeholder is no longer reported as a route.** A literal
+  mapping path containing `${…}` was shown verbatim, as if
+  `/${conductor.a2a.server.basePath:/api/a2a/workflow}` were a real route. That is a
+  silently false claim, not a coverage gap, and it is withdrawn: such paths are now
+  unresolved and the warning says they come from configuration at runtime. conductor had
+  2 in the corpus; the ADR 0039 sample found 13 more in SpringUserFramework.
+
+### Upgrading: the first `sphinxor diff` after this release
+
+Every endpoint whose path becomes readable takes its real path as its identity, so a
+diff against a baseline taken with an earlier release shows it **once as removed and
+once as added**. Measured on the corpus:
+
+| Repo | Removed | Added |
+|---|---:|---:|
+| nacos | 378 | 383 |
+| conductor | 146 | 151 |
+| thingsboard | 39 | 39 |
+| dolphinscheduler | 33 | 33 |
+| hertzbeat | 13 | 13 |
+| nakadi | 11 | 11 |
+| spring-cloud-dataflow | 6 | 4 |
+| shenyu | 3 | 6 |
+| RuoYi-Vue | 3 | 4 |
+| metersphere | 3 | 3 |
+
+**This does not fail a build on the corpus.** Every finding on these endpoints is
+low-confidence, which the diff does not gate on, and the became-public gate needs an
+endpoint on both sides. It is noise, and the remedy is to **re-baseline on this
+release**.
+
+**Cerbos export.** No corpus repository exports a rule before or after, so no policy
+grants anything new. Omission *reasons* move: conductor's `path-unresolved` 148 → 6 and
+`no-guard` 36 → 181, with 2 new `route-collision` omissions for `GET /api/secrets`,
+which two controllers declare; hertzbeat's `path-unresolved` 13 → 0; RuoYi-Vue's 3 → 0.
+Policy files still differ wherever the endpoint set changed, because omitted endpoints
+are listed in them as comments.
 
 ### Effect on CI
 

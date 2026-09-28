@@ -130,14 +130,15 @@ public class C {
 // corpus reaches this branch — which is why the behaviour is specified
 // and pinned rather than left to be discovered on the first project that
 // differs.
+//
+// Since ADR 0039 a constant declared in the tree is read, so the constant
+// here comes from a class outside it — a dependency — which stays unknown.
 func TestControllerMeta_UnreadableUseSitePathIsUnresolved(t *testing.T) {
 	m := extractProject(t, map[string]string{
 		"ann/RestApi.java": restApiDecl,
-		"Routes.java": `package app;
-public final class Routes { public static final String ADMIN = "/admin"; }
-`,
 		"C.java": `package app;
 import app.ann.RestApi;
+import com.vendor.Routes;
 import org.springframework.web.bind.annotation.*;
 
 @RestApi(Routes.ADMIN)

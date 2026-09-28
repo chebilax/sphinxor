@@ -8,6 +8,11 @@ Accepted (§1–§4, implemented).
 is unchanged; the amendment extends its reach to two mechanisms the original text
 did not examine.
 
+**Amendment 1 §5 narrowed by [ADR 0039](0039-route-path-constants.md).** For Spring, a path
+built from constants in the analyzed source is now read, a mapping naming no path is no
+longer treated as unreadable, and a property-placeholder path is unresolved rather than
+reported verbatim. §5's treatment applies unchanged to what remains unreadable.
+
 **Amendment 2 (§7–§8): Accepted.** See *Amendment 2* below. Same principle again,
 at a seventh and eighth mechanism — a route-discriminating `version` that is read
 past, and a path prefix applied by runtime configuration. Both were found by

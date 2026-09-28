@@ -17,15 +17,14 @@ import (
 // entirely, taking its mutating-endpoint finding with it.
 //
 // Confirmed to fail against that behavior before being kept.
+//
+// Since ADR 0039 a constant declared in the tree is read, so Routes here
+// is a dependency's class, outside the tree, and its constants stay
+// unknown — the case this test still exists for.
 func TestUnreadableRequestMappingPath_DoesNotDropEndpoints(t *testing.T) {
 	dir := writeJavaProject(t, map[string]string{
-		"Routes.java": `package app;
-public final class Routes {
-    public static final String ADMIN = "/admin";
-    public static final String PUBLIC = "/public";
-}
-`,
 		"Controllers.java": `package app;
+import com.vendor.Routes;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 

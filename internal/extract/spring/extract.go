@@ -43,6 +43,7 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	}
 
 	b := newBuilder()
+	b.consts = buildConstIndex(files)
 
 	// SecurityFilterChain rules are found once, up front: Pass 0 needs
 	// their role literals (a role referenced only by a SecurityFilterChain
@@ -90,7 +91,7 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 		scanMethodSecurityFilters(f.tree.RootNode(), f.src, &b.model.MethodSecurityFilters)
 		// ADR 0031: a role hierarchy, detected. Its rules are read after
 		// every file is seen (ADR 0038 Stage 1, below).
-		scanRoleHierarchy(f.tree.RootNode(), f.src, &b.model.RoleHierarchy, &hierarchy)
+		scanRoleHierarchy(f.tree.RootNode(), f.src, f.relPath, &b.model.RoleHierarchy, &hierarchy)
 		// ADR 0033: methods building WebFlux functional routes.
 		scanFunctionalRouting(f.tree.RootNode(), f.src, &b.model.FunctionalRouting)
 	}
@@ -191,7 +192,7 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	// ADR 0038 Stage 1: read the role hierarchy's rules, for the warning
 	// only. After the URL layer, because an analyzed authorizeHttpRequests
 	// layer is one whose use of the hierarchy depends on the version.
-	resolveRoleHierarchy(files, &hierarchy, b.model.MethodSecurity,
+	resolveRoleHierarchy(b.consts, &hierarchy, b.model.MethodSecurity,
 		b.model.URLLayer.Analyzed, forms.servlet > 0, &b.model.RoleHierarchy)
 
 	// Pass 4: authentication requirements (ADR 0010), per layer (ADR 0011
@@ -238,6 +239,10 @@ func uniqueRoleDeclarationsByName(decls []model.RoleDeclaration) map[string]mode
 type builder struct {
 	model    model.Model
 	counters map[string]int
+	// consts evaluates String constants project-wide — a route path
+	// (ADR 0039) and a role hierarchy (ADR 0038) — with Java's own name
+	// resolution.
+	consts *constIndex
 	// seenEndpoints tracks which Endpoint IDs have already been created, so
 	// two real handlers that share HTTPMethod+Path (differing only in
 	// `produces`, per docs/decisions/0014-endpoint-identity-and-content-negotiation.md)

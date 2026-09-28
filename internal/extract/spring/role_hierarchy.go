@@ -33,8 +33,9 @@ type hierarchyScan struct {
 // hierarchySite is one place a hierarchy string is handed to Spring:
 // RoleHierarchyImpl.fromHierarchy(arg) or setHierarchy(arg).
 type hierarchySite struct {
-	arg   *sitter.Node
-	src   []byte
+	arg  *sitter.Node
+	file string // relPath, for its import scope
+	// class is the enclosing class, fully qualified.
 	class string
 }
 
@@ -58,7 +59,8 @@ type hierarchySite struct {
 // (ADR 0011 §1), and neither becomes newly hidden by this scan — but a
 // project without the warning is "none located", never "confirmed none",
 // the same boundary ADR 0015 draws for @EnableMethodSecurity.
-func scanRoleHierarchy(root *sitter.Node, src []byte, status *model.RoleHierarchyStatus, scan *hierarchyScan) {
+func scanRoleHierarchy(root *sitter.Node, src []byte, file string, status *model.RoleHierarchyStatus, scan *hierarchyScan) {
+	pkg := packageOf(root, src)
 	seen := map[string]bool{}
 	for _, c := range status.DeclaredIn {
 		seen[c] = true
@@ -107,14 +109,14 @@ func scanRoleHierarchy(root *sitter.Node, src []byte, status *model.RoleHierarch
 						record(enclosing, classNode)
 						scan.floor63 = true
 						if name.Content(src) == "fromHierarchy" {
-							scan.addSite(n, src, enclosing)
+							scan.addSite(n, file, fqClassOf(classNode, src, pkg))
 						} else {
 							scan.builder = true
 						}
 					}
 				case "setHierarchy":
-					if namesImpl {
-						scan.addSite(n, src, enclosing)
+					if namesImpl && classNode != nil {
+						scan.addSite(n, file, fqClassOf(classNode, src, pkg))
 					}
 				case "setRoleHierarchy":
 					record(enclosing, classNode)
@@ -132,12 +134,12 @@ func scanRoleHierarchy(root *sitter.Node, src []byte, status *model.RoleHierarch
 	walk(root, "", nil)
 }
 
-func (s *hierarchyScan) addSite(call *sitter.Node, src []byte, class string) {
+func (s *hierarchyScan) addSite(call *sitter.Node, file, class string) {
 	args := call.ChildByFieldName("arguments")
 	if args == nil || args.NamedChildCount() != 1 {
 		return
 	}
-	s.sites = append(s.sites, hierarchySite{arg: args.NamedChild(0), src: src, class: class})
+	s.sites = append(s.sites, hierarchySite{arg: args.NamedChild(0), file: file, class: class})
 }
 
 // conditionOf returns a class's @Profile or @Conditional… annotation,
@@ -220,7 +222,7 @@ func isRoleHierarchyType(text string) bool {
 // 0038 §13 lists, and are re-checked on every major version — the parser
 // regexes below and the version numbers in AssumedReach are the parts
 // that can go stale.
-func resolveRoleHierarchy(files []parsedFile, scan *hierarchyScan, ms model.MethodSecurityStatus, urlAnalyzed, servletChain bool, status *model.RoleHierarchyStatus) {
+func resolveRoleHierarchy(idx *constIndex, scan *hierarchyScan, ms model.MethodSecurityStatus, urlAnalyzed, servletChain bool, status *model.RoleHierarchyStatus) {
 	if !status.Found {
 		return
 	}
@@ -236,10 +238,9 @@ func resolveRoleHierarchy(files []parsedFile, scan *hierarchyScan, ms model.Meth
 		return
 	}
 
-	idx := buildConstIndex(files)
 	value := ""
 	for i, site := range scan.sites {
-		v, ok, unresolved := idx.eval(site.arg, site.src, site.class, 0)
+		v, ok, unresolved, _ := idx.eval(site.arg, idx.files[site.file], site.class, 0)
 		if !ok && strings.HasPrefix(unresolved, `"""`) {
 			status.NotRead = "they are written as a text block, which is not read"
 			return
@@ -390,247 +391,4 @@ func clip(s string) string {
 		s = s[:57] + "..."
 	}
 	return s
-}
-
-// constIndex is the project's static final String fields and enum
-// constants, by simple class name, for evaluating a hierarchy string built
-// from them (ADR 0038 §1). A simple name declared twice is ambiguous and
-// resolves to nothing.
-type constIndex struct {
-	fields    map[string]map[string]constRef
-	enums     map[string]map[string]bool
-	ambiguous map[string]bool
-}
-
-type constRef struct {
-	value *sitter.Node
-	src   []byte
-}
-
-func buildConstIndex(files []parsedFile) *constIndex {
-	idx := &constIndex{
-		fields:    map[string]map[string]constRef{},
-		enums:     map[string]map[string]bool{},
-		ambiguous: map[string]bool{},
-	}
-	declared := map[string]bool{}
-	for _, f := range files {
-		var walk func(n *sitter.Node)
-		walk = func(n *sitter.Node) {
-			switch n.Type() {
-			case "class_declaration", "interface_declaration", "enum_declaration":
-				name := n.ChildByFieldName("name")
-				if name == nil {
-					break
-				}
-				cls := name.Content(f.src)
-				if declared[cls] {
-					idx.ambiguous[cls] = true
-				}
-				declared[cls] = true
-				idx.indexBody(n, cls, f.src)
-			}
-			for _, c := range namedChildren(n) {
-				walk(c)
-			}
-		}
-		walk(f.tree.RootNode())
-	}
-	return idx
-}
-
-func (idx *constIndex) indexBody(decl *sitter.Node, cls string, src []byte) {
-	body := decl.ChildByFieldName("body")
-	if body == nil {
-		return
-	}
-	members := namedChildren(body)
-	if decl.Type() == "enum_declaration" {
-		consts := map[string]bool{}
-		for _, m := range members {
-			switch m.Type() {
-			case "enum_constant":
-				if name := m.ChildByFieldName("name"); name != nil {
-					consts[name.Content(src)] = true
-				}
-			case "enum_body_declarations":
-				members = append(members, namedChildren(m)...)
-			}
-		}
-		idx.enums[cls] = consts
-	}
-	for _, m := range members {
-		constant := m.Type() == "constant_declaration" ||
-			(m.Type() == "field_declaration" && hasModifierKeyword(m, "static") && hasModifierKeyword(m, "final"))
-		if !constant {
-			continue
-		}
-		if t := m.ChildByFieldName("type"); t == nil || t.Content(src) != "String" {
-			continue
-		}
-		for _, d := range namedChildren(m) {
-			if d.Type() != "variable_declarator" {
-				continue
-			}
-			name, value := d.ChildByFieldName("name"), d.ChildByFieldName("value")
-			if name == nil || value == nil {
-				continue
-			}
-			if idx.fields[cls] == nil {
-				idx.fields[cls] = map[string]constRef{}
-			}
-			idx.fields[cls][name.Content(src)] = constRef{value: value, src: src}
-		}
-	}
-}
-
-// eval evaluates n to one string, per ADR 0038 §1: string literals, +
-// concatenation, a local variable or a same-project static final String
-// initialized that way, and E.C.name() on a same-project enum. It stops
-// at the first term it cannot evaluate and returns that term's text; a
-// partial string is never returned.
-func (idx *constIndex) eval(n *sitter.Node, src []byte, class string, depth int) (value string, ok bool, unresolved string) {
-	if n == nil {
-		return "", false, ""
-	}
-	if depth > 16 {
-		return "", false, n.Content(src)
-	}
-	switch n.Type() {
-	case "string_literal":
-		if v, ok := decodeStringLiteral(n, src); ok {
-			return v, true, ""
-		}
-	case "parenthesized_expression":
-		return idx.eval(n.NamedChild(0), src, class, depth+1)
-	case "binary_expression":
-		if op := n.ChildByFieldName("operator"); op != nil && op.Content(src) == "+" {
-			l, ok, u := idx.eval(n.ChildByFieldName("left"), src, class, depth+1)
-			if !ok {
-				return "", false, u
-			}
-			r, ok, u := idx.eval(n.ChildByFieldName("right"), src, class, depth+1)
-			if !ok {
-				return "", false, u
-			}
-			return l + r, true, ""
-		}
-	case "identifier":
-		name := n.Content(src)
-		if scope := enclosingCallable(n); scope != nil {
-			if decl := findLocal(scope, name, src); decl != nil {
-				for _, d := range namedChildren(decl) {
-					if d.Type() == "variable_declarator" {
-						if id := d.ChildByFieldName("name"); id != nil && id.Content(src) == name {
-							return idx.eval(d.ChildByFieldName("value"), src, class, depth+1)
-						}
-					}
-				}
-			}
-		}
-		if ref, ok := idx.field(class, name); ok {
-			return idx.eval(ref.value, ref.src, class, depth+1)
-		}
-	case "field_access":
-		obj, field := n.ChildByFieldName("object"), n.ChildByFieldName("field")
-		if obj != nil && field != nil {
-			cls := lastSegment(obj.Content(src))
-			if ref, ok := idx.field(cls, field.Content(src)); ok {
-				return idx.eval(ref.value, ref.src, cls, depth+1)
-			}
-		}
-	case "method_invocation":
-		if c, ok := idx.enumName(n, src); ok {
-			return c, true, ""
-		}
-	}
-	return "", false, n.Content(src)
-}
-
-func (idx *constIndex) field(cls, name string) (constRef, bool) {
-	if idx.ambiguous[cls] {
-		return constRef{}, false
-	}
-	ref, ok := idx.fields[cls][name]
-	return ref, ok
-}
-
-// enumName evaluates E.C.name() — or C.name(), where exactly one project
-// enum declares C — to "C", which is Java's defined meaning of name().
-// toString() is not accepted: an enum may override it.
-func (idx *constIndex) enumName(n *sitter.Node, src []byte) (string, bool) {
-	name, obj := n.ChildByFieldName("name"), n.ChildByFieldName("object")
-	args := n.ChildByFieldName("arguments")
-	if name == nil || obj == nil || name.Content(src) != "name" || (args != nil && args.NamedChildCount() != 0) {
-		return "", false
-	}
-	switch obj.Type() {
-	case "field_access":
-		enum, c := obj.ChildByFieldName("object"), obj.ChildByFieldName("field")
-		if enum == nil || c == nil {
-			return "", false
-		}
-		e := lastSegment(enum.Content(src))
-		if !idx.ambiguous[e] && idx.enums[e][c.Content(src)] {
-			return c.Content(src), true
-		}
-	case "identifier":
-		c, matches := obj.Content(src), 0
-		for e, consts := range idx.enums {
-			if consts[c] && !idx.ambiguous[e] {
-				matches++
-			}
-		}
-		if matches == 1 {
-			return c, true
-		}
-	}
-	return "", false
-}
-
-func lastSegment(s string) string {
-	if i := strings.LastIndex(s, "."); i >= 0 {
-		return s[i+1:]
-	}
-	return s
-}
-
-// decodeStringLiteral returns a string_literal's value with its escape
-// sequences decoded. stringLiteralValue reads only the first fragment,
-// which is right for a route path and wrong here: videochat ends its
-// hierarchy with "\n", and a newline is a rule separator (ADR 0038 §2).
-// A text block is not read.
-func decodeStringLiteral(n *sitter.Node, src []byte) (string, bool) {
-	if strings.HasPrefix(n.Content(src), `"""`) {
-		return "", false
-	}
-	var b strings.Builder
-	for _, c := range namedChildren(n) {
-		switch c.Type() {
-		case "string_fragment":
-			b.WriteString(c.Content(src))
-		case "escape_sequence":
-			switch c.Content(src) {
-			case `\n`:
-				b.WriteByte('\n')
-			case `\t`:
-				b.WriteByte('\t')
-			case `\r`:
-				b.WriteByte('\r')
-			case `\s`:
-				b.WriteByte(' ')
-			case `\"`:
-				b.WriteByte('"')
-			case `\'`:
-				b.WriteByte('\'')
-			case `\\`:
-				b.WriteByte('\\')
-			default:
-				return "", false
-			}
-		default:
-			return "", false
-		}
-	}
-	return b.String(), true
 }
