@@ -4,6 +4,11 @@
 
 Accepted.
 
+**Amended by [ADR 0041](0041-permission-export.md):** an endpoint whose requirement is a
+permission can be exported, as a condition on a principal attribute, only through
+semantics the owner declares. §3's posture is unchanged: nothing is inferred, and with no
+declarations the export is exactly as before.
+
 ## Context
 
 `vision.md` names exporting to a real authorization engine as part of v2 ("Export

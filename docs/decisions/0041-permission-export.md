@@ -2,7 +2,9 @@
 
 ## Status
 
-**Proposed.** It completes the last item [ADR 0035](0035-permissions-in-the-model.md)
+**Accepted** (2026-09-28), with one condition made explicit in §1: with none of the new
+flags, the export is byte-identical to before and **never refuses**, so existing CI
+exports cannot break. It completes the last item [ADR 0035](0035-permissions-in-the-model.md)
 deferred to step 2 by name, and settles two obligations that ADR left open:
 
 - **§3's obligation.** RuoYi-Vue's `@ss.hasRole('admin')` is recorded as a permission.
@@ -97,11 +99,15 @@ it still has to be settled, because the next project will not be so obliging.
 
 ## Decision (proposed)
 
-### §1 By default nothing changes
+### §1 By default nothing changes, and nothing refuses
 
-Without the declarations below, no permission is exported, exactly as today. The omission
-detail gains one sentence naming the flags that would export it. On all 20 corpus
-repositories the default output is byte-identical.
+Without the declarations below, no permission is exported, exactly as today, and **§3's
+refusal cannot trigger**: it applies only when a callee is declared. A test runs the
+export with no new flags and asserts it succeeds with output identical to the previous
+behaviour. On all 20 corpus repositories the default output is byte-identical: policy
+files, report and JSON. The omission detail for a permission endpoint is unchanged; the
+new flags are documented in `--help` and the README, not appended to existing output,
+which would break that identity.
 
 ### §2 The owner declares what a callee means; Sphinxor never infers it
 
@@ -114,8 +120,9 @@ callee is matched exactly against `PermissionReference.Via`:
 | `--role-callee '@ss.hasRole'` | the literal is a role the principal must hold |
 | a `:any-of` or `:all-of` suffix on either | how a call naming several literals combines |
 
-Undeclared callees stay omitted, under a new reason, `callee-not-declared`, which replaces
-`permission-not-exportable` for them.
+Undeclared callees stay omitted. When at least one callee is declared, an undeclared one
+is omitted under a new reason, `callee-not-declared`. With no declarations at all, the
+reason stays `permission-not-exportable`, as today (§1).
 
 A call naming several literals is exported only when its callee carries a suffix. Neither
 reading is the natural default: `@el.check` is any-of, and another bean could be all-of.
@@ -165,8 +172,8 @@ made, so the owner has to make it.
   a role callee.**
 - If the owner declares it a *permission* callee, that is their statement, and it is
   exported as one. The report shows it.
-- **Undeclared, it is omitted** (`callee-not-declared`), never exported as a permission
-  by default.
+- **Undeclared, it is omitted** (`callee-not-declared` when other callees are declared,
+  `permission-not-exportable` when none is), never exported as a permission by default.
 
 This meets ADR 0035 §3's requirement that the decision be made deliberately, and it keeps
 §3's refusal of the name heuristic intact. Sphinxor still decides nothing about what
@@ -178,6 +185,38 @@ on `GenController POST` (see Context).
 The model, extraction, the matrix, `sphinxor lint`, `sphinxor diff` and the default
 export are unchanged. The permission warning of ADR 0035 Amendment 1 still fires: a
 declaration informs the export, not the lint report.
+
+### §7 The next export decision, recorded: action granularity
+
+The export keys a rule by (controller, HTTP verb). Two endpoints of one controller and
+verb with different requirements collide, and both are omitted. Measured across the whole
+corpus at `eec508e`, for every endpoint and not only permission endpoints:
+
+| Repo | Endpoints | Lost to action collision today | Would collide once reachable |
+|---|---:|---:|---:|
+| thingsboard | 551 | 0 | **317** |
+| RuoYi-Vue | 148 | 0 | **77** |
+| eladmin | 133 | 0 | **41** |
+| the other 17 | — | 0 | 0 |
+
+"Today" is zero everywhere only because almost nothing reaches the export:
+- a URL layer that is unknown (ADR 0040) or Shiro;
+- permissions (this ADR);
+- no requirement at all.
+
+The latent column counts endpoints sharing a (controller, verb) with an endpoint whose
+requirement differs, whatever blocks them now. Collisions matter in exactly the three
+repositories that carry authorization, and in thingsboard they would take 317 of the 551
+endpoints whose role rows motivated ADR 0040. So granularity is the export's next
+bottleneck, behind the URL layer.
+
+It is **not** decided here, because it changes every export, not only permissions. The
+candidates for its own ADR:
+- a finer action vocabulary, one action per endpoint, with the path in the action name;
+- a resource attribute carrying the path, checked by condition;
+- keeping (controller, verb) and naming the collision in the report.
+
+Its measurement is the table above.
 
 ## Alternatives considered
 
@@ -210,8 +249,8 @@ declaration informs the export, not the lint report.
 - `internal/export/cerbos`:
   - `Translate` takes the declarations;
   - permission and role rules per §4;
-  - `callee-not-declared` replaces `permission-not-exportable` where no declaration
-    applies;
+  - `callee-not-declared` for undeclared callees when other callees are declared, and
+    `permission-not-exportable` unchanged when none is;
   - `Result` gains the declarations and the integration contract, printed by the report.
 - `internal/model`, `internal/extract`, `internal/lint`, `internal/diff`: unchanged.
 - Regression bar:
@@ -225,3 +264,31 @@ declaration informs the export, not the lint report.
   - **a missing escape flag:** the command fails with the ADR 0035 Amendment 1 message.
 - The first corpus project to export rules for its main authorization shape. The policy
   says, in the report, whose statement its semantics are.
+
+### Measured, as implemented
+
+`main` at `eec508e` against this implementation. Tests were run with the pinned Cerbos
+CLI on `PATH`, so the real-engine tests ran rather than skipped.
+
+- **Default, no new flags:** all 42 targets byte-identical — 20 corpus repositories, 13
+  fixtures, 9 sample applications — in lint JSON, policy files, export report, exit code
+  and stderr. `TestExportCerbos_NoDeclarationsNeverRefusesAndIsUnchanged` pins it: an
+  export of the permission-bearing `ruoyi-vue-pro` fixture with no flags succeeds, and
+  equals the pre-ADR-0041 output.
+- **RuoYi-Vue, declared** with the flags above:
+  - **34 rules for 51 endpoints**, all conditioned; 77 action-collision omissions;
+    `cerbos compile` passes;
+  - a test suite against one real generated rule (`cache delete`, requiring
+    `monitor:cache:list`) passes 4 of 4: holder, `*:*:*` superuser and `admin` role
+    allowed, a principal with another permission denied;
+  - the prediction was 36 rules for 54 endpoints, with 63 collisions. It grouped
+    permission endpoints only, but an unguarded endpoint sharing a controller and verb
+    with a permission endpoint collides too, which is how the collisions reach §7's
+    latent 77.
+- **`ruoyi-vue-pro` fixture, declared** (`--permission-callee '@ss.hasPermission'
+  --no-superuser-escape`): 1 rule, 2 action collisions. It compiles.
+- **The refusal:** a declared callee without an escape flag fails with the Amendment 1
+  message and writes nothing. An escape flag with no callee, and
+  `--no-superuser-escape` together with an escape, are refused too.
+- **The undeclared negation:** in the real-engine CLI test, an `@ss.lacksPermi` endpoint
+  beside a declared `@ss.hasPermi` is omitted as `callee-not-declared`, never exported.

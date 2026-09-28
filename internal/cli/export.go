@@ -27,6 +27,8 @@ func newExportCerbosCmd() *cobra.Command {
 	var out string
 	var format string
 	var framework string
+	var permissionCallees, roleCallees, superuserPermissions, superuserRoles []string
+	var noSuperuserEscape bool
 
 	cmd := &cobra.Command{
 		Use:   "cerbos [path]",
@@ -43,7 +45,11 @@ func newExportCerbosCmd() *cobra.Command {
 			if len(args) == 1 {
 				dir = args[0]
 			}
-			return runExportCerbos(cmd, dir, out, framework, report.Format(format))
+			decl, err := buildDeclarations(permissionCallees, roleCallees, superuserPermissions, superuserRoles, noSuperuserEscape)
+			if err != nil {
+				return err
+			}
+			return runExportCerbos(cmd, dir, out, framework, report.Format(format), decl)
 		},
 	}
 
@@ -51,7 +57,53 @@ func newExportCerbosCmd() *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", string(report.FormatMarkdown), "companion report format: markdown or json")
 	cmd.Flags().StringVar(&framework, "framework", "", "force a framework (nestjs, spring) instead of detecting it")
 
+	// ADR 0041: permissions are exported only through semantics the owner
+	// declares. None of these is needed for an export without permissions.
+	cmd.Flags().StringArrayVar(&permissionCallees, "permission-callee", nil,
+		"declare that this @PreAuthorize bean call names a permission the principal must hold, e.g. @ss.hasPermi "+
+			"(append :any-of or :all-of for a call naming several); repeatable")
+	cmd.Flags().StringArrayVar(&roleCallees, "role-callee", nil,
+		"declare that this bean call names a role the principal must hold, e.g. @ss.hasRole; repeatable")
+	cmd.Flags().StringArrayVar(&superuserPermissions, "superuser-permission", nil,
+		"a permission that passes every declared check, e.g. *:*:*; repeatable")
+	cmd.Flags().StringArrayVar(&superuserRoles, "superuser-role", nil,
+		"a role that passes every declared check, e.g. admin; repeatable")
+	cmd.Flags().BoolVar(&noSuperuserEscape, "no-superuser-escape", false,
+		"state that the declared beans admit no superuser beyond what each call names")
+
 	return cmd
+}
+
+// buildDeclarations turns the ADR 0041 flags into Declarations and applies
+// its refusal. With none of them it returns the zero value, which never
+// fails validation — an export without permissions is never refused.
+func buildDeclarations(permissionCallees, roleCallees, superuserPermissions, superuserRoles []string, noEscape bool) (cerbos.Declarations, error) {
+	d := cerbos.Declarations{
+		SuperuserPermissions: superuserPermissions,
+		SuperuserRoles:       superuserRoles,
+		NoSuperuserEscape:    noEscape,
+	}
+	for _, v := range permissionCallees {
+		callee, combine, err := cerbos.ParseCallee(v)
+		if err != nil {
+			return cerbos.Declarations{}, err
+		}
+		if d.PermissionCallees == nil {
+			d.PermissionCallees = map[string]cerbos.Combine{}
+		}
+		d.PermissionCallees[callee] = combine
+	}
+	for _, v := range roleCallees {
+		callee, combine, err := cerbos.ParseCallee(v)
+		if err != nil {
+			return cerbos.Declarations{}, err
+		}
+		if d.RoleCallees == nil {
+			d.RoleCallees = map[string]cerbos.Combine{}
+		}
+		d.RoleCallees[callee] = combine
+	}
+	return d, d.Validate()
 }
 
 // runExportCerbos wires extraction (findings are not used — Translate
@@ -59,13 +111,13 @@ func newExportCerbosCmd() *cobra.Command {
 // that a Finding documents Sphinxor's own uncertainty, not a fact to
 // translate) to the Cerbos translator, then writes both the policy files
 // and the companion report to disk.
-func runExportCerbos(cmd *cobra.Command, dir, out, framework string, format report.Format) error {
+func runExportCerbos(cmd *cobra.Command, dir, out, framework string, format report.Format, decl cerbos.Declarations) error {
 	m, _, err := analyzeDirectory(cmd.ErrOrStderr(), dir, framework)
 	if err != nil {
 		return err
 	}
 
-	result := cerbos.Translate(m)
+	result := cerbos.TranslateWith(m, decl)
 
 	written, err := cerbos.WritePolicies(out, result)
 	if err != nil {

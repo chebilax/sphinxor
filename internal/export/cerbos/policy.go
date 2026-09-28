@@ -134,8 +134,43 @@ func RenderPolicy(resource string, r Result) string {
 				fmt.Fprintf(&b, "        - %q\n", role)
 			}
 		}
+		if rule.Condition != nil {
+			// ADR 0041 §4: a declared permission's test.
+			b.WriteString("      condition:\n")
+			b.WriteString("        match:\n")
+			writeCondition(&b, *rule.Condition, "          ")
+		}
 		b.WriteString("      effect: EFFECT_ALLOW\n")
 	}
 
 	return b.String()
+}
+
+// writeCondition renders a Cerbos match expression at indent: an expr, or
+// any/all of nested expressions. The CEL text is written as a YAML
+// double-quoted scalar, whose escapes decode back to it exactly.
+func writeCondition(b *strings.Builder, c Condition, indent string) {
+	switch {
+	case c.Expr != "":
+		fmt.Fprintf(b, "%sexpr: %q\n", indent, c.Expr)
+	case len(c.Any) > 0:
+		fmt.Fprintf(b, "%sany:\n%s  of:\n", indent, indent)
+		for _, sub := range c.Any {
+			writeConditionItem(b, sub, indent+"    ")
+		}
+	default:
+		fmt.Fprintf(b, "%sall:\n%s  of:\n", indent, indent)
+		for _, sub := range c.All {
+			writeConditionItem(b, sub, indent+"    ")
+		}
+	}
+}
+
+// writeConditionItem renders one element of an any/all list: the first
+// key on the "- " line, the rest indented under it.
+func writeConditionItem(b *strings.Builder, c Condition, indent string) {
+	var sub strings.Builder
+	writeCondition(&sub, c, indent+"  ")
+	text := sub.String()
+	fmt.Fprintf(b, "%s- %s", indent, strings.TrimPrefix(text, indent+"  "))
 }

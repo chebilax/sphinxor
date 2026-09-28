@@ -285,6 +285,10 @@ and not for *how much* it restricts: every bean behind a read permission in the 
 also admits a superuser the call does not name, and `Via` does nothing to stop a reader
 concluding "only holders of this permission". §10 adds the warning that says so.
 
+**Settled by [ADR 0041](0041-permission-export.md) §5:** `@ss.hasRole('admin')` becomes a
+role only if the owner declares `@ss.hasRole` a role callee, and it is never exported as
+a permission by default. The text below is kept as the obligation was stated.
+
 **This is deferred, not settled, and step 2 inherits it as an obligation.** The matrix
 can show `Via` and leave the question open; a Cerbos policy cannot. When the export
 learns permissions it has to decide whether `@ss.hasRole('admin')`'s literal becomes a

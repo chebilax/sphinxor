@@ -110,7 +110,7 @@ A new framework means a new extractor plus whatever the model genuinely lacks, f
 - **Analyzes NestJS (TypeScript) and Spring Security (Java)** — endpoints, guards, roles, and permissions, with the framework auto-detected from your source (`--framework` to override). The Spring extractor targets Spring Security specifically, not authorization in Spring applications generally: [ADR 0029](docs/decisions/0029-spring-security-scope.md) lists every mechanism and its status.
 - **Drift detection in CI — the differentiator.** `sphinxor diff <base> <head>` compares two checkouts and fails the build on a *regression*: an endpoint that had access control in the base and has none in the head, a new blocking finding, or a blocking finding whose `sphinxor-allow` exemption was removed. Point-in-time scanning can't see any of them. Pre-existing findings don't re-fail every subsequent PR, and an endpoint made public deliberately doesn't fail it at all if you mark it. Alongside the gate, the report lists what changed structurally: endpoints, role declarations, guards, roles and — since [ADR 0037](docs/decisions/0037-permissions-in-the-diff.md) — permissions, so an edit to `@PreAuthorize("@ss.hasPermi('system:user:edit')")` shows up rather than passing silently. What gates, exactly, is [ADR 0036](docs/decisions/0036-became-public-gates-ci.md) §1 — including what it deliberately does *not* catch: a privilege widened from `ADMIN` to `USER`, or one permission string swapped for another, are reported but not failed, because Sphinxor holds no ordering that would let it call either one wider.
 - **Three lint rules**: mutating endpoint with no detected access control, permission declared but never referenced, empty role.
-- **Cerbos policy export** — generates a Cerbos resource policy set from the extracted model, validated against the real `cerbos compile`. Explicitly marked review-before-deploying.
+- **Cerbos policy export** — generates a Cerbos resource policy set from the extracted model, validated against the real `cerbos compile`. Explicitly marked review-before-deploying. Permissions such as `@ss.hasPermi('system:user:edit')` are exported only when you declare what the bean call means, including its superuser escape. Sphinxor never infers it from the method's name ([ADR 0041](docs/decisions/0041-permission-export.md)).
 - **Combines authorization layers.** For Spring Security, the exported policy intersects method-level annotations with `SecurityFilterChain` URL rules, so it reflects the effective permission rather than either layer alone.
 - **`// sphinxor-allow:` suppression** for endpoints that are public on purpose — with a finding when a marker no longer matches anything, so exemptions can't rot silently.
 - **Confidence-graded findings.** `High` fails CI; `Low` is a warning. Nothing is reported as a certainty that isn't one.
@@ -150,6 +150,11 @@ sphinxor diff ../base .
 
 # Export a Cerbos policy set (review before deploying)
 sphinxor export cerbos ./my-app --out cerbos-policies
+
+# ...including permissions, with their meaning declared (a RuoYi-style project)
+sphinxor export cerbos ./my-app --out cerbos-policies \
+  --permission-callee '@ss.hasPermi' --role-callee '@ss.hasRole' \
+  --superuser-permission '*:*:*' --superuser-role admin
 ```
 
 ## Engineering approach
