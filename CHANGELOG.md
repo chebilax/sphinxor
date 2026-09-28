@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-28
+
+Spring extraction reads more of what the source says, and stops saying two things it
+could not know:
+- **Route paths built from constants are read.** Endpoints with an unreadable path fall
+  from 637 to 6 on the 20-repository corpus.
+- **A role hierarchy is read** and stated in the warning.
+- **`sphinxor diff` compares permissions.**
+- **Two false claims are withdrawn:** a property-placeholder path reported as a route,
+  and a chain rule with a constant role silently dropped.
+
+**No exit code changes** on any corpus repository or fixture. **Lint JSON and export
+output do change** for Spring projects with constant route paths; read *Upgrading*
+below if you keep that output from an earlier release.
+
 ### Added
 
 - **Spring route paths built from constants are read.** `@RequestMapping(Routes.ADMIN)`,
@@ -82,11 +97,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unresolved and the warning says they come from configuration at runtime. conductor had
   2 in the corpus; the ADR 0039 sample found 13 more in SpringUserFramework.
 
-### Upgrading: the first `sphinxor diff` after this release
+### Upgrading: output saved from an earlier release
 
-Every endpoint whose path becomes readable takes its real path as its identity, so a
-diff against a baseline taken with an earlier release shows it **once as removed and
-once as added**. Measured on the corpus:
+**`sphinxor diff` is not affected.** It analyzes the base and the head with the same
+binary, so an endpoint has the same identity on both sides, and upgrading changes no diff
+result by itself.
+
+What changes is the output itself. An endpoint whose path becomes readable takes its real
+path as its identity in lint JSON and in the export, so **comparing output saved from an
+earlier release with this release's** shows it once as removed and once as added — a
+stored matrix, a dashboard, or a script diffing JSON across versions. Measured on the
+corpus, old release against this one:
 
 | Repo | Removed | Added |
 |---|---:|---:|
@@ -101,10 +122,8 @@ once as added**. Measured on the corpus:
 | RuoYi-Vue | 3 | 4 |
 | metersphere | 3 | 3 |
 
-**This does not fail a build on the corpus.** Every finding on these endpoints is
-low-confidence, which the diff does not gate on, and the became-public gate needs an
-endpoint on both sides. It is noise, and the remedy is to **re-baseline on this
-release**.
+If you keep such output, regenerate it with this release rather than comparing across
+the boundary.
 
 **Cerbos export.** No corpus repository exports a rule before or after, so no policy
 grants anything new. Omission *reasons* move: conductor's `path-unresolved` 148 → 6 and
@@ -113,19 +132,60 @@ which two controllers declare; hertzbeat's `path-unresolved` 13 → 0; RuoYi-Vue
 Policy files still differ wherever the endpoint set changed, because omitted endpoints
 are listed in them as comments.
 
+### What is still not read
+
+Stated here rather than only in the ADRs, for the reason 0.8.0 gave: a release note that
+lists only gains reads as a bigger claim than it is.
+
+- **Several `SecurityFilterChain` beans — 6 corpus repositories, 1,420 endpoints.** The URL
+  layer stays unknown and the Cerbos export omits those endpoints. The blocker is runtime
+  activation, not chain selection: 16 of the 24 chains are conditional on
+  `@Profile`/`@Conditional`, and apollo and microcks set their rules inside a code
+  branch. The warning now says which
+  ([ADR 0040](docs/decisions/0040-multiple-security-filter-chains.md)).
+- **A single chain whose rules cannot be read — 2 repositories, 372 endpoints.**
+  Measured for this release. Neither case is the dropped-rule defect fixed above.
+  - **eladmin (133)** configures its chain with the pre-6.0 non-lambda DSL
+    (`.authorizeRequests().antMatchers(...)`, Spring Boot 2.7). Parsing that DSL would not
+    help: six of its rules take their paths at runtime from a project-local
+    `@AnonymousAccess` annotation, placed before `anyRequest()`. Under ADR 0018 they would
+    still leave every endpoint unknown.
+  - **dolphinscheduler (239)** has one chain, scoped to Spring Boot actuator endpoints
+    (`requestMatcher(EndpointRequest.toAnyEndpoint())`), with its rules inside an
+    `if`/`else`. Its application endpoints are authenticated by a `HandlerInterceptor`,
+    which is not Spring Security. The chain most likely governs none of the 239. Saying
+    so would rest on the actuator base path, which is configuration, and needs its own
+    decision.
+- **A role hierarchy is read, not applied.** Roles are shown as declared, and the export
+  does not grant implied roles ([ADR 0038](docs/decisions/0038-role-hierarchy-read.md)
+  Stage 2, deferred).
+- **Route paths that stay unreadable**: 6 corpus endpoints, all conductor's property
+  placeholders. Also a constant from a dependency, and any name that does not resolve to
+  one declaration, which is never a guess.
+- **NestJS**: none of this release's Spring changes apply. `@Controller(RouteKey.X)` is
+  still unread there.
+- **Handlers told apart only by `params`/`headers`** merge into one endpoint under
+  [ADR 0014](docs/decisions/0014-endpoint-identity-and-content-negotiation.md). There are
+  58 such merges in the measured set, all between handlers with identical guards. Open.
+
 ### Effect on CI
 
-- **None. This is not an exit-code change.** A permission changing to a different
-  string is reported and does not fail the build: Sphinxor holds no ordering over
-  roles ([ADR 0031](docs/decisions/0031-role-hierarchy.md)) and less than that over
-  permissions, since it does not decide what `@ss.hasPermi` means in the first place
-  ([ADR 0035](docs/decisions/0035-permissions-in-the-model.md) §3) — so neither
+- **No exit-code change.** `sphinxor lint` exits the same on all 20 corpus repositories,
+  every fixture and the ADR 0038 sample, measured against the previous binary for each
+  change in this release. The findings on newly readable endpoints are low-confidence,
+  which do not block.
+- **`sphinxor diff` gains a section and no gate.** A permission changing to a different
+  string is reported and does not fail the build: Sphinxor holds no ordering over roles
+  ([ADR 0031](docs/decisions/0031-role-hierarchy.md)), and less than that over
+  permissions, since it does not decide what `@ss.hasPermi` means
+  ([ADR 0035](docs/decisions/0035-permissions-in-the-model.md) §3). So neither
   direction of a swap can be called wider. An endpoint that loses its annotation
   altogether still fails the build, under
-  [ADR 0036](docs/decisions/0036-became-public-gates-ci.md)'s existing rule, not a
-  new one. Verified by running all ten constructed cases against the 0.8.0 binary and
-  this one and comparing the exit codes, and by `sphinxor lint --format json` staying
-  byte-identical across all 20 corpus repositories.
+  [ADR 0036](docs/decisions/0036-became-public-gates-ci.md)'s existing rule. Verified by
+  running all ten constructed cases against the 0.8.0 binary and this one and comparing
+  exit codes.
+- **Upgrading does not move a diff.** Both sides are analyzed by the running binary
+  (see *Upgrading*).
 
 ## [0.8.0] - 2026-09-22
 

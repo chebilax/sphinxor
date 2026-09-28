@@ -168,7 +168,20 @@ for one handler with several verbs. They share the handler's source line, so a
 `sphinxor-allow` marker above it exempts all of them, as it does for multi-verb routes.
 18 routes become 37 endpoints.
 
-### §5 Identity, and what `sphinxor diff` reports against an older baseline
+### §5 Identity, and what changes against output from an earlier release
+
+**Correction (2026-09-28, while cutting 0.9.0).** This section and §10 first said
+`sphinxor diff` would report every affected endpoint as removed plus added against an
+older baseline. **It does not.** `sphinxor diff <base-dir> <head-dir>` analyzes both trees
+with the running binary (`internal/cli/diff.go`, `analyzeSnapshot` on each side), so an
+endpoint has the same identity on both sides, and upgrading moves no diff result by
+itself.
+
+The churn below is real, but it is churn between the **outputs** of two releases: lint
+JSON or an export saved with an earlier release, compared with this one's. The premise
+came from ADR 0020 Amendment 1 §5's wording, quoted next, and was carried here without
+being checked against the diff command. It is recorded rather than quietly corrected, as
+ADR 0015 Amendment 1 §2 asks.
 
 A newly readable endpoint takes the ordinary identity, `NewEndpointID(method, path)`, or
 the versioned one where ADR 0020 Amendment 2 §7 applies. ADR 0020 Amendment 1 §5
@@ -176,9 +189,8 @@ anticipated this and accepted it: *"if extraction later learns to resolve the co
 the endpoint's ID changes and `sphinxor diff` will report it as one endpoint removed and
 one added."*
 
-So a diff between a baseline taken before this change and a head taken after it reports
-every affected endpoint as removed and re-added. Predicted from the prototype, and
-measured in §10:
+So output saved before this change, compared with output after it, shows every affected
+endpoint as removed and re-added. Predicted from the prototype, and measured in §10:
 
 | Repo | Removed (old synthesized ID) | Added (real path) | Why the counts differ |
 |---|---:|---:|---|
@@ -196,7 +208,7 @@ measured in §10:
 The implementation measures the exact numbers, which go into the release notes with
 this table.
 
-**This is not expected to fail a build.** Measured, not assumed:
+**This is not expected to fail a build.** After §5's correction this is moot for `sphinxor diff`, which never compares across releases. It still holds for anyone gating on saved output. Measured, not assumed:
 
 - every finding on the affected endpoints today is low-confidence
   `mutating-endpoint-without-access-control`, and the diff gates only on high-confidence
@@ -229,7 +241,8 @@ guards differ.
     role (RuoYi-Vue's carry permissions, conductor's and hertzbeat's nothing), so the
     **predicted** change is in omission *reasons* in the report, not in policy files.
     The implementation measures it.
-- **`sphinxor diff`:** as §5.
+- **`sphinxor diff`:** unchanged by the upgrade, since both sides are analyzed by one
+  binary (§5's correction). Saved output across releases shows the churn in §5.
 
 ### §7 What stays unresolved, and says why
 
@@ -292,8 +305,8 @@ repositories at ADR 0035 §9's commits, every fixture, and the ADR 0038 sample.
 - **exit codes**, everywhere;
 - in the corpus, only the unresolved-path warning's lines moved.
 
-**Identity churn — what `sphinxor diff` reports against a baseline taken before this
-change:**
+**Identity churn — what output saved before this change shows against output after it**
+(not `sphinxor diff`, per §5's correction):
 
 | Repo | Removed | Added | Endpoints | Unresolved paths |
 |---|---:|---:|---|---|

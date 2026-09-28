@@ -12,6 +12,9 @@ did not examine.
 built from constants in the analyzed source is now read, a mapping naming no path is no
 longer treated as unreadable, and a property-placeholder path is unresolved rather than
 reported verbatim. §5's treatment applies unchanged to what remains unreadable.
+§5's *Re-identification* paragraph says `sphinxor diff` reports a re-identified endpoint
+as removed and added. That holds only for output saved across releases: `sphinxor diff`
+analyzes both sides with one binary. See ADR 0039 §5's correction.
 
 **Amendment 2 (§7–§8): Accepted.** See *Amendment 2* below. Same principle again,
 at a seventh and eighth mechanism — a route-discriminating `version` that is read
