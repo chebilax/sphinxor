@@ -29,8 +29,14 @@ A constructed project with:
 - The Kotlin `SecurityFilterChain` is not seen, so the URL layer is recorded as
   **absent**. That is the exact error ADR 0020 §2 exists to prevent: an unreadable
   layer taken for no layer. The export then grants from the method layer alone. With
-  the Kotlin chain denying `/java/**`, `export cerbos` still exported `DELETE` on `java`
-  to `ADMIN`.
+  the Kotlin chain requiring `hasRole("SUPERADMIN")` on `/java/**`, `export cerbos`
+  exported `DELETE` on `java` to `ADMIN`: a grant the application denies. The same rule
+  written in Java, laid out the same way, is read, and the endpoint is correctly omitted
+  (disjoint roles). So the over-grant is Kotlin's alone.
+
+  (The first draft demonstrated this with `denyAll()`. That over-grants even in Java,
+  because of a separate defect reported alongside this ADR, so it did not isolate Kotlin.
+  Recorded rather than quietly replaced.)
 - The only mention of Kotlin is incidental and **wrong in effect**: the method-security
   caveat reports that no `@EnableMethodSecurity` was located, so the annotations "are
   NOT protected". The enabler is present, in Kotlin.
