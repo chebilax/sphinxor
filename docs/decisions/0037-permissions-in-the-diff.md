@@ -2,7 +2,7 @@
 
 ## Status
 
-**Proposed.**
+**Accepted.**
 
 Completes one of the three items [ADR 0035](0035-permissions-in-the-model.md)
 deferred to step 2 by name. The Cerbos export of permissions and NestJS permissions
