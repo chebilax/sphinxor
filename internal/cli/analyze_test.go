@@ -290,6 +290,20 @@ func TestProjectWarnings(t *testing.T) {
 			want: "NARROWER",
 		},
 		{
+			// ADR 0035 Amendment 1. Same error class as the hierarchy:
+			// the column reads stricter than who can call the endpoint,
+			// and the warning has to say which way.
+			name: "bean-call permissions name the direction of the error",
+			build: func(m *model.Model) {
+				guardedEndpoint(m)
+				m.MethodSecurity = model.MethodSecurityStatus{Found: true}
+				m.PermissionReferences = append(m.PermissionReferences, model.PermissionReference{
+					ID: "p1", GuardApplicationID: "g1", RawLiteral: "system:user:edit", Via: "@ss.hasPermi",
+				})
+			},
+			want: "BROADER than the Permissions column",
+		},
+		{
 			// The same caveat must not fire on NestJS, where
 			// MethodSecurity.Found is false only because the concept does
 			// not exist. Before this case it did, on every project using
@@ -363,6 +377,30 @@ func TestAnalyzeDirectory_RealProjectStaysQuiet(t *testing.T) {
 	}
 	if strings.Contains(notices.String(), "warning:") {
 		t.Errorf("a fully-analyzed real project must produce no caveats, got:\n%s", notices.String())
+	}
+}
+
+// TestAnalyzeDirectory_BeanCallPermissionsWarn is ADR 0035 Amendment 1
+// end to end: the vendored yudao controllers read five permissions through
+// @ss.hasPermission, so the run must say the bean was not read, and name
+// the callee a reader has to go and look at.
+func TestAnalyzeDirectory_BeanCallPermissionsWarn(t *testing.T) {
+	var notices bytes.Buffer
+	if _, _, err := analyzeDirectory(&notices, "../extract/spring/testdata/ruoyi-vue-pro", ""); err != nil {
+		t.Fatalf("analyzeDirectory: %v", err)
+	}
+	if !strings.Contains(notices.String(), "bean calls (@ss.hasPermission)") {
+		t.Errorf("no bean-call permission warning naming the callee, got:\n%s", notices.String())
+	}
+}
+
+func TestPermissionCallees_DistinctAndSorted(t *testing.T) {
+	m := &model.Model{PermissionReferences: []model.PermissionReference{
+		{Via: "@ss.hasPermi"}, {Via: "@el.check"}, {Via: "@ss.hasPermi"},
+	}}
+	got := strings.Join(permissionCallees(m), ", ")
+	if got != "@el.check, @ss.hasPermi" {
+		t.Errorf("permissionCallees = %q, want %q", got, "@el.check, @ss.hasPermi")
 	}
 }
 

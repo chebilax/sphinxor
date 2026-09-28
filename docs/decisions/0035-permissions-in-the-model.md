@@ -4,6 +4,10 @@
 
 **Accepted.** Amends [ADR 0002](0002-intermediate-model-structure.md).
 
+**Amendment 1 (§10–§11): Proposed.** See *Amendment 1* below. A project-level
+warning that a permission read from a bean call is what the call names, not what the
+bean decides. No change to the model, the matrix, a finding or a gate.
+
 ## Context
 
 `docs/limitations.md`'s *Permissions as metadata* entry is the largest gap that file
@@ -275,6 +279,11 @@ Two ways to avoid that were considered and both are rejected here:
 What keeps the mislabel from misleading a reader is `Via`: the matrix renders
 `@ss.hasRole('admin')`, not a bare `admin` in a column headed *Permissions*. The
 collection name is inexact for one row; nothing a reader sees is.
+
+**Corrected by Amendment 1.** That holds for *what kind* of requirement a cell shows,
+and not for *how much* it restricts: every bean behind a read permission in the corpus
+also admits a superuser the call does not name, and `Via` does nothing to stop a reader
+concluding "only holders of this permission". §10 adds the warning that says so.
 
 **This is deferred, not settled, and step 2 inherits it as an obligation.** The matrix
 can show `Via` and leave the question open; a Cerbos policy cannot. When the export
@@ -670,3 +679,108 @@ that is visible rather than argued.
   exporter cannot export. That is a new shape of incompleteness — previously, anything
   the model held was exportable — and §7 gives it a named omission reason rather than
   letting it look like a bug.
+
+## Amendment 1 — a permission read from a bean call is what the call names, not what the bean decides (2026-09-28)
+
+### Status
+
+Proposed.
+
+### Context
+
+§3 decided that Sphinxor does not interpret the bean, and argued that `Via` keeps that
+honest: the matrix renders `@ss.hasPermi('system:user:edit')`, not a bare
+`system:user:edit`, so *"nothing a reader sees is"* inexact. That argument is about
+**what kind** of requirement a cell shows. It says nothing about **how much** the cell
+restricts, and on that axis it does not hold.
+
+Read at source, at the §9 commits, every bean behind a read permission admits a
+principal the call does not name:
+
+| Callee | Sites | References | Also passes when | Who holds that |
+|---|---:|---:|---|---|
+| `@ss.hasPermi` | 115 | 115 | the user's permission set contains `*:*:*` (`Constants.ALL_PERMISSION`) | user id 1 — `SysPermissionService.getMenuPermission` adds it when `SecurityUtils.isAdmin(userId)`, i.e. `userId == 1` |
+| `@ss.hasRole` | 1 | 1 | a role key equals `admin` (`Constants.SUPER_ADMIN`) | role 1 in the SQL seed |
+| `@el.check` | 89 | 96 | the user's authorities contain `admin` | any user with `is_admin` — `RoleServiceImpl.buildPermissions` returns `admin` alone for them |
+
+That is **all 212 references at 205 sites** — three of three beans, not a majority. The
+eladmin line is the one §3's measurement already quoted, for a different reason (the
+empty varargs case); the RuoYi-Vue lines were not looked at when §3 was written.
+
+So a reader of `PUT /system/user` sees `@ss.hasPermi('system:user:edit')` and
+concludes *only holders of `system:user:edit` can call this*. Admin user 1 can too, and
+the matrix does not show it. `Via` prevents a false claim about the literal; it does not
+prevent that conclusion, because nothing on the row contradicts it.
+
+This is the same error class as [ADR 0031](0031-role-hierarchy.md): the requirement
+shown is **stricter than who is actually admitted**. A role hierarchy widens a role; a
+bean's escape widens a permission. It gets the same treatment.
+
+### Decision
+
+#### §10 A project-level warning, whenever the model holds a permission reference
+
+`sphinxor lint` warns once per project when `PermissionReferences` is non-empty. The
+warning names the distinct callees, sorted — where a reader has to go to find out what
+the bean admits — and states the direction:
+
+```
+warning: permissions are read from @PreAuthorize bean calls (@ss.hasPermi, @ss.hasRole).
+         The permission shown is what the call NAMES, not what the bean decides: the bean is
+         not read, and may admit principals the permission does not name, such as a superuser.
+         Access can be BROADER than the Permissions column suggests; a permission shown is not
+         evidence that only its holders can call the endpoint.
+```
+
+It fires on **presence**, not on a detected escape. Detecting the escape means reading
+the bean's body, which is the interpretation §3 declined and this amendment does not
+reopen. That also means it fires where the bean is not in the tree at all — the vendored
+`ruoyi-vue-pro` fixture carries yudao's controllers and none of its services — which is
+correct: there, too, the cell is what the call names and nothing more is known.
+
+The wording says *may*. A bean could in principle also be **stricter** than its
+argument — a tenant check, a feature flag — and "what the call names, not what the bean
+decides" covers that direction too. The second sentence names the direction measured,
+three beans out of three, because a warning that does not say which way the numbers are
+wrong leaves the reader to guess, which is ADR 0031 §2's argument unchanged.
+
+#### §11 A warning, never a finding, and nothing gates
+
+For the reason ADR 0031 §2 gives: every permission shown is really named by the code,
+nothing here asserts an endpoint is unprotected, and no rule's trigger moves. The
+model, the matrix, the JSON output, `sphinxor diff` and the Cerbos export are all
+unchanged — only stderr gains a line.
+
+### Alternatives considered
+
+- **Resolve each bean and warn only where an escape is found.** Rejected: it is reading
+  the bean's body, which §3 declined on cost and because the semantics bottom out in
+  method bodies; and on the corpus it would fire on exactly the same three projects,
+  since three beans of three have one. The precision it buys is zero today.
+- **Render the escape in the Permissions cell** — `@ss.hasPermi('system:user:edit') | *:*:*`.
+  Rejected: it puts a string in the matrix the annotation does not contain, which is the
+  invented-vocabulary objection §8 made to reading forms B and C. It would also require
+  reading the bean, as above.
+- **A per-row marker.** Rejected: all 205 rows would carry it. A mark on every row that
+  has one is a project-level fact written 205 times, and it would change the JSON, which
+  §9 made the byte-identical check.
+- **A finding.** Rejected per §11.
+- **Say nothing; `Via` is enough.** Rejected by the Context: `Via` stops one wrong
+  reading and not this one.
+
+### Consequences
+
+- `internal/cli/analyze.go`: one project warning, `permissionCallees`. Nothing else.
+- `internal/model`: unchanged. `PermissionReference.Via`'s doc comment stops claiming
+  that rendering `Via` means *nothing a reader sees is wrong*, and points here.
+- `docs/limitations.md`: the *Permissions as metadata* entry records the escape.
+- **Measured before and after, on all 20 corpus repositories at the §9 commits and all
+  four vendored fixtures.** `lint --format json` byte-identical on all 24; `export
+  cerbos` — policies and report — identical on all 24; exit codes unchanged. The warning
+  fires on exactly three: RuoYi-Vue (`@ss.hasPermi, @ss.hasRole`), eladmin
+  (`@el.check`), and `ruoyi-vue-pro` (`@ss.hasPermission`). No other stderr line moves
+  anywhere.
+- **What this does not know.** The escape was confirmed by reading two beans in two
+  repositories of one lineage. That it is the norm is not claimed; the warning says
+  *may* for that reason. yudao's `@ss.hasPermission` bean is not vendored and was not
+  read.

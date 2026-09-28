@@ -272,6 +272,21 @@ func projectWarnings(m *model.Model) []string {
 			"         the implied one does. Every role shown is real; the list is not exhaustive.")
 	}
 
+	// ADR 0035 Amendment 1: a permission read from a bean call is what the
+	// call NAMES, not what the bean decides. Every bean behind a read
+	// permission in the corpus also admits a superuser — @ss.hasPermi
+	// passes *:*:*, @ss.hasRole and @el.check pass admin — so the
+	// Permissions column reads stricter than who can call the endpoint.
+	// Same error class and same treatment as ADR 0031's hierarchy: the
+	// direction is stated, and it is a warning, never a finding.
+	if callees := permissionCallees(m); len(callees) > 0 {
+		out = append(out, "permissions are read from @PreAuthorize bean calls ("+strings.Join(callees, ", ")+").\n"+
+			"         The permission shown is what the call NAMES, not what the bean decides: the bean is\n"+
+			"         not read, and may admit principals the permission does not name, such as a superuser.\n"+
+			"         Access can be BROADER than the Permissions column suggests; a permission shown is not\n"+
+			"         evidence that only its holders can call the endpoint.")
+	}
+
 	// Amendment 1 §5: routes whose declared path could not be read. The
 	// matrix marks each one with a leading ellipsis; this says what the
 	// mark means and which controllers to look at, because a fragment
@@ -428,6 +443,23 @@ func unresolvedRoleEndpoints(m *model.Model) int {
 		}
 	}
 	return len(affected)
+}
+
+// permissionCallees returns the distinct callees through which the model's
+// permission references were read, sorted — ADR 0035 Amendment 1. Named
+// in the warning because the callee is where a reader has to go to find
+// out what the bean actually admits; the count would not tell them that.
+func permissionCallees(m *model.Model) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, p := range m.PermissionReferences {
+		if !seen[p.Via] {
+			seen[p.Via] = true
+			out = append(out, p.Via)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // unrecognizedAuthSummary builds one warning per distinct unidentified

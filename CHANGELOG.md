@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   projects this was measured against, since RuoYi-Vue and eladmin report no roles at
   all and their endpoints' requirements are entirely permissions.
   See [ADR 0037](docs/decisions/0037-permissions-in-the-diff.md).
+- **A warning that a permission shown may not be the only way in.** A permission read
+  from a `@PreAuthorize` bean call is what the call names, not what the bean decides —
+  and every such bean in the corpus also admits a superuser: `@ss.hasPermi` passes
+  `*:*:*`, `@ss.hasRole` and `@el.check` pass `admin`. The run now says so once per
+  project, naming the callees, so the Permissions column is not read as "only holders
+  of this permission". Warning only: the matrix, JSON output, diff and Cerbos export
+  are unchanged. See [ADR 0035](docs/decisions/0035-permissions-in-the-model.md)
+  Amendment 1.
 
 ### Effect on CI
 

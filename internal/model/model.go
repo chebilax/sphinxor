@@ -788,9 +788,12 @@ type PermissionReference struct {
 	// alternatives are a name heuristic (rejected for third-party
 	// annotations by ADR 0023 §1, for the reason that applies unchanged
 	// here) or resolving the bean, which bottoms out in a parameter's
-	// name one level deeper. Rendering Via alongside RawLiteral means
-	// nothing a reader sees is wrong. ADR 0035 §3 records the open
-	// obligation this leaves for the Cerbos export.
+	// name one level deeper. Rendering Via alongside RawLiteral keeps the
+	// KIND of requirement honest. It does not keep its BREADTH honest:
+	// every bean behind a read permission in the corpus also admits a
+	// superuser the call does not name, which is why the run warns
+	// (ADR 0035 Amendment 1). ADR 0035 §3 records the open obligation
+	// this leaves for the Cerbos export.
 	Via  string
 	File string
 	Line int
