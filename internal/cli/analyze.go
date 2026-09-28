@@ -186,6 +186,23 @@ func projectWarnings(m *model.Model) []string {
 	// the annotations are there, and worded so nobody reads them as
 	// access control — neither ever denies a call, so an endpoint
 	// carrying one is exactly as protected as it would be without it.
+	// ADR 0012 Amendment 1: JSR-250 @PermitAll is Spring Security method
+	// security, so it must not be silent (ADR 0029 §3), but what a
+	// permit-all declaration means for lint and the diff is not decided.
+	// Counted and announced, never attached to an endpoint — attaching it
+	// as authorization-present would let a guard replaced by @PermitAll
+	// pass the became-public gate.
+	if p := m.PermitAll; p.Count > 0 {
+		msg := "found " + strconv.Itoa(p.Count) + " JSR-250 @PermitAll annotation(s)"
+		if len(p.Classes) > 0 {
+			msg += " in: " + strings.Join(p.Classes, ", ")
+		}
+		out = append(out, msg+".\n"+
+			"         They are not read: what a permit-all declaration means is not yet decided. Endpoints\n"+
+			"         carrying one are analyzed as if unannotated, so a mutating one gets the Low finding,\n"+
+			"         and the Cerbos export grants nothing for them.")
+	}
+
 	if f := m.MethodSecurityFilters; f.Total() > 0 {
 		msg := "found " + strconv.Itoa(f.Total()) + " @PreFilter/@PostFilter annotation(s)"
 		if len(f.Classes) > 0 {
@@ -374,6 +391,7 @@ var springMethodSecurityAnnotations = map[string]bool{
 	"PreAuthorize": true,
 	"Secured":      true,
 	"RolesAllowed": true,
+	"DenyAll":      true,
 }
 
 // hasMethodSecurityAnnotations reports whether the project declares roles
@@ -388,7 +406,11 @@ var springMethodSecurityAnnotations = map[string]bool{
 // supported frameworks trains people to ignore the ones that are right.
 func hasMethodSecurityAnnotations(m *model.Model) bool {
 	for _, g := range m.GuardApplications {
-		if g.DeclaresRoles && springMethodSecurityAnnotations[g.GuardName] {
+		// A denyAll() or @DenyAll declares no role list but is method
+		// security all the same (ADR 0012 Amendment 1): without it here, a
+		// project whose only annotations deny everyone would lose the
+		// "may be inert" caveat.
+		if (g.DeclaresRoles || g.DeniesAll) && springMethodSecurityAnnotations[g.GuardName] {
 			return true
 		}
 	}

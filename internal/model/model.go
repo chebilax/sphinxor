@@ -101,6 +101,10 @@ type Model struct {
 	// MethodSecurityFilters counts @PreFilter/@PostFilter, which are
 	// announced and deliberately reach no rule (ADR 0030 §4).
 	MethodSecurityFilters MethodSecurityFilterStatus
+	// PermitAll counts JSR-250 @PermitAll annotations, announced and not
+	// read until a permit-all declaration's meaning is decided (ADR 0012
+	// Amendment 1). Nothing attaches them to an endpoint.
+	PermitAll PermitAllStatus
 	// UnrecoveredRoutes lists controllers whose routes were not all
 	// recovered (ADR 0032).
 	UnrecoveredRoutes []ControllerWithUnrecoveredRoutes
@@ -758,6 +762,13 @@ type GuardApplication struct {
 	// High confidence across RuoYi-Vue and eladmin, recreating the
 	// 675-finding defect ADR 0020 Amendment 3 exists to have fixed.
 	DeclaresPermissions bool
+	// DeniesAll marks a guard that admits no one: denyAll(), in a
+	// SecurityFilterChain rule or a @PreAuthorize (ADR 0012 Amendment 1).
+	// It declares no role list, so empty-role does not read it as a role
+	// check left empty; it is still a guard, so an endpoint behind it is
+	// protected for lint and for the became-public gate. The Cerbos export
+	// omits such an endpoint, which in Cerbos is exactly "no one".
+	DeniesAll bool
 }
 
 // RoleDeclarationKind records how a role's canonical declaration was
@@ -923,4 +934,13 @@ type Finding struct {
 	SubjectKind FindingSubjectKind
 	Message     string
 	Allowlisted bool
+}
+
+// PermitAllStatus records JSR-250 @PermitAll annotations found in the
+// project — ADR 0012 Amendment 1. Count only, for the warning; no endpoint
+// carries them, so lint, the diff and the export see those endpoints as
+// unannotated.
+type PermitAllStatus struct {
+	Count   int
+	Classes []string
 }

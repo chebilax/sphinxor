@@ -110,7 +110,12 @@ func BuildMatrix(m *model.Model, findings []model.Finding) Matrix {
 		if g.DeclaresRoles {
 			continue // surfaced under Roles below, not Guards
 		}
-		guardsByEndpoint[g.EndpointID] = appendUnique(guardsByEndpoint[g.EndpointID], g.GuardName)
+		name := g.GuardName
+		if g.DeniesAll {
+			// ADR 0012 Amendment 1: shown as what it means, at either layer.
+			name = "denyAll"
+		}
+		guardsByEndpoint[g.EndpointID] = appendUnique(guardsByEndpoint[g.EndpointID], name)
 	}
 
 	rolesByEndpoint := make(map[model.ID][]string)

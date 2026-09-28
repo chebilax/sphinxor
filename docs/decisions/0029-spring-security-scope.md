@@ -61,7 +61,10 @@ Every Spring Security mechanism, with exactly one status:
 | …written fully qualified | read | [0025](0025-qualified-annotation-names.md) §1/§3 |
 | SpEL `hasRole` / `hasAnyRole` / `hasAuthority` / `hasAnyAuthority` | read | [0011](0011-spring-second-framework.md) §1 |
 | SpEL `isAuthenticated()` | read | [0010](0010-authenticated-any-role.md), [0017](0017-declaresroles-excludes-isauthenticated.md) |
-| SpEL `permitAll()` / `denyAll()` | read (as no role list) | [0017](0017-declaresroles-excludes-isauthenticated.md), [0020](0020-unanalyzable-is-unknown-not-absent.md) Am3 §10 |
+| SpEL `permitAll()` | read (as no role list; `empty-role` still fires, an open question) | [0017](0017-declaresroles-excludes-isauthenticated.md), [0020](0020-unanalyzable-is-unknown-not-absent.md) Am3 §10 |
+| SpEL `denyAll()`, and a chain's `.denyAll()` | read (as a guard that admits no one) | [0012](0012-securityfilterchain-effective-policy.md) Am1 |
+| JSR-250 `@DenyAll` | read (as `denyAll()`, under `jsr250Enabled`) | [0012](0012-securityfilterchain-effective-policy.md) Am1 |
+| JSR-250 `@PermitAll` | detected and announced (counted project-wide; its meaning awaits its own ADR) | [0012](0012-securityfilterchain-effective-policy.md) Am1 |
 | SpEL bean call whose arguments are all literals — `@ss.hasPermi('system:user:edit')` | read (as a **permission**, not a role) | [0035](0035-permissions-in-the-model.md) §2 |
 | SpEL outside that subset — a bean call naming no readable literal, boolean combinations, `#param` comparisons | **detected and announced** (`?` in Roles and Permissions, warning names the count) | [0020](0020-unanalyzable-is-unknown-not-absent.md) Am3 §9/§11, [0035](0035-permissions-in-the-model.md) §2 |
 | `hasPermission(...)`, Spring's own permission expression | **detected and announced** (zero corpus uses; not read for that reason) | [0035](0035-permissions-in-the-model.md) §2 |

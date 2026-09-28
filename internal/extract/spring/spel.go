@@ -24,6 +24,10 @@ const (
 	// establishing "authenticated, any role" (ADR 0010) via the URL-less,
 	// method-layer path (docs/decisions/0011-spring-second-framework.md §2).
 	spelAuthenticated
+	// spelDenyAll is denyAll(): admits no one (ADR 0012 Amendment 1). It
+	// was grouped with permitAll() under spelNoRole, so empty-role read a
+	// deliberate, maximal restriction as a role check left empty.
+	spelDenyAll
 	// spelNoRole is permitAll() or denyAll(): recognized expressions that
 	// resolve to no role list, as opposed to a role list that could not
 	// be read.
@@ -96,8 +100,11 @@ func parseSpEL(expr string) spelResult {
 		return spelResult{Kind: spelAuthenticated}
 	}
 
-	if (name == "permitAll" || name == "denyAll") && argsText == "" {
+	if name == "permitAll" && argsText == "" {
 		return spelResult{Kind: spelNoRole}
+	}
+	if name == "denyAll" && argsText == "" {
+		return spelResult{Kind: spelDenyAll}
 	}
 
 	// ADR 0035 §2: a bean call. The leading @ is Spring's bean-reference

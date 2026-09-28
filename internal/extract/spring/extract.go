@@ -89,6 +89,8 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 		// Announced only — nothing downstream reads this to decide
 		// whether an endpoint is protected.
 		scanMethodSecurityFilters(f.tree.RootNode(), f.src, &b.model.MethodSecurityFilters)
+		// ADR 0012 Amendment 1: JSR-250 @PermitAll, counted and announced.
+		scanPermitAll(f.tree.RootNode(), f.src, &b.model.PermitAll)
 		// ADR 0031: a role hierarchy, detected. Its rules are read after
 		// every file is seen (ADR 0038 Stage 1, below).
 		scanRoleHierarchy(f.tree.RootNode(), f.src, f.relPath, &b.model.RoleHierarchy, &hierarchy)

@@ -29,7 +29,9 @@ func TestParseSpEL(t *testing.T) {
 		// §9's RolesUnresolved does not sweep them up and silently
 		// reverse ADR 0017's boundary.
 		{"permitAll", `permitAll()`, spelResult{Kind: spelNoRole}},
-		{"denyAll", `denyAll()`, spelResult{Kind: spelNoRole}},
+		// ADR 0012 Amendment 1: denyAll() admits no one, and is no longer
+		// grouped with permitAll() as "no role list".
+		{"denyAll", `denyAll()`, spelResult{Kind: spelDenyAll}},
 		{"permitAll with stray arg is unrecognized", `permitAll(true)`, spelResult{Kind: spelUnrecognized}},
 		{"boolean combination not matched whole", `hasRole('ADMIN') and #id == authentication.name`, spelResult{Kind: spelUnrecognized}},
 		{"or combination", `hasRole('A') || hasAuthority('B')`, spelResult{Kind: spelUnrecognized}},

@@ -4,6 +4,10 @@
 
 Accepted.
 
+**Amendment 1 (`denyAll()`): Accepted** (2026-09-28). See *Amendment 1* below. §1 named
+`.denyAll()` as a recognized terminal but decided only `permitAll()`'s meaning; the code
+gave `denyAll()` the same one, which inverts it.
+
 ## Context
 
 ADR 0011 deferred `SecurityFilterChain`/`authorizeHttpRequests` entirely, scoping the
@@ -285,3 +289,120 @@ scoped `SecurityFilterChain` beans, regex/custom request matchers.
   useful specifically as a real, licensed example of the out-of-scope case,
   worth keeping for a test that confirms it's honestly reported as unresolved
   rather than silently mishandled.
+
+## Amendment 1 — `denyAll()` admits no one (2026-09-28)
+
+### Status
+
+Accepted. The owner directed it, with its consumers to be enumerated first; the
+method-level question below is settled here and flagged for review.
+
+### Context
+
+§1 lists `.denyAll()` among the recognized terminals and then decides only `permitAll()`:
+*"`permitAll()` contributes no requirement"*. The code grouped `denyAll()` with it as
+`chainNoRequirement`, so a path the application refuses to everyone was read as a path with
+nothing to add. With `@PreAuthorize("hasRole('ADMIN')")` on the handler and
+`.requestMatchers("/admin/**").denyAll()` in the chain, `export cerbos` granted `ADMIN` a
+`DELETE` no one can call. The rule was laid out one per line, so this is not the rule-order
+defect fixed in #63. It is the error ADR 0009 calls unacceptable.
+
+At the method layer, `@PreAuthorize("denyAll()")` shared `permitAll()`'s treatment from
+ADR 0017: a role check with no role, which raises `empty-role`, a High-confidence and
+build-failing finding. ADR 0020 Amendment 3 §10 kept both there and left open whether
+`empty-role` should fire on them at all.
+
+**Occurrences:**
+- zero `denyAll()` in any analyzed chain across the 20-repository corpus, the ADR 0038
+  sample and the fixtures;
+- zero `@PreAuthorize("denyAll()")` (ADR 0020 Amendment 3 §10's count, still zero);
+- three sample applications use a URL-layer `denyAll()`, all behind URL layers already
+  unknown.
+
+The defect is latent, and would grant access the first time it met real code.
+
+### Decision
+
+**`denyAll()`, in a `SecurityFilterChain` rule or a `@PreAuthorize`, is a guard that admits
+no one.** It is recorded as a `GuardApplication` with `DeniesAll: true` and no role list
+(`DeclaresRoles: false`), named `denyAll` at the URL layer and after its annotation at the
+method layer. Every consumer, enumerated from the code rather than recalled:
+
+| Consumer | What it does with a `DeniesAll` guard |
+|---|---|
+| extraction, URL layer | a matching `denyAll()` rule records the guard. It stops evaluation as the first match, as before |
+| extraction, method layer | `@PreAuthorize("denyAll()")` records the guard; SpEL `denyAll()` is its own kind, no longer `spelNoRole` |
+| `mutating-endpoint-without-access-control` | does not fire: a guard is present, and a mutating endpoint behind `denyAll()` is maximally protected. The inert-method-security rule (ADR 0015) still applies to the method-layer form, since an annotation that is never enabled protects nothing |
+| `empty-role` | does not fire: no role list is declared. **This settles ADR 0017's open question for `denyAll()`**: it is a deliberate maximal restriction, not a role check left empty |
+| Cerbos export | omitted with its own reason, `denied-to-all`, before anything could grant. In Cerbos, no rule is exactly "no one" |
+| `sphinxor diff`, became-public (ADR 0036) | the guard counts as protection, so `denyAll()` → nothing is a loss of protection and **gates** |
+| `sphinxor diff`, structural | the guard is keyed like any other (endpoint, guard name, scope), so adding or removing it is reported |
+| route-collision check (ADR 0020 Amendment 2 §8) | guards differ when one side has it, which is correct |
+| the matrix and its JSON | the Guards column shows `denyAll`, at either layer |
+| CLI project warnings | unaffected: none reads guard content |
+
+**`permitAll()` is unchanged at both layers.**
+- At the URL layer it still contributes no requirement (§1).
+- At the method layer it still raises `empty-role`. **Whether it should stays open**, as
+  ADR 0017 and ADR 0020 Amendment 3 §10 left it. The reasoning that keeps it there, that a
+  developer's `permitAll()` may itself be the mistake, has no counterpart for `denyAll()`,
+  whose mistake could only be over-restriction.
+
+**JSR-250's `@DenyAll` and `@PermitAll` are Spring Security method security**: switched on
+by the same `jsr250Enabled` flag ADR 0015 reads, from the same package as `@RolesAllowed`,
+which is recognized. Under ADR 0029 §1 they cannot be out of scope, and leaving them
+unrecognized was a silent item under §3. (The first draft of this amendment called them
+out of scope; the owner corrected it.)
+
+- **`@DenyAll` is read as `denyAll()`**: a `DeniesAll` guard, bound by its import
+  (`jakarta.annotation.security` or `javax.annotation.security`, ADR 0022 §1) and gated by
+  `jsr250Enabled`. Under `@EnableMethodSecurity`, whose default leaves `jsr250Enabled`
+  false, it is confirmed inert and protects nothing (ADR 0015), exactly as `@RolesAllowed`
+  would be.
+- **`@PermitAll` is detected and announced, not read.** Mapped like `permitAll()`, it would
+  raise a build-failing `empty-role` on every deliberately public endpoint. The vendored
+  `ruoyi-vue-pro` fixture has one (`AppMemberUserController`'s password reset), and upstream
+  yudao marks its app-facing endpoints public this way. Dropping `empty-role` while
+  keeping it a guard would let a real protection replaced by `@PermitAll` pass the
+  became-public gate. So it is **counted project-wide and announced**, the pattern ADR 0030
+  §4 uses for `@PreFilter`/`@PostFilter`, and **attached to no endpoint**:
+  - an endpoint carrying it is analyzed as unannotated, so a mutating one gets the Low
+    finding;
+  - no `empty-role`;
+  - the export grants nothing;
+  - a guard replaced by `@PermitAll` still trips the gate, which is tested.
+
+  What a permit-all declaration means, for `@PermitAll` and `permitAll()` alike, is the
+  subject of its own ADR.
+
+**Measured:** zero `@DenyAll` and zero `@PermitAll` in the 20-repository corpus and the
+ADR 0038 sample. One `@PermitAll` in the `ruoyi-vue-pro` fixture, which now carries the
+announcement and is otherwise byte-identical.
+
+**Also pinned by this amendment:** ADR 0037 §3's recorded case, where
+`@ss.hasPermi('x')` becoming `permitAll()` fails the build through `empty-role`. That was
+documented as a constructed run and not automated;
+`TestPermissionWidenedToPermitAllGates` now pins it, so the permit-all ADR cannot remove
+it silently.
+
+### Consequences
+
+- `model.GuardApplication.DeniesAll`.
+- `internal/extract/spring`: `chainDenyAll` and `spelDenyAll`; `@DenyAll` recognized as a
+  guard, and `@PermitAll` counted by `scanPermitAll`.
+- `model.PermitAllStatus`, and the CLI warning announcing it.
+- `internal/lint`: `@DenyAll` joins `@RolesAllowed` under the `jsr250Enabled` gate.
+- `internal/cli`: the method-security caveat also counts a `DeniesAll` guard, so a project
+  whose only annotations deny everyone still hears that they may be inert.
+- `internal/export/cerbos`: `ReasonDeniedToAll`.
+- `internal/report`: the `denyAll` label.
+- `internal/lint/empty_role.go`: its comment, since no code change is needed.
+- Tests, one per consumer that changes:
+  - URL layer: guard recorded, no mutating finding, omitted as `denied-to-all`;
+  - method layer: no `empty-role`, no mutating finding, `denied-to-all`;
+  - `permitAll()` unchanged at both layers;
+  - the became-public gate fires on `denyAll()` → nothing. That test fails against the
+    previous code.
+- Measured: all 42 targets byte-identical in lint JSON, policies, report and exit code.
+  stderr is identical except the `ruoyi-vue-pro` fixture's new `@PermitAll`
+  announcement.

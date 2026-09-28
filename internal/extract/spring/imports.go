@@ -32,6 +32,11 @@ var acceptedAnnotationPackages = map[string][]string{
 	"PreAuthorize": {"org.springframework.security.access.prepost"},
 	"Secured":      {"org.springframework.security.access.annotation"},
 	"RolesAllowed": {"javax.annotation.security", "jakarta.annotation.security"},
+	// ADR 0012 Amendment 1: the same JSR-250 package as @RolesAllowed.
+	// @PermitAll is listed for identity only — it is counted and announced,
+	// never read as a guard (permit_all.go).
+	"DenyAll":   {"javax.annotation.security", "jakarta.annotation.security"},
+	"PermitAll": {"javax.annotation.security", "jakarta.annotation.security"},
 	// ADR 0030: same package as @PreAuthorize. Recognized so it can be
 	// recorded as authorization-present, never read as a guard.
 	"PostAuthorize": {"org.springframework.security.access.prepost"},

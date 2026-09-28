@@ -56,9 +56,12 @@ import (
 // @el.check() — which means "requires admin", not "requires nothing" — is
 // excluded by the existing term rather than by the new one.
 //
-// permitAll()/denyAll() deliberately still fire here, per ADR 0017's
-// boundary and Amendment 3 §10: they are read, not unread, and whether
-// they should be flagged is a separate open question.
+// permitAll() deliberately still fires here, per ADR 0017's boundary and
+// ADR 0020 Amendment 3 §10: it is read, not unread, and whether it should
+// be flagged is still an open question. denyAll() no longer does: ADR 0012
+// Amendment 1 records it as a guard that admits no one, with no role list
+// declared, because it is a deliberate maximal restriction, not a role
+// check left empty.
 //
 // Composite-resolved applications (GuardApplication.FromComposite,
 // docs/decisions/0006) are deliberately excluded: a composite decorator

@@ -17,6 +17,11 @@ var methodSecurityAnnotations = map[string]bool{
 	"Secured":       true,
 	"RolesAllowed":  true,
 	"PostAuthorize": true,
+	// JSR-250's @DenyAll: Spring Security method security, switched on by
+	// the same jsr250Enabled flag as @RolesAllowed, from the same package
+	// (ADR 0012 Amendment 1). @PermitAll is NOT here: it is counted and
+	// announced project-wide (permit_all.go) until its meaning is decided.
+	"DenyAll": true,
 }
 
 // uninterpretedSpringAuth are Spring Security's own method-security
@@ -43,7 +48,7 @@ var uninterpretedSpringAuth = map[string]bool{
 // endpoint in the controller, discovered only once methods are walked
 // (mirrors internal/extract/nestjs/controllers.go's pendingGuard).
 type pendingGuard struct {
-	guardName string // "PreAuthorize" | "Secured" | "RolesAllowed"
+	guardName string // "PreAuthorize" | "Secured" | "RolesAllowed" | "DenyAll"
 	roles     []roleArg
 	// permissions are the named requirements that are not roles, and via
 	// is the bean call that named them — ADR 0035 §1/§2. Never populated
@@ -65,6 +70,8 @@ type pendingGuard struct {
 	// Amendment 3 §9. It is never true together with a non-empty roles
 	// slice: either the list was read, or it was not.
 	rolesUnresolved bool
+	// deniesAll: @PreAuthorize("denyAll()") (ADR 0012 Amendment 1).
+	deniesAll bool
 	// declaresPermissions mirrors declaresRoles for the permission term
 	// (ADR 0035 §4). It is what keeps empty-role off a guard that read
 	// its requirement and found a permission rather than a role.
@@ -206,6 +213,10 @@ func springGuard(ann annotationCall, src []byte, file string, line int, roleByNa
 				file:                file,
 				line:                line,
 			}}
+		case spelDenyAll:
+			// ADR 0012 Amendment 1: admits no one. No role list is
+			// declared, so empty-role stays off it; it is still a guard.
+			return []pendingGuard{{guardName: ann.Name, deniesAll: true, file: file, line: line}}
 		case spelNoRole:
 			// permitAll()/denyAll(): read, and resolving to no role
 			// list. ADR 0017 decided these keep DeclaresRoles: true and
@@ -216,6 +227,12 @@ func springGuard(ann annotationCall, src []byte, file string, line int, roleByNa
 		default: // spelUnrecognized: a bean call, a boolean combination, ...
 			return []pendingGuard{{guardName: ann.Name, declaresRoles: true, rolesUnresolved: true, file: file, line: line}}
 		}
+	}
+
+	// ADR 0012 Amendment 1: JSR-250's @DenyAll is what denyAll() is, under
+	// the jsr250Enabled gate (internal/lint's isConfirmedInert).
+	if ann.Name == "DenyAll" {
+		return []pendingGuard{{guardName: ann.Name, deniesAll: true, file: file, line: line}}
 	}
 
 	// Secured / RolesAllowed: plain string-array arguments, no SpEL.
@@ -282,6 +299,7 @@ func (b *builder) applyGuards(endpointID model.ID, guards []pendingGuard, scope 
 			DeclaresRoles:       g.declaresRoles,
 			RolesUnresolved:     g.rolesUnresolved,
 			DeclaresPermissions: g.declaresPermissions,
+			DeniesAll:           g.deniesAll,
 		})
 		for _, p := range g.permissions {
 			b.model.PermissionReferences = append(b.model.PermissionReferences, model.PermissionReference{

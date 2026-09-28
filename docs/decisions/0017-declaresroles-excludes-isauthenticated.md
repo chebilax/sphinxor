@@ -4,6 +4,10 @@
 
 Accepted.
 
+**For `denyAll()`, the open question is settled by [ADR 0012](0012-securityfilterchain-effective-policy.md)
+Amendment 1:** it is a guard that admits no one and no longer raises `empty-role`.
+`permitAll()` is unchanged, and whether `empty-role` should fire on it remains open.
+
 ## Context
 
 ADR 0011 §1 states: "For Spring, every recognized guard (`PreAuthorize`/

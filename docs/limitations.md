@@ -215,6 +215,17 @@ report says so under *Caveats*.
 The version facts were read at the Spring Security releases ADR 0038 §13 lists, and are
 re-checked on every major version.
 
+## What a permit-all declaration means is not decided
+
+`permitAll()` in a `@PreAuthorize` raises `empty-role`, a build-failing finding, as ADR 0017
+left it. JSR-250 `@PermitAll` is counted and announced but attached to no endpoint. Both
+are explicit statements that an endpoint is public. Neither is read as one: not as an empty
+role check, not as protection, and not as a "public" marker the lint and the diff could act
+on. The cost today is a blocking `empty-role` on a method-level `permitAll()`. The
+`@PermitAll` endpoints in yudao-lineage projects get the Low mutating finding, which a
+`sphinxor-allow` marker exempts. Both forms are the subject of a forthcoming ADR, measured
+against the corpus.
+
 ## Spring route shapes outside ADR 0011 §1's scope — and the recognized-endpoint count is not the API surface
 
 Found by the same Spring survey as the entry above, and recorded separately because it is a different gap: this is about **which endpoints exist at all**, not about what authorizes them. Fixing it would surface more endpoints without recording one additional role.
