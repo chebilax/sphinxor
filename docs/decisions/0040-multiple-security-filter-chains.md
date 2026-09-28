@@ -2,11 +2,15 @@
 
 ## Status
 
-**Proposed — a measurement ADR.** It records how the six corpus repositories with several
-`SecurityFilterChain` beans actually use them, the Spring facts that decide which chain
-serves a request, and a proposed scope. It amends nothing yet. If accepted, it narrows
-[ADR 0020](0020-unanalyzable-is-unknown-not-absent.md) §2, which records any project with
-more than one chain as having an unknown URL layer.
+**Accepted with option D** (2026-09-28). §3's defect is fixed, and the multi-chain
+warning names what blocks each project (§7). Selection (§4) is recorded and **deferred**,
+and is implemented when a project meets its conditions. **Option B is rejected** and
+**option C is deferred** (§6).
+
+It records how the six corpus repositories with several `SecurityFilterChain` beans
+actually use them, and the Spring facts that decide which chain serves a request.
+[ADR 0020](0020-unanalyzable-is-unknown-not-absent.md) §2 is unchanged: a project with
+more than one chain still has an unknown URL layer. It now also says why.
 
 It follows [ADR 0039](0039-route-path-constants.md), because a chain is selected by URL
 path. The measurement below uses ADR 0039's readable paths.
@@ -54,7 +58,9 @@ Per repository:
   `apollo-configservice` and `apollo-portal`. Four portal chains are mutually exclusive:
   `@Profile("auth")`, `@Profile("ldap")`, `@Profile("oidc")`, and
   `@ConditionalOnMissingProfile({"auth", "ldap", "oidc"})`. Three chains share
-  `@Order(99)`.
+  `@Order(99)`. The configservice chain sets its rules inside
+  `if (eurekaSecurityEnabled)`. The first draft missed this branch; the §7 detector found
+  it.
 - **fineract.** Five chains in one application, selected by properties:
   `fineract.security.basicauth.enabled`, `fineract.security.oauth2.enabled` (three
   chains, `@Order(1)` to `@Order(3)`) and `...oidc-federation...`. One matcher is
@@ -167,7 +173,7 @@ When any condition fails, the URL layer stays unknown as today, and the warning 
 
 | Repo | Blocked by |
 |---|---|
-| apollo | conditional chains (1); three applications in one tree |
+| apollo | conditional chains (1); rules in a code branch (3); three applications in one tree |
 | fineract | conditional chains (1); a runtime and a builder matcher (2) |
 | nacos | conditional chains (1) |
 | spring-cloud-dataflow | conditional chains (1); two servers in one tree |
@@ -189,17 +195,21 @@ SecurityFilterChain beans, 4 of them conditional on `@Profile`/`@Conditional`* r
 - **A. Accept §4 as scoped.** Fix §3 first, and improve the warning everywhere. Sound,
   but on this corpus the selection logic would run on nothing: it would be machinery
   without a measured beneficiary, the situation ADR 0038 §12 staged around.
-- **B. A. plus deployment-mode exclusion.** Treat a chain whose condition can be shown
-  *false in the default configuration* as absent, and say so. thingsboard's
-  `service.type` defaults to `null` in the expression itself. Rejected as the default:
-  "default configuration" is a deployment fact, the ADR 0020 Amendment 2 finding H
-  reasoning. It is listed because it is the one extension that would reach thingsboard,
-  and only if the owner accepts stating the assumption in the output, as ADR 0038 §12
-  does for versions.
-- **C. Partition by application.** Assign chains and endpoints to the Maven/Gradle module
-  that deploys them. This would separate spring-cloud-dataflow's two servers and apollo's
-  three applications. It means reading build files, which ADR 0038 rejected for the same
-  cost. It is the natural follow-up if multi-application trees keep appearing.
+- **B. Deployment-mode exclusion — rejected.** This would treat a chain whose condition is
+  false in the default configuration as absent; thingsboard's `service.type` defaults to
+  `null` in the expression itself. Assuming production runs the default profile is a
+  guess. A wrong guess **drops a restricting chain**, and the export then grants what the
+  running application denies: an over-grant, the failure ADR 0009 exists to prevent.
+  Stating the assumption in the output, as ADR 0038 §12 does for versions, does not make
+  it acceptable. Unlike ADR 0038's assumption, this one fails toward granting. Recorded as
+  rejected, not deferred, so it is not re-proposed as a cheap way to reach thingsboard.
+- **C. Partition by application — deferred.** This would assign chains and endpoints to
+  the Maven/Gradle module that deploys them, separating spring-cloud-dataflow's two
+  servers and apollo's three applications. It rests on code structure rather than a
+  runtime assumption, which is why it is deferred rather than rejected. But conditions
+  (§4, 1) still block both repositories it would reach, so on this corpus it would
+  recover nothing on its own. It also means reading build files, which ADR 0038 rejected
+  for the same cost.
 - **D. Stop at §3 and the better warning; defer §4.** Fix the dropped-rule defect, and
   make the warning name the blocker (*4 of 5 chains are conditional on `@Profile` /
   `@Conditional`*, *the rules are configured inside a code branch*). Keep §4's design
@@ -210,7 +220,7 @@ SecurityFilterChain beans, 4 of them conditional on `@Profile`/`@Conditional`* r
   it does not: an instance field and a method call are outside ADR 0039 §2. Listed so it
   is not rediscovered.
 
-**Recommendation: D**, staged the way ADR 0038 was:
+**Chosen: D**, staged the way ADR 0038 was:
 - §3 is a real defect, cheap to fix, and a prerequisite for any multi-chain reading.
 - The better warning reaches all six repositories and all 1,420 endpoints today.
 - §4 is recorded, so it does not have to be re-derived.
@@ -218,6 +228,37 @@ SecurityFilterChain beans, 4 of them conditional on `@Profile`/`@Conditional`* r
 It becomes worth implementing when a project meets its four conditions, or sooner if the
 owner accepts B (thingsboard) or C (spring-cloud-dataflow, apollo). Those are each a
 decision about stating an assumption in the output, not about parsing.
+
+### §7 Implemented
+
+- **§3's defect.**
+  - Every role argument of a chain rule is evaluated through ADR 0039's index.
+  - A rule with any argument that cannot be read is kept as **unrecognized** and stops
+    evaluation (ADR 0018). Before, it was dropped.
+  - Written as failing tests first. They reproduced two further consequences the Context
+    had not named:
+    - a **partly literal role list** (`hasAnyRole("USER", OPERATOR)`) was read as
+      `[USER]`, a partial list presented as whole;
+    - when the rule after a dropped one is `.anyRequest().authenticated()`, the endpoint
+      was recorded as open to **any authenticated user**. That direction over-grants in
+      the export, which is worse than the unguarded case §3 reproduced.
+  - All three cases now come out right.
+- **The warning names the blockers.** For several chains the URL-layer reason keeps its
+  wording and adds, with counts:
+  - chains conditional on `@Profile`/`@Conditional`;
+  - chains configuring their rules inside a code branch;
+  - chains with a `securityMatcher` that is not string literals.
+- **Measured** against `main` at `47cf5e6`, on all 20 corpus repositories, every fixture
+  and the ADR 0038 sample. Lint JSON is **byte-identical everywhere** and exit codes are
+  unchanged. Only the six multi-chain repositories change, and in their stderr, export
+  report and policy-file comments the only changed text is the reason. For example:
+
+  > 6 SecurityFilterChain beans were found … (4 of them conditional on
+  > @Profile/@Conditional, so which exist depends on configuration; 1 configuring their
+  > rules inside a code branch)
+
+  §3's fix changes nothing in the corpus, as §3 predicted: no analyzed single chain has
+  a non-literal role.
 
 ## Alternatives considered
 
@@ -231,7 +272,7 @@ decision about stating an assumption in the output, not about parsing.
   the reason B is: profiles and properties are deployment facts.
 - **Trust class-level `@Order`.** Rejected by §2: Spring does not use it for these beans.
 
-## Consequences (if accepted as D)
+## Consequences
 
 - `internal/extract/spring/securityfilterchain.go`:
   - §3's fix: a role argument is read through ADR 0039's index, and a rule whose role

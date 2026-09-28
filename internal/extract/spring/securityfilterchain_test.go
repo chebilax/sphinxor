@@ -262,7 +262,7 @@ func TestAppliesSecurityFilterChain_UnrecognizedMatchStopsEvaluation(t *testing.
 	if err != nil {
 		t.Fatalf("parseProject: %v", err)
 	}
-	rules, _, ok := findSecurityFilterChainRules(files)
+	rules, _, ok := findSecurityFilterChainRules(files, buildConstIndex(files))
 	if !ok {
 		t.Fatal("expected exactly one SecurityFilterChain bean in blog-api")
 	}
