@@ -32,6 +32,10 @@ type Rule struct {
 	Action    string
 	Roles     []string // deduped, sorted
 	Endpoints []model.Endpoint
+	// Condition is set only for a rule built from a declared permission
+	// (ADR 0041 §4). Omitted from JSON when nil, so every export without
+	// declarations serializes exactly as before.
+	Condition *Condition `json:",omitempty"`
 }
 
 // OmissionReason is why an endpoint did not become part of any Rule.
@@ -157,6 +161,16 @@ const (
 	// RuoYi-Vue's omissions carried that wrong sentence. Exporting
 	// permissions at all is step 2, and this reason is where it attaches.
 	ReasonPermissionNotExportable OmissionReason = "permission-not-exportable"
+
+	// ReasonCalleeNotDeclared: permissions are being exported (some callee
+	// was declared), but not this endpoint's callee. Sphinxor does not
+	// decide what an undeclared bean call means (ADR 0041 §2).
+	ReasonCalleeNotDeclared OmissionReason = "callee-not-declared"
+
+	// ReasonCombinationNotDeclared: the call names several literals and
+	// its declaration does not say whether they combine as any-of or
+	// all-of — both readings exist in real beans (ADR 0041 §2).
+	ReasonCombinationNotDeclared OmissionReason = "combination-not-declared"
 )
 
 // Omission records one endpoint that could not become part of any Rule,
@@ -195,6 +209,11 @@ type Result struct {
 	// Omitted from JSON when empty, so a project with none serializes
 	// exactly as before the field existed.
 	Caveats []string `json:",omitempty"`
+	// Declarations and Contract are set only when permissions were
+	// exported (ADR 0041 §2, §4): the owner's statements verbatim, and
+	// what the calling service must supply for the rules to mean them.
+	Declarations []string `json:",omitempty"`
+	Contract     string   `json:",omitempty"`
 }
 
 // roleGrant is one role name resolved for one endpoint, and whether it
@@ -240,8 +259,9 @@ type conflictingLayers struct {
 // endpoint's rule could silently also govern an unconfirmed sibling that
 // happens to share the same Cerbos action (see ReasonActionCollision).
 type endpointEntry struct {
-	endpoint model.Endpoint
-	grants   []roleGrant
+	endpoint  model.Endpoint
+	grants    []roleGrant
+	condition *Condition // a declared permission's test (ADR 0041), nil otherwise
 }
 
 // Translate builds a Result from m. It never consults m.Findings for
@@ -250,6 +270,13 @@ type endpointEntry struct {
 // (ADR 0009 §3) is built entirely from GuardApplication/RoleReference,
 // the same evidence a human reviewer could check by hand.
 func Translate(m *model.Model) Result {
+	return TranslateWith(m, Declarations{})
+}
+
+// TranslateWith is Translate with the owner's declarations of what bean
+// calls mean (ADR 0041). With the zero Declarations it is Translate
+// exactly: no permission is exported and no omission changes (§1).
+func TranslateWith(m *model.Model, d Declarations) Result {
 	controllerByID := make(map[model.ID]model.Controller, len(m.Controllers))
 	for _, c := range m.Controllers {
 		controllerByID[c.ID] = c
@@ -339,6 +366,16 @@ func Translate(m *model.Model) Result {
 		})
 	}
 
+	// ADR 0041: a declared bean call becomes a method-layer grant — the
+	// literal as a role, or any role (*) with the permission as a
+	// condition — and goes through the same reduction as every other
+	// grant. Nothing here runs without a declaration.
+	conditionByEndpoint := map[model.ID]*Condition{}
+	declOmission := map[model.ID]Omission{}
+	if d.Active() {
+		permissionGrants(m, d, guardAppByID, layerGrants, conditionByEndpoint, declOmission)
+	}
+
 	// Reduce each endpoint's per-layer grants to one final grant list.
 	// When only one layer has role-bearing evidence, that layer's grants
 	// are already the answer — today's behavior, unchanged. When both
@@ -371,6 +408,13 @@ func Translate(m *model.Model) Result {
 			}
 			rolesByEndpoint[endpointID] = inter
 		}
+	}
+
+	// An endpoint ADR 0041 decided not to export keeps no partial grant:
+	// its roles alone would drop the permission it also requires.
+	for ep := range declOmission {
+		delete(rolesByEndpoint, ep)
+		delete(conditionByEndpoint, ep)
 	}
 
 	type groupKey = [2]string // [resource, action]
@@ -442,7 +486,7 @@ func Translate(m *model.Model) Result {
 		if _, ok := groups[key]; !ok {
 			order = append(order, key)
 		}
-		groups[key] = append(groups[key], endpointEntry{endpoint: e, grants: rolesByEndpoint[e.ID]})
+		groups[key] = append(groups[key], endpointEntry{endpoint: e, grants: rolesByEndpoint[e.ID], condition: conditionByEndpoint[e.ID]})
 	}
 
 	var rules []Rule
@@ -455,7 +499,7 @@ func Translate(m *model.Model) Result {
 
 		agree := true
 		for _, en := range entries[1:] {
-			if !sameGrantSet(entries[0].grants, en.grants) {
+			if !sameGrantSet(entries[0].grants, en.grants) || entries[0].condition.key() != en.condition.key() {
 				agree = false
 				break
 			}
@@ -481,7 +525,11 @@ func Translate(m *model.Model) Result {
 					continue
 				}
 				reason, detail := ReasonNoGuard, "no access control detected for this endpoint"
-				if permissionEndpoints[en.endpoint.ID] {
+				if o, ok := declOmission[en.endpoint.ID]; ok {
+					// ADR 0041: permissions are being exported, and this
+					// endpoint's call is undeclared or its combination is.
+					reason, detail = o.Reason, o.Detail
+				} else if permissionEndpoints[en.endpoint.ID] {
 					// ADR 0035 §7. Read, understood, and not a role.
 					reason, detail = ReasonPermissionNotExportable,
 						"requires a permission rather than a role ("+permissionDetail(m, en.endpoint.ID)+"). "+
@@ -527,7 +575,7 @@ func Translate(m *model.Model) Result {
 			}
 			sortEndpoints(endpoints)
 
-			rules = append(rules, Rule{Resource: resource, Action: action, Roles: roleNames, Endpoints: endpoints})
+			rules = append(rules, Rule{Resource: resource, Action: action, Roles: roleNames, Endpoints: endpoints, Condition: entries[0].condition})
 
 		default:
 			// Endpoints sharing this action disagree — some have roles
@@ -562,7 +610,12 @@ func Translate(m *model.Model) Result {
 		return unverified[i].Role < unverified[j].Role
 	})
 
-	return Result{Rules: rules, Omissions: omissions, UnverifiedRoles: unverified, Caveats: caveats(m)}
+	result := Result{Rules: rules, Omissions: omissions, UnverifiedRoles: unverified, Caveats: caveats(m)}
+	if d.Active() {
+		result.Declarations = d.summary()
+		result.Contract = integrationContract
+	}
+	return result
 }
 
 // collisionDetail explains one action-collision omission in plain terms,

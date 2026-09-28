@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Permissions can be exported to Cerbos, with semantics you declare.** A RuoYi-style
+  `@PreAuthorize("@ss.hasPermi('system:user:edit')")` becomes a rule for any role with
+  the condition `"system:user:edit" in P.attr.permissions`. It happens only when
+  `--permission-callee '@ss.hasPermi'` says so, and only when the bean's superuser escape
+  is declared (`--superuser-permission`, `--superuser-role`) or waived
+  (`--no-superuser-escape`). Without that, the command refuses, because every such bean
+  in the corpus admits a superuser a literal-only policy would deny. Callees are never
+  interpreted by name: RuoYi's own bean also has `lacksPermi`, a negation.
+  `@ss.hasRole('admin')` becomes a role only with `--role-callee`. On RuoYi-Vue,
+  declared, **34 rules for 51 endpoints**, the first rules the export has produced for
+  that shape. The report lists the declarations verbatim, and the contract the calling
+  service must meet. See [ADR 0041](docs/decisions/0041-permission-export.md).
+
+### Effect on CI
+
+- **None without the new flags.** An export given none of them is byte-identical to
+  before and is never refused, across all 20 corpus repositories and every fixture.
+
 ## [0.9.0] - 2026-09-28
 
 Spring extraction reads more of what the source says, and stops saying two things it

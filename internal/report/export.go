@@ -40,6 +40,18 @@ func writeExportMarkdown(w io.Writer, result cerbos.Result) error {
 	fmt.Fprintf(&b, "%d rule(s) exported, %d omission(s), %d unverified role reference(s).\n\n",
 		len(result.Rules), len(result.Omissions), len(result.UnverifiedRoles))
 
+	if len(result.Declarations) > 0 {
+		// ADR 0041 §2: the semantics these rules rest on are the owner's
+		// statements, not Sphinxor's reading — printed verbatim.
+		b.WriteString("## Declared semantics\n\n")
+		b.WriteString("Permission and role rules below rest on these statements, made on the command line. ")
+		b.WriteString("Sphinxor did not infer them.\n\n")
+		for _, d := range result.Declarations {
+			b.WriteString("- " + d + "\n")
+		}
+		b.WriteString("\n" + result.Contract + "\n\n")
+	}
+
 	if len(result.Caveats) > 0 {
 		b.WriteString("## Caveats\n\n")
 		for _, c := range result.Caveats {
