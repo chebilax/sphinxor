@@ -94,9 +94,11 @@ That makes **18 drawn, 2 per cell, and 2 spares** held for replacements, for a c
   "absent". With 6 cells covering Boot 2.x and the lower two star bands, the extension
   weights exactly where the sample found the shapes, without searching for them.
 - **Why not more.** A measurement run already means cloning and analyzing every
-  repository. At about 1 minute per repository for a before-and-after comparison, 40
-  keeps it a routine step of every decision, which is ADR 0005 Amendment 1's concern
-  about cost, applied to the corpus rather than the fixtures.
+  repository. Measured on 2026-09-29, a full before-and-after comparison of the 20
+  repositories (lint JSON and Cerbos export, with two binaries) takes **43 seconds** of
+  wall time on a 10-core machine, with already-cloned trees. 40 keeps that at around a
+  minute and a half, a routine step of every decision. That is ADR 0005 Amendment 1's
+  concern about cost, applied to the corpus rather than the fixtures.
 
 ### §4 Pinned in one place, cloned on demand
 
