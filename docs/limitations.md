@@ -236,6 +236,19 @@ What is still missing: every route, guard and role written in Kotlin. A chain be
 expression body and no declared return type is not recognized as security configuration,
 though its file is still counted.
 
+## The pre-6.0 `authorizeRequests()` URL layer is announced, not read
+
+A `WebSecurityConfigurerAdapter`, or a chain built with the fluent pre-6.0
+`authorizeRequests().antMatchers(...)` DSL, makes the URL layer unknown (ADR 0027 §1).
+[ADR 0045](decisions/0045-legacy-url-layer.md) measured what reading it would recover:
+- **nothing in the corpus.** nakadi's rules are branched and `.access(...)`, and
+  eladmin's matchers are runtime values;
+- **one application in the sample:** autoplan, 48 role rows.
+
+The reader is designed there and deferred. One of its conditions is that the whole rule
+chain must be one fluent expression: a prototype without it treated molgenis's registry
+variable as an empty chain, and over-granted.
+
 ## Spring route shapes outside ADR 0011 §1's scope — and the recognized-endpoint count is not the API surface
 
 Found by the same Spring survey as the entry above, and recorded separately because it is a different gap: this is about **which endpoints exist at all**, not about what authorizes them. Fixing it would surface more endpoints without recording one additional role.
