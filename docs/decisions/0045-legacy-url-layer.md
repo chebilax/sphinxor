@@ -2,7 +2,10 @@
 
 ## Status
 
-**Proposed — a measurement ADR.** It measures what reading the legacy URL layer would
+**Accepted: deferred** (2026-09-29). §1's design is recorded and not implemented. It waits
+for a corpus project that needs it, the bar ADR 0038 Stage 2 and ADR 0040 are held to.
+§1 condition 2, that the whole rule chain is one fluent expression, stands as a rule for
+any future reader of chained configuration. It measures what reading the legacy URL layer would
 recover:
 - `WebSecurityConfigurerAdapter.configure(HttpSecurity)`;
 - the fluent pre-6.0 `authorizeRequests().antMatchers(...)` DSL.
