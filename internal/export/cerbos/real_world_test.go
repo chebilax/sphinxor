@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chebilax/sphinxor/internal/cerbostest"
 	"github.com/chebilax/sphinxor/internal/extract/nestjs"
 )
 
@@ -18,11 +19,7 @@ import (
 // merge.
 func cerbosBinary(t *testing.T) string {
 	t.Helper()
-	path, err := exec.LookPath("cerbos")
-	if err != nil {
-		t.Skip("cerbos CLI not found on PATH — skipping real-engine validation (see ADR 0009 §5)")
-	}
-	return path
+	return cerbostest.Binary(t)
 }
 
 // compileWithCerbos runs the real `cerbos compile` against dir and fails
