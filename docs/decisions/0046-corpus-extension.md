@@ -2,7 +2,8 @@
 
 ## Status
 
-**Proposed.** It defines how the Spring measurement corpus grows. It amends no code
+**Accepted** (2026-09-29), with the owner's correction to §1's exclusions and two
+additions (§2's pool record, §6). It defines how the Spring measurement corpus grows. It amends no code
 decision, and changes no figure already published: every existing figure was measured on
 the 20-repository corpus and stays attributed to it.
 
@@ -65,8 +66,18 @@ otherwise: a sample built from the thing being counted contains it, every time.
 - forks and mirrors;
 - Kotlin-only projects: their absence of analysis is announced (ADR 0042), and they
   measure nothing;
-- repositories whose pinned commit yields zero recognized endpoints. Each is replaced
-  from the same stratum, and the replacement is recorded.
+- **projects with no web dependency**, meaning neither `spring-boot-starter-web` nor
+  `spring-boot-starter-webflux` (nor `spring-webmvc`/`spring-webflux`) in any build
+  file: libraries, batch jobs, CLI tools. They have no endpoint to authorize.
+
+**The exclusion is decided on the project, never on the tool's output.** A web project
+where the extractor finds zero endpoints is **kept**, and that is a finding. Excluding it
+would remove exactly the projects Sphinxor cannot read (`RouterFunction` routing, JAX-RS,
+routing shapes not yet known) and bring the bias back through the back door.
+
+*(Correction: the first draft excluded "repositories whose pinned commit yields zero
+recognized endpoints". That is circular, and the owner caught it. It is recorded here
+rather than quietly corrected.)*
 
 ### §2 Stratified, and drawn without a human choosing
 
@@ -83,6 +94,18 @@ Within each Boot × stars cell (9 cells), candidates are ordered by the SHA-256 
 `owner/name` and taken from the top. The draw is reproducible from the candidate list, and
 nobody chooses a repository because of what it contains. The candidate list, and the
 position each selected repository took, are recorded.
+
+**The pool is recorded per cell:**
+- how many candidates the search returned;
+- how many survived the exclusions;
+- **whether GitHub's search result cap was hit**. Code search returns at most 1,000
+  results per query.
+
+Where the cap was hit, the hash draw ran inside a pool GitHub's own ranking had already
+filtered, and `docs/corpus.md` says so for that cell. The draw is then unbiased only
+relative to that ranked pool. Splitting a capped query (by star range or push date) until
+each part is under the cap is attempted first. Whatever remains capped is stated, not
+hidden.
 
 ### §3 Twenty more repositories: two per cell, plus two spares
 
@@ -130,6 +153,18 @@ After the draw, each is counted with the extractor, per `docs/testing.md`, and r
 per cell. **A hit does not by itself reopen a deferred decision**: it is evidence for the
 owner to weigh, the way ADR 0038's trigger was always meant to work.
 
+### §6 What the extended corpus can and cannot show
+
+**Two projects per cell support occurrence, not frequency.** The extended corpus can show
+that a shape exists in real applications of a given kind. It cannot show what share of
+projects have it. **No figure computed on it is a rate**, and none is to be published as
+one: "3 of the 40 use a legacy adapter" describes the corpus, not the Spring ecosystem.
+The strata and their fixed quotas make that explicit. A cell's two projects stand for
+nothing but themselves.
+
+What it can support is exactly what the deferred items need. Each trigger in §5 asks
+whether a qualifying project exists, not how many do.
+
 ## Alternatives considered
 
 - **Search for each shape and add what is found.** Rejected: it measures presence, not
@@ -155,5 +190,6 @@ owner to weigh, the way ADR 0038's trigger was always meant to work.
 - Existing figures stay attributed to the 20-repository corpus. New figures state which
   corpus they come from ("corpus-20" or "corpus-40") until corpus-40 has been the
   baseline for a release.
-- `docs/testing.md` gains one line: corpus membership changes only by an ADR, and
-  selection never by searching for a measured shape.
+- `docs/testing.md` gains one line: corpus membership changes only by an ADR; selection
+  never searches for a measured shape; exclusions are decided on the project, never on
+  the tool's output; and a figure from the corpus is an occurrence, never a rate.

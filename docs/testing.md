@@ -16,6 +16,8 @@ Sphinxor is therefore validated empirically, against real, representative open s
 
 - **Published figures come from the extractor, never from grep or a regular expression.** A count that appears in an ADR, a PR, `docs/limitations.md` or a release note is produced by running Sphinxor's own extraction (or a measurement built on its parser and helpers) over the pinned inputs. Text search sees mentions as well as declarations and misses shapes it was not written for. Every count made another way on 2026-09-28 was wrong: yudao's `@PermitAll` usage was first given as 109 uses on 97 methods, 38 of them mutating, and the extractor found 106 endpoints, 53 of them mutating, because three grep hits were comments and a regular expression skipped annotations with nested parentheses. Grep remains fine for *finding where to look*; it is not a source for a number anyone will read.
 
+- **The measurement corpus changes only by an ADR** ([ADR 0046](decisions/0046-corpus-extension.md)). Candidates are found by scope (Spring Security as a dependency), never by searching for a shape under measurement. A project is excluded for what it is (no web dependency, a tutorial, a fork), never for what the tool makes of it: a web project where Sphinxor finds no endpoints stays in, as a finding. A figure from the corpus is an occurrence, "this shape exists in real applications", never a rate.
+
 ## What's out of scope for now
 
 Formal verification, fuzzing of the parser, and performance benchmarking at scale are not part of the v0.1 testing effort. They may become relevant as the tool matures, but adding them now would be testing infrastructure ahead of the product it's meant to validate.
