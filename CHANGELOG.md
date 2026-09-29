@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-29
+
+Two changes to how Sphinxor reads access, one in lint and one in the export:
+- **A method-level permit-all** (`@PreAuthorize("permitAll()")`, `@PermitAll`) is now read
+  as what it says, a public declaration: not protection, and not an empty role check.
+- **The Cerbos export no longer drops endpoints that share a controller and verb.** It
+  splits them by route. This adds a calling contract for the split actions, stated in
+  each affected policy file.
+
+Read *Effect on CI* before upgrading: `sphinxor lint` can newly pass, and a deployed
+policy built from an earlier export gains rules its enforcement point may need to pass a
+route to.
+
 ### Added
 
 - **Colliding export actions are split by route instead of omitted.** Rules are keyed by
@@ -27,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The README no longer presents NestJS as held to Spring Security's standard.** Only
+  Spring Security has ADR 0029's mechanism checklist and its "nothing silent" guarantee.
+  `docs/limitations.md` now says NestJS has neither, and that this is a deliberate
+  deferral.
 - **A method-level permit-all is read as a public declaration.** `@PreAuthorize("permitAll()")`
   and JSR-250 `@PermitAll` are now neither protection nor an empty role check:
   - `permitAll()` no longer raises the blocking `empty-role`;
@@ -41,6 +58,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged, and 4 more route-collision warnings appear, where a public app endpoint's
   admin twin carries nothing. A chain's `.permitAll()` is unchanged. See
   [ADR 0043](docs/decisions/0043-permit-all-is-a-public-declaration.md).
+
+### Effect on CI
+
+Measured against the previous binary for each change in this release: **exit codes are
+unchanged on all 20 corpus repositories, every fixture, the ADR 0038 sample and upstream
+yudao.** On other code:
+
+- **`sphinxor lint` can newly pass.** A method-level `@PreAuthorize("permitAll()")` no
+  longer raises `empty-role`, a blocking finding. A mutating endpoint behind it keeps the
+  Low finding.
+- **`sphinxor diff` keeps failing where it failed before, now for a clearer reason.**
+  Replacing a guard with a permit-all failed the build through the new `empty-role`. It
+  now fails as became-public. Replacing `@RolesAllowed` with `@PermitAll` already failed
+  as became-public.
+- **`sphinxor export cerbos` changes no exit code.** But its output changes wherever an
+  action used to collide. The new rules are conditioned on `R.attr.route`, so an
+  enforcement point that does not pass the route template is denied on those actions,
+  which fails closed. None of the rules an earlier export produced changes.
+
+### What is still not read
+
+- **The pre-6.0 `authorizeRequests()` URL layer**, measured and deferred
+  ([ADR 0045](docs/decisions/0045-legacy-url-layer.md)): it would recover nothing in the
+  corpus, and one application in the sample.
+- **Several `SecurityFilterChain` beans**: 6 corpus repositories, blocked by runtime
+  activation ([ADR 0040](docs/decisions/0040-multiple-security-filter-chains.md)).
+- **A role hierarchy is stated, not applied**
+  ([ADR 0038](docs/decisions/0038-role-hierarchy-read.md) Stage 2, deferred).
+- **Kotlin** is announced, not parsed; **NestJS** has no mechanism checklist.
 
 ## [0.10.0] - 2026-09-29
 
