@@ -52,6 +52,17 @@ func writeExportMarkdown(w io.Writer, result cerbos.Result) error {
 		b.WriteString("\n" + result.Contract + "\n\n")
 	}
 
+	if len(result.RoutedActions) > 0 {
+		// ADR 0044: the second calling contract, where the report is read.
+		b.WriteString("## Route-conditioned actions\n\n")
+		b.WriteString(result.RouteContract + "\n\n")
+		b.WriteString("Actions split by route:\n\n")
+		for _, a := range result.RoutedActions {
+			b.WriteString("- " + a + "\n")
+		}
+		b.WriteString("\n")
+	}
+
 	if len(result.Caveats) > 0 {
 		b.WriteString("## Caveats\n\n")
 		for _, c := range result.Caveats {

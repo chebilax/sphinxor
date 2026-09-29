@@ -9,6 +9,11 @@ permission can be exported, as a condition on a principal attribute, only throug
 semantics the owner declares. §3's posture is unchanged: nothing is inferred, and with no
 declarations the export is exactly as before.
 
+**§2 amended by [ADR 0044](0044-export-action-granularity.md):** when endpoints of one
+controller and verb need different access, the action is split by route, each part
+conditioned on `R.attr.route` equal to the route template. Actions that do not collide are
+unchanged.
+
 ## Context
 
 `vision.md` names exporting to a real authorization engine as part of v2 ("Export
