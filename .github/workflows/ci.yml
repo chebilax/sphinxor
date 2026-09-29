@@ -22,6 +22,9 @@ env:
   # computed from two independent downloads of the pinned tag.
   CERBOS_VERSION: "0.55.0"
   CERBOS_SHA256: "01cb5ae0b888393219846c1bc43d4ed1a4701a51fb8ae38523d3a378e685efca"
+  # The CLI is installed on purpose here, so a real-engine test that would
+  # skip for lack of it fails instead (internal/cerbostest).
+  SPHINXOR_REQUIRE_CERBOS: "1"
 
 jobs:
   check:
@@ -96,3 +99,16 @@ jobs:
 
       - name: make check
         run: make check
+
+      # make check runs these without -v, so a green run cannot show whether
+      # they executed. This lists each one: the helper logs a line only when
+      # the CLI was found and the test proceeded to the engine. go test's
+      # exit status fails the step on any test failure.
+      - name: Real-engine tests executed
+        run: |
+          set -euo pipefail
+          go test -count=1 -json ./internal/export/cerbos ./internal/cli > real-engine.json
+          jq -r 'select(.Action=="output" and (.Output | contains("real-engine validation with"))) | .Test' real-engine.json | sort -u > executed.txt
+          cat executed.txt
+          echo "real-engine tests executed: $(wc -l < executed.txt)"
+          test "$(wc -l < executed.txt)" -ge 5

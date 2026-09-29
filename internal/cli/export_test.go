@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/chebilax/sphinxor/internal/cerbostest"
 )
 
 // TestExportCerbos_JSONReportDoesNotCollideWithPolicyDir is a regression
@@ -44,10 +46,7 @@ func TestExportCerbos_JSONReportDoesNotCollideWithPolicyDir(t *testing.T) {
 		}
 	}
 
-	cerbosPath, err := exec.LookPath("cerbos")
-	if err != nil {
-		t.Skip("cerbos CLI not found on PATH — skipping real-engine validation")
-	}
+	cerbosPath := cerbostest.Binary(t)
 	compileOut, err := exec.Command(cerbosPath, "compile", "--skip-tests", outDir).CombinedOutput()
 	if err != nil {
 		t.Fatalf("cerbos compile %s failed:\n%s", outDir, compileOut)

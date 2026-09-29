@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chebilax/sphinxor/internal/cerbostest"
 	"github.com/chebilax/sphinxor/internal/export/cerbos"
 	"github.com/chebilax/sphinxor/internal/extract/spring"
 )
@@ -107,7 +108,6 @@ func TestExportCerbos_RefusesWithoutEscape(t *testing.T) {
 // declared superuser (RuoYi's *:*:*) is allowed. That last case is ADR
 // 0035 Amendment 1's escape, which a literal-only policy would deny.
 func TestExportCerbos_DeclaredPermissionsInTheRealEngine(t *testing.T) {
-	cerbosPath, lookErr := exec.LookPath("cerbos")
 	project := t.TempDir()
 	write := func(rel, content string) {
 		p := filepath.Join(project, rel)
@@ -154,9 +154,7 @@ public class SysUserController {
 		t.Errorf("the undeclared @ss.lacksPermi endpoint must be omitted as callee-not-declared:\n%s", policy)
 	}
 
-	if lookErr != nil {
-		t.Skip("cerbos CLI not found on PATH — skipping real-engine validation (see ADR 0009 §5)")
-	}
+	cerbosPath := cerbostest.Binary(t)
 	tests := filepath.Join(outDir, "tests")
 	if err := os.MkdirAll(tests, 0o755); err != nil {
 		t.Fatal(err)
