@@ -1,6 +1,7 @@
 package spring
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/chebilax/sphinxor/internal/lint"
@@ -123,12 +124,11 @@ public class ThingController {
 	}
 }
 
-// TestRolesUnresolved_PermitAllStillFires pins Amendment 3 §10 from the
-// rule's side. TestExtractControllers_PermitAllStillDeclaresRoles already
-// pins the extraction flag; this pins the consequence that ADR 0017
-// actually decided — that permitAll() keeps surfacing through empty-role —
-// so a later change to §9's classification cannot quietly retire it.
-func TestRolesUnresolved_PermitAllStillFires(t *testing.T) {
+// TestRolesUnresolved_PermitAllNoLongerFires: ADR 0043 settles the
+// question Amendment 3 §10 left open. permitAll() is a public declaration,
+// not a role check left empty, so empty-role does not fire; the mutating
+// finding does, at Low, naming the declaration.
+func TestRolesUnresolved_PermitAllNoLongerFires(t *testing.T) {
 	src := `
 import org.springframework.security.access.prepost.PreAuthorize;
 @RestController
@@ -142,13 +142,11 @@ public class ThingController {
 	b := newBuilder()
 	extractControllers(root, source, "ThingController.java", b, nil, nil)
 
-	if len(b.model.GuardApplications) != 1 {
-		t.Fatalf("got %d GuardApplications, want 1", len(b.model.GuardApplications))
+	if got := (lint.EmptyRole{}).Check(&b.model); len(got) != 0 {
+		t.Errorf("permitAll() must not produce empty-role (ADR 0043), got %d findings", len(got))
 	}
-	if b.model.GuardApplications[0].RolesUnresolved {
-		t.Error("permitAll(): RolesUnresolved must stay false — it is read, not unread (Amendment 3 §10)")
-	}
-	if got := (lint.EmptyRole{}).Check(&b.model); len(got) != 1 {
-		t.Errorf("permitAll() must still produce empty-role (ADR 0017's boundary), got %d findings", len(got))
+	got := (lint.MutatingEndpointWithoutAccessControl{}).Check(&b.model)
+	if len(got) != 1 || got[0].Confidence != model.ConfidenceLow || !strings.Contains(got[0].Message, "declared public by permitAll()") {
+		t.Errorf("want one Low mutating finding naming permitAll(), got %+v", got)
 	}
 }

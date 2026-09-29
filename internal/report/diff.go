@@ -137,6 +137,19 @@ func writeDiffMarkdown(w io.Writer, result diff.Result) error {
 		b.WriteString("No change.\n")
 	}
 
+	// ADR 0043: permit-alls, listed on their own. A guard replaced by one
+	// shows here and under Became Public.
+	b.WriteString("\n## Public Declarations\n\n")
+	for _, p := range result.AddedPublicDeclarations {
+		fmt.Fprintf(&b, "+ %s on %s (%s:%d)\n", p.Form, p.EndpointID, p.File, p.Line)
+	}
+	for _, p := range result.RemovedPublicDeclarations {
+		fmt.Fprintf(&b, "- %s on %s (%s:%d)\n", p.Form, p.EndpointID, p.File, p.Line)
+	}
+	if len(result.AddedPublicDeclarations) == 0 && len(result.RemovedPublicDeclarations) == 0 {
+		b.WriteString("No change.\n")
+	}
+
 	_, err := io.WriteString(w, b.String())
 	return err
 }

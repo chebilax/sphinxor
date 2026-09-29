@@ -123,11 +123,10 @@ public class ThingController {
 	}
 }
 
-// TestExtractControllers_PermitAllStillDeclaresRoles confirms ADR 0017's
-// stated boundary the other direction: permitAll() (and any unrecognized
-// SpEL) keeps DeclaresRoles: true — only isAuthenticated() moves, because
-// only it has a positive non-role representation to move to.
-func TestExtractControllers_PermitAllStillDeclaresRoles(t *testing.T) {
+// TestExtractControllers_PermitAllIsAPublicDeclaration: ADR 0043 gave
+// permitAll() the positive non-role representation ADR 0017 said it
+// lacked — a PublicDeclaration — so it is no longer a guard at all.
+func TestExtractControllers_PermitAllIsAPublicDeclaration(t *testing.T) {
 	src := `
 import org.springframework.security.access.prepost.PreAuthorize;
 @RestController
@@ -141,11 +140,11 @@ public class ThingController {
 	b := newBuilder()
 	extractControllers(root, source, "ThingController.java", b, nil, nil)
 
-	if len(b.model.GuardApplications) != 1 {
-		t.Fatalf("got %d GuardApplications, want 1", len(b.model.GuardApplications))
+	if len(b.model.GuardApplications) != 0 {
+		t.Fatalf("got %d GuardApplications, want 0 — a permit-all is not protection (ADR 0043)", len(b.model.GuardApplications))
 	}
-	if !b.model.GuardApplications[0].DeclaresRoles {
-		t.Error("permitAll(): DeclaresRoles should stay true (ADR 0011 §2 / ADR 0017) — still surfaces through empty-role")
+	if p := b.model.PublicDeclarations; len(p) != 1 || p[0].Form != "permitAll()" || p[0].AppliedAt != model.ScopeMethod {
+		t.Errorf("PublicDeclarations = %+v, want one method-level permitAll()", p)
 	}
 	if len(b.authCandidates) != 0 {
 		t.Errorf("permitAll() must not become an authCandidate, got %+v", b.authCandidates)

@@ -105,4 +105,45 @@ func TestPermissionWidenedToPermitAllGates(t *testing.T) {
 	if !r.HasRegressions() {
 		t.Fatalf("a permission widened to permitAll() must fail the build (ADR 0037 §3); regressions=%+v", r.Regressions)
 	}
+	// Since ADR 0043 it fails as what it is, a loss of protection.
+	if len(r.BecamePublic) != 1 {
+		t.Errorf("BecamePublic = %+v, want the endpoint (ADR 0043)", r.BecamePublic)
+	}
+}
+
+// TestPermitAll_ReplacingProtectionIsBecamePublic is ADR 0043 §2's gate
+// row: a permit-all is not a guard, so any protection replaced by one is
+// lost protection. Before ADR 0043, @Secured → permitAll() also failed the
+// build, but only because the head gained an empty-role; checked by running
+// this test against the previous code. It now fails as became-public.
+func TestPermitAll_ReplacingProtectionIsBecamePublic(t *testing.T) {
+	project := func(imp, ann string) Snapshot {
+		dir := t.TempDir()
+		src := "package app;\n" + imp + "\nimport org.springframework.web.bind.annotation.*;\n@RestController\npublic class C {\n    " +
+			ann + "\n    @DeleteMapping(\"/admin/wipe\")\n    public void wipe() { }\n}\n"
+		if err := os.WriteFile(filepath.Join(dir, "C.java"), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		m, outcome, err := spring.Extract(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return Snapshot{Model: m, Findings: lint.Run(m, lint.DefaultRules(), outcome.AllowlistedEndpoints), AllowlistedEndpoints: outcome.AllowlistedEndpoints}
+	}
+	for _, tc := range []struct{ name, baseImp, baseAnn, headImp, headAnn string }{
+		{"@Secured → permitAll()", "import org.springframework.security.access.annotation.Secured;", `@Secured("ROLE_ADMIN")`,
+			"import org.springframework.security.access.prepost.PreAuthorize;", `@PreAuthorize("permitAll()")`},
+		{"@RolesAllowed → @PermitAll", "import jakarta.annotation.security.RolesAllowed;", `@RolesAllowed("ADMIN")`,
+			"import jakarta.annotation.security.PermitAll;", "@PermitAll"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := Compare(project(tc.baseImp, tc.baseAnn), project(tc.headImp, tc.headAnn))
+			if len(r.BecamePublic) != 1 || !r.HasRegressions() {
+				t.Fatalf("want became-public and a gate; BecamePublic=%+v regressions=%+v", r.BecamePublic, r.Regressions)
+			}
+			if len(r.AddedPublicDeclarations) != 1 {
+				t.Errorf("AddedPublicDeclarations = %+v, want the new declaration listed", r.AddedPublicDeclarations)
+			}
+		})
+	}
 }

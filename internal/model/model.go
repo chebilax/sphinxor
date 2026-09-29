@@ -104,10 +104,11 @@ type Model struct {
 	// Kotlin records Kotlin source files, which are not parsed, and what
 	// they declare (ADR 0042).
 	Kotlin KotlinStatus
-	// PermitAll counts JSR-250 @PermitAll annotations, announced and not
-	// read until a permit-all declaration's meaning is decided (ADR 0012
-	// Amendment 1). Nothing attaches them to an endpoint.
-	PermitAll PermitAllStatus
+	// PublicDeclarations are method-level permit-alls — permitAll() in a
+	// @PreAuthorize, and JSR-250 @PermitAll (ADR 0043). They are NOT
+	// guards: every consumer asking "is this endpoint protected?" reads
+	// GuardApplications, and a permit-all answers no.
+	PublicDeclarations []PublicDeclaration
 	// UnrecoveredRoutes lists controllers whose routes were not all
 	// recovered (ADR 0032).
 	UnrecoveredRoutes []ControllerWithUnrecoveredRoutes
@@ -939,13 +940,20 @@ type Finding struct {
 	Allowlisted bool
 }
 
-// PermitAllStatus records JSR-250 @PermitAll annotations found in the
-// project — ADR 0012 Amendment 1. Count only, for the warning; no endpoint
-// carries them, so lint, the diff and the export see those endpoints as
-// unannotated.
-type PermitAllStatus struct {
-	Count   int
-	Classes []string
+// PublicDeclaration is a positive statement in the source that an
+// endpoint is public — docs/decisions/0043-permit-all-is-a-public-declaration.md.
+// It is neither protection nor an empty role check: empty-role cannot
+// fire on it, the mutating finding still does (at Low, allowlistable),
+// and a guard replaced by one trips the became-public gate, because it is
+// not a GuardApplication.
+type PublicDeclaration struct {
+	ID         ID
+	EndpointID ID
+	// Form is "permitAll()" or "@PermitAll", as written.
+	Form      string
+	AppliedAt GuardScope
+	File      string
+	Line      int
 }
 
 // KotlinStatus records the Kotlin source files under the analyzed tree —

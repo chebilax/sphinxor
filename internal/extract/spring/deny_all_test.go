@@ -112,33 +112,20 @@ public class C {
 	}
 }
 
-// TestPermitAll_Unchanged pins what the amendment leaves alone: a
-// method-level permitAll() still raises empty-role (ADR 0017, still open),
-// and a URL-layer permitAll() still contributes no requirement (ADR 0012
-// §1), so the method layer's ADMIN is exported.
-func TestPermitAll_Unchanged(t *testing.T) {
+// TestPermitAll_URLLayerUnchanged: a chain's .permitAll() still
+// contributes no requirement (ADR 0012 §1, untouched by ADR 0043), so the
+// method layer's ADMIN is exported.
+func TestPermitAll_URLLayerUnchanged(t *testing.T) {
 	m := extractProject(t, map[string]string{
-		"C.java": `package app;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
-@RestController
-public class C {
-    @PreAuthorize("permitAll()")
-    @DeleteMapping("/open")
-    public void open() { }
-}`,
-		"Config.java": "package app;\n@EnableMethodSecurity\npublic class Config { }\n",
-	})
-	if n := findingsFor(m, "empty-role"); n != 1 {
-		t.Errorf("method permitAll(): empty-role fired %d time(s), want 1 (unchanged)", n)
-	}
-	m = extractProject(t, map[string]string{
 		"SecurityConfig.java": denyAllChain(`            .requestMatchers("/admin/**").permitAll()
             .anyRequest().authenticated()`),
 		"C.java": denyAllController,
 	})
 	if r := cerbos.Translate(m); len(r.Rules) != 1 || r.Rules[0].Roles[0] != "ADMIN" {
-		t.Errorf("URL permitAll(): want the method layer's ADMIN exported (unchanged), got %+v", r.Rules)
+		t.Errorf("URL permitAll(): want the method layer's ADMIN exported, got %+v", r.Rules)
+	}
+	if len(m.PublicDeclarations) != 0 {
+		t.Errorf("a URL-layer permitAll() is not a public declaration: %+v", m.PublicDeclarations)
 	}
 }
 
@@ -177,30 +164,5 @@ func TestJSR250DenyAll(t *testing.T) {
 		if g.DeniesAll {
 			t.Errorf("a foreign @DenyAll was read as JSR-250's: %+v", g)
 		}
-	}
-}
-
-// TestJSR250PermitAll_AnnouncedNotRead: @PermitAll is counted and
-// announced, and nothing attaches it to the endpoint — its meaning is not
-// decided. The endpoint is analyzed as unannotated: a mutating one gets
-// the Low finding, and no guard means the became-public gate still sees a
-// guard replaced by @PermitAll (tested in internal/diff).
-func TestJSR250PermitAll_AnnouncedNotRead(t *testing.T) {
-	m := extractProject(t, map[string]string{"C.java": jsr250Controller("import jakarta.annotation.security.PermitAll;", "@PermitAll")})
-	if m.PermitAll.Count != 1 || len(m.PermitAll.Classes) != 1 || m.PermitAll.Classes[0] != "C" {
-		t.Errorf("PermitAll = %+v, want one, in C", m.PermitAll)
-	}
-	if len(m.GuardApplications) != 0 || len(m.UnrecognizedAuthAnnotations) != 0 {
-		t.Errorf("@PermitAll must attach nothing to the endpoint: guards %+v, unrecognized %+v", m.GuardApplications, m.UnrecognizedAuthAnnotations)
-	}
-	if n := findingsFor(m, "mutating-endpoint-without-access-control"); n != 1 {
-		t.Errorf("mutating finding fired %d time(s), want 1", n)
-	}
-	if n := findingsFor(m, "empty-role"); n != 0 {
-		t.Errorf("empty-role fired %d time(s) on @PermitAll, want 0", n)
-	}
-	m = extractProject(t, map[string]string{"C.java": jsr250Controller("import com.example.security.PermitAll;", "@PermitAll")})
-	if m.PermitAll.Count != 0 {
-		t.Errorf("a project's own @PermitAll was counted: %+v", m.PermitAll)
 	}
 }

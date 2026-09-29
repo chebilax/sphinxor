@@ -179,6 +179,12 @@ const (
 	// requirement" and the method layer's roles were exported — a grant
 	// the application refuses to everyone.
 	ReasonDeniedToAll OmissionReason = "denied-to-all"
+
+	// ReasonDeclaredPublic: the endpoint is declared public by permitAll()
+	// or @PermitAll and carries no guard (ADR 0043). A public endpoint does
+	// not belong behind a decision point that authorizes principals, and
+	// roles ["*"] would mean "any authenticated principal", not anyone.
+	ReasonDeclaredPublic OmissionReason = "declared-public"
 )
 
 // Omission records one endpoint that could not become part of any Rule,
@@ -317,6 +323,10 @@ func TranslateWith(m *model.Model, d Declarations) Result {
 	guardAppByID := make(map[model.ID]model.GuardApplication, len(m.GuardApplications))
 	guardedEndpoints := make(map[model.ID]bool, len(m.GuardApplications))
 	deniedToAll := make(map[model.ID]bool)
+	declaredPublic := make(map[model.ID]bool, len(m.PublicDeclarations))
+	for _, p := range m.PublicDeclarations {
+		declaredPublic[p.EndpointID] = true
+	}
 	for _, g := range m.GuardApplications {
 		guardAppByID[g.ID] = g
 		guardedEndpoints[g.EndpointID] = true
@@ -467,6 +477,16 @@ func TranslateWith(m *model.Model, d Declarations) Result {
 		}
 		// ADR 0012 Amendment 1: denied to everyone, at either layer. No
 		// rule is the policy — checked before anything could grant.
+		if declaredPublic[e.ID] && !guardedEndpoints[e.ID] {
+			pathOmissions = append(pathOmissions, Omission{
+				Endpoint: e,
+				Resource: resource,
+				Reason:   ReasonDeclaredPublic,
+				Detail: "declared public (permitAll() or @PermitAll) with no guard; a public endpoint is not " +
+					"a policy decision, and roles [\"*\"] would admit only authenticated principals",
+			})
+			continue
+		}
 		if deniedToAll[e.ID] {
 			pathOmissions = append(pathOmissions, Omission{
 				Endpoint: e,

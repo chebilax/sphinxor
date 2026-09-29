@@ -2,7 +2,8 @@
 
 ## Status
 
-**Proposed.** It settles the question [ADR 0017](0017-declaresroles-excludes-isauthenticated.md)
+**Accepted** (2026-09-29), including the 4 new route-collision warnings on yudao, and
+implemented. It settles the question [ADR 0017](0017-declaresroles-excludes-isauthenticated.md)
 and [ADR 0020](0020-unanalyzable-is-unknown-not-absent.md) Amendment 3 §10 left open for
 `permitAll()`, and reads JSR-250 `@PermitAll`, which
 [ADR 0012](0012-securityfilterchain-effective-policy.md) Amendment 1 only announces. It
@@ -93,12 +94,30 @@ synthetic test.
 
 ### §3 Precedence where a permit-all meets a guard on the same endpoint
 
-JSR-250 and `@PreAuthorize` both give a method-level annotation precedence over a
-class-level one. If a method carries a guard and its class a permit-all, the guard applies
-and no declaration is recorded. If the class carries a guard and the method a permit-all,
-the declaration applies and the class guard is not attached to that method. Neither
-arrangement occurs in the measured code. Both get synthetic tests. The existing handling
-of class and method guards together is unchanged.
+Spring Security runs **one interceptor per annotation family**:
+- `@PreAuthorize` (with `permitAll()`);
+- JSR-250 (`@RolesAllowed`, `@DenyAll`, `@PermitAll`);
+- `@Secured`.
+
+Each resolves its own annotations method first, then class. Read at source:
+`Jsr250AuthorizationManager` scans `@DenyAll`/`@PermitAll`/`@RolesAllowed` on the method
+and then its target class, and `PrePostMethodSecurityConfiguration` registers a separate
+`preAuthorize()` interceptor (Spring Security 6.5.11). So precedence holds **within a
+family**, and across families both apply:
+
+| Class | Method | Result |
+|---|---|---|
+| `@RolesAllowed` | `@PermitAll` | public: same family, the method's declaration wins |
+| `@PermitAll` | `@RolesAllowed` | guarded: same family, the method's guard wins |
+| `@PreAuthorize("hasRole(...)")` | `@PreAuthorize("permitAll()")` | public: same family |
+| `@PreAuthorize("hasRole(...)")` | `@PermitAll` | **guarded and declared public**: two interceptors run, and the role is still required |
+| `@PermitAll` | none | public |
+
+**Correction.** The first draft said a method-level permit-all overrides a class-level
+guard in general. Reading the interceptors showed that holds only within a family, so a
+class `@PreAuthorize` still applies under a method `@PermitAll`. It is recorded rather
+than quietly corrected. Guard-and-guard combinations are unchanged from before this ADR.
+None of these arrangements occurs in yudao or the corpus, and each has a synthetic test.
 
 ## Effect, predicted
 
@@ -201,4 +220,29 @@ recorded rather than quietly corrected.
 protects, never needs `empty-role`, and never suppresses the mutating finding. The only
 behaviour it adds beyond labels is the 4 collision warnings. The pinned ADR 0037 case is
 not exercised by yudao, which has no `permitAll()`; the synthetic test covers it.
+
+## Measured, as implemented (2026-09-29)
+
+`main` at `dffac0a` against this implementation.
+
+- **Corpus, fixtures and sample:** all 42 targets byte-identical except the
+  `ruoyi-vue-pro` fixture. There, as predicted:
+  - its one `PUT /member/user/reset-password` gains `public (@PermitAll)`;
+  - its Low finding's message names the declaration and `sphinxor-allow`;
+  - the retired count warning is gone;
+  - its export omission reason moves from `no-guard` to `declared-public`.
+- **Upstream yudao, v0.10.0 against this implementation:**
+  - **findings identical:** 217 before and after, the same (rule, subject, confidence)
+    set, 0 `empty-role`;
+  - 106 rows labelled public;
+  - route-collision warnings 47 → **51**. The 4 new ones are exactly the predicted app and
+    admin twins: `GET /promotion/combination-activity/list-by-ids`,
+    `GET /promotion/point-activity/list-by-ids`,
+    `GET /promotion/seckill-activity/list-by-ids` and `GET /system/area/tree`;
+  - export report identical, since the URL layer is unknown;
+  - exit code unchanged.
+- **The pinned ADR 0037 case** still fails the build, now through became-public
+  (asserted). `@Secured` → `permitAll()` and `@RolesAllowed` → `@PermitAll` fail as
+  became-public too. The first of these also failed before, through `empty-role`, which was
+  checked by running the test against the previous code.
 

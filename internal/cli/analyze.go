@@ -223,23 +223,6 @@ func projectWarnings(m *model.Model) []string {
 		out = append(out, wrapIndented(msg+".", 9, 100)[9:])
 	}
 
-	// ADR 0012 Amendment 1: JSR-250 @PermitAll is Spring Security method
-	// security, so it must not be silent (ADR 0029 §3), but what a
-	// permit-all declaration means for lint and the diff is not decided.
-	// Counted and announced, never attached to an endpoint — attaching it
-	// as authorization-present would let a guard replaced by @PermitAll
-	// pass the became-public gate.
-	if p := m.PermitAll; p.Count > 0 {
-		msg := "found " + strconv.Itoa(p.Count) + " JSR-250 @PermitAll annotation(s)"
-		if len(p.Classes) > 0 {
-			msg += " in: " + strings.Join(p.Classes, ", ")
-		}
-		out = append(out, msg+".\n"+
-			"         They are not read: what a permit-all declaration means is not yet decided. Endpoints\n"+
-			"         carrying one are analyzed as if unannotated, so a mutating one gets the Low finding,\n"+
-			"         and the Cerbos export grants nothing for them.")
-	}
-
 	if f := m.MethodSecurityFilters; f.Total() > 0 {
 		msg := "found " + strconv.Itoa(f.Total()) + " @PreFilter/@PostFilter annotation(s)"
 		if len(f.Classes) > 0 {

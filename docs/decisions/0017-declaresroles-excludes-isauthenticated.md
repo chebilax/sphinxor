@@ -6,7 +6,8 @@ Accepted.
 
 **For `denyAll()`, the open question is settled by [ADR 0012](0012-securityfilterchain-effective-policy.md)
 Amendment 1:** it is a guard that admits no one and no longer raises `empty-role`.
-`permitAll()` is unchanged, and whether `empty-role` should fire on it remains open.
+For `permitAll()` it is settled by [ADR 0043](0043-permit-all-is-a-public-declaration.md): a public
+declaration, not a guard, so `empty-role` does not fire on it.
 
 ## Context
 

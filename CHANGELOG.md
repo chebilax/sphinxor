@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A method-level permit-all is read as a public declaration.** `@PreAuthorize("permitAll()")`
+  and JSR-250 `@PermitAll` are now neither protection nor an empty role check:
+  - `permitAll()` no longer raises the blocking `empty-role`;
+  - the endpoint shows `public (…)` in the matrix;
+  - a mutating one keeps the Low finding, whose message now says it is declared public and
+    suggests `sphinxor-allow`;
+  - replacing any guard with a permit-all fails `sphinxor diff` as became-public;
+  - the export omits such an endpoint as `declared-public`.
+
+  Precedence follows Spring's per-family interceptors, so a class `@PreAuthorize` still
+  applies under a method `@PermitAll`. On upstream yudao (106 `@PermitAll`): findings are
+  unchanged, and 4 more route-collision warnings appear, where a public app endpoint's
+  admin twin carries nothing. A chain's `.permitAll()` is unchanged. See
+  [ADR 0043](docs/decisions/0043-permit-all-is-a-public-declaration.md).
+
 ## [0.10.0] - 2026-09-29
 
 Three ways the Cerbos export could grant access the application denies are closed. The
