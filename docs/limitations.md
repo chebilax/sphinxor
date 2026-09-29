@@ -20,6 +20,14 @@ One open question sits outside that checklist entirely, because it changes *what
 
 This is not the roadmap. `roadmap-long-term.md` is about what's planned; this is about what the current release honestly cannot see, whether or not fixing it is ever planned. An entry here can outlive several roadmap cycles without becoming wrong.
 
+## NestJS has no mechanism checklist
+
+Spring Security's mechanisms are enumerated in [ADR 0029](decisions/0029-spring-security-scope.md), each marked *read*, *detected and announced*, or *out of scope*. "Done" there means no mechanism is *silent*: whatever the tool cannot interpret, the run says so.
+
+**NestJS has no such enumeration, so a NestJS report carries no "nothing silent" guarantee.** The gaps recorded below — global guards, composite decorators, permissions as metadata — were found one at a time, not by enumerating the framework's authorization mechanisms. Enumerating a scope is what finds silent gaps: doing it for Kotlin in Spring projects ([ADR 0042](decisions/0042-kotlin-sources-announced.md)) found one that could make the Cerbos export grant access the application denies. A NestJS checklist would start by pinning a NestJS measurement corpus; today there are five vendored fixtures and no corpus.
+
+This is a deliberate deferral, not an oversight: the priority is Spring Security. Until the checklist exists, treat a NestJS matrix as what extraction recognized, not as a complete account of what the application enforces.
+
 ## Global guards (`APP_GUARD` providers, `app.useGlobalGuards()`)
 
 Sphinxor does not parse NestJS module provider wiring. A guard registered globally — via an `APP_GUARD`-token provider in a module, or via `app.useGlobalGuards()` in `main.ts` — protects every endpoint in the application without any decorator appearing at the endpoint or its controller. This extractor only sees decorators, so it cannot see *what* that guard requires.
