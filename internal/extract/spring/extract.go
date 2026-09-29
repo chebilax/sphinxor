@@ -89,8 +89,6 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 		// Announced only — nothing downstream reads this to decide
 		// whether an endpoint is protected.
 		scanMethodSecurityFilters(f.tree.RootNode(), f.src, &b.model.MethodSecurityFilters)
-		// ADR 0012 Amendment 1: JSR-250 @PermitAll, counted and announced.
-		scanPermitAll(f.tree.RootNode(), f.src, &b.model.PermitAll)
 		// ADR 0031: a role hierarchy, detected. Its rules are read after
 		// every file is seen (ADR 0038 Stage 1, below).
 		scanRoleHierarchy(f.tree.RootNode(), f.src, f.relPath, &b.model.RoleHierarchy, &hierarchy)
@@ -148,6 +146,7 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 	collide.Resolve(collide.Input{
 		Model:       &b.model,
 		GuardOwner:  b.guardOwner,
+		PublicOwner: b.publicOwner,
 		Anchors:     b.anchors,
 		AnchorOwner: b.anchorOwner,
 	})
@@ -268,6 +267,7 @@ type builder struct {
 	// Ownership bookkeeping for that amendment — see the NestJS twin and
 	// internal/extract/collide.
 	guardOwner  []int
+	publicOwner []int // parallel to model.PublicDeclarations (ADR 0043)
 	anchors     []allowlist.Anchor
 	anchorOwner []int
 	curEndpoint int

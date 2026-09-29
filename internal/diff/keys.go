@@ -317,3 +317,46 @@ func sortPermissionReferences(refs []model.PermissionReference) {
 		return a.Line < b.Line
 	})
 }
+
+type publicKey struct {
+	endpointID model.ID
+	form       string
+	appliedAt  model.GuardScope
+}
+
+// diffPublicDeclarations compares permit-alls by (endpoint, form, scope),
+// the shape guardAppKey gives guards (ADR 0043).
+func diffPublicDeclarations(base, head *model.Model) (added, removed []model.PublicDeclaration) {
+	index := func(m *model.Model) map[publicKey]model.PublicDeclaration {
+		out := make(map[publicKey]model.PublicDeclaration, len(m.PublicDeclarations))
+		for _, p := range m.PublicDeclarations {
+			out[publicKey{p.EndpointID, p.Form, p.AppliedAt}] = p
+		}
+		return out
+	}
+	b, h := index(base), index(head)
+	for k, p := range h {
+		if _, ok := b[k]; !ok {
+			added = append(added, p)
+		}
+	}
+	for k, p := range b {
+		if _, ok := h[k]; !ok {
+			removed = append(removed, p)
+		}
+	}
+	sortPublic := func(ps []model.PublicDeclaration) {
+		sort.Slice(ps, func(i, j int) bool {
+			if ps[i].EndpointID != ps[j].EndpointID {
+				return ps[i].EndpointID < ps[j].EndpointID
+			}
+			if ps[i].Form != ps[j].Form {
+				return ps[i].Form < ps[j].Form
+			}
+			return ps[i].AppliedAt < ps[j].AppliedAt
+		})
+	}
+	sortPublic(added)
+	sortPublic(removed)
+	return added, removed
+}

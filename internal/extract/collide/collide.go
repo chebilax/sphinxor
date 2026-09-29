@@ -29,6 +29,8 @@ type Input struct {
 	Model *model.Model
 	// GuardOwner is parallel to Model.GuardApplications.
 	GuardOwner []int
+	// PublicOwner is parallel to Model.PublicDeclarations (ADR 0043).
+	PublicOwner []int
 	// Anchors and AnchorOwner are parallel to each other.
 	Anchors     []allowlist.Anchor
 	AnchorOwner []int
@@ -63,7 +65,7 @@ func Resolve(in Input) {
 	for _, c := range m.Controllers {
 		controllerName[c.ID] = c.Name
 	}
-	signatures := guardSignatures(m, in.GuardOwner)
+	signatures := guardSignatures(m, in.GuardOwner, in.PublicOwner)
 
 	newID := make(map[int]model.ID)
 	var collisions []model.RouteCollision
@@ -124,6 +126,14 @@ func Resolve(in Input) {
 			m.GuardApplications[j].EndpointID = id
 		}
 	}
+	for j, owner := range in.PublicOwner {
+		if j >= len(m.PublicDeclarations) {
+			break
+		}
+		if id, ok := newID[owner]; ok {
+			m.PublicDeclarations[j].EndpointID = id
+		}
+	}
 	for k, owner := range in.AnchorOwner {
 		if k >= len(in.Anchors) {
 			break
@@ -160,7 +170,7 @@ func Resolve(in Input) {
 // signs as unguarded, so two such endpoints compare equal and no warning
 // is raised — stated and accepted in Amendment 2 §8, since the criterion
 // can only track what the tool knows.
-func guardSignatures(m *model.Model, guardOwner []int) map[int]string {
+func guardSignatures(m *model.Model, guardOwner, publicOwner []int) map[int]string {
 	rolesByGuard := make(map[model.ID][]string)
 	for _, r := range m.RoleReferences {
 		rolesByGuard[r.GuardApplicationID] = append(rolesByGuard[r.GuardApplicationID], r.RawLiteral)
@@ -181,6 +191,17 @@ func guardSignatures(m *model.Model, guardOwner []int) map[int]string {
 		roles := append([]string(nil), rolesByGuard[g.ID]...)
 		sort.Strings(roles)
 		parts[owner] = append(parts[owner], g.GuardName+"("+strings.Join(roles, "|")+")")
+	}
+
+	// ADR 0043: a public declaration is part of what a side says about
+	// access, so a public side and an unannotated one differ. yudao turns
+	// @PermitAll into a URL rule on the path, which then opens the
+	// unannotated twin too — exactly what this warning is for.
+	for j, owner := range publicOwner {
+		if j >= len(m.PublicDeclarations) {
+			break
+		}
+		parts[owner] = append(parts[owner], "public:"+m.PublicDeclarations[j].Form)
 	}
 
 	out := make(map[int]string, len(parts))

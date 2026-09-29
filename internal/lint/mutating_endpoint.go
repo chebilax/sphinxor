@@ -88,6 +88,10 @@ func (MutatingEndpointWithoutAccessControl) ID() string {
 }
 
 func (r MutatingEndpointWithoutAccessControl) Check(m *model.Model) []model.Finding {
+	publicForm := make(map[model.ID]string, len(m.PublicDeclarations))
+	for _, p := range m.PublicDeclarations {
+		publicForm[p.EndpointID] = p.Form
+	}
 	guarded := make(map[model.ID]bool, len(m.GuardApplications))
 	for _, g := range m.GuardApplications {
 		if !isConfirmedInert(g, m.MethodSecurity) {
@@ -120,7 +124,7 @@ func (r MutatingEndpointWithoutAccessControl) Check(m *model.Model) []model.Find
 			Confidence:  model.ConfidenceLow,
 			SubjectID:   e.ID,
 			SubjectKind: model.SubjectEndpoint,
-			Message:     mutatingMessage(e, postAuthorize[e.ID], m.MethodSecurity),
+			Message:     mutatingMessage(e, postAuthorize[e.ID], m.MethodSecurity, publicForm[e.ID]),
 		})
 	}
 	return findings
@@ -135,7 +139,14 @@ func (r MutatingEndpointWithoutAccessControl) Check(m *model.Model) []model.Find
 // the ordinary message instead. Nothing evaluates the annotation at all,
 // so describing WHEN it evaluates would be the false statement ADR 0015
 // Amendment 1 was written to remove.
-func mutatingMessage(e model.Endpoint, hasPostAuthorize bool, status model.MethodSecurityStatus) string {
+func mutatingMessage(e model.Endpoint, hasPostAuthorize bool, status model.MethodSecurityStatus, publicForm string) string {
+	if publicForm != "" {
+		// ADR 0043: declared public. Still reported — the declaration says
+		// what the application does, the allowlist says a reviewer accepts
+		// it — and the message says which, so the fix is one marker.
+		return fmt.Sprintf("%s %s is declared public by %s, so anyone can call this mutating endpoint; "+
+			"mark it with sphinxor-allow if that is intended", e.HTTPMethod, e.Path, publicForm)
+	}
 	if hasPostAuthorize && !(status.Found && !status.PrePostEnabled) {
 		return fmt.Sprintf(
 			"%s %s has a @PostAuthorize but no guard that runs before the method. "+

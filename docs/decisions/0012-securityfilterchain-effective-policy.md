@@ -359,7 +359,7 @@ out of scope; the owner corrected it.)
   `jsr250Enabled`. Under `@EnableMethodSecurity`, whose default leaves `jsr250Enabled`
   false, it is confirmed inert and protects nothing (ADR 0015), exactly as `@RolesAllowed`
   would be.
-- **`@PermitAll` is detected and announced, not read.** Mapped like `permitAll()`, it would
+- **`@PermitAll` is detected and announced, not read.** *(Superseded by [ADR 0043](0043-permit-all-is-a-public-declaration.md): it is now read as a public declaration, with `permitAll()`.)* Mapped like `permitAll()`, it would
   raise a build-failing `empty-role` on every deliberately public endpoint. The vendored
   `ruoyi-vue-pro` fixture has one (`AppMemberUserController`'s password reset), and upstream
   yudao marks its app-facing endpoints public this way. Dropping `empty-role` while

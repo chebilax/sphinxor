@@ -118,6 +118,12 @@ func BuildMatrix(m *model.Model, findings []model.Finding) Matrix {
 		guardsByEndpoint[g.EndpointID] = appendUnique(guardsByEndpoint[g.EndpointID], name)
 	}
 
+	// ADR 0043: a public declaration is shown where a reader looks for
+	// protection, named for what it is.
+	for _, p := range m.PublicDeclarations {
+		guardsByEndpoint[p.EndpointID] = appendUnique(guardsByEndpoint[p.EndpointID], "public ("+p.Form+")")
+	}
+
 	rolesByEndpoint := make(map[model.ID][]string)
 	for _, ref := range m.RoleReferences {
 		app, ok := guardAppByID[ref.GuardApplicationID]

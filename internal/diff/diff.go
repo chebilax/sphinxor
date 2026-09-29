@@ -70,6 +70,13 @@ type Result struct {
 	AddedPermissionReferences   []model.PermissionReference
 	RemovedPermissionReferences []model.PermissionReference
 
+	// Added/RemovedPublicDeclarations are permit-alls appearing or
+	// disappearing (ADR 0043). Structural only: losing protection to a
+	// permit-all is already caught by the became-public gate, which reads
+	// guards, and a permit-all is not one.
+	AddedPublicDeclarations   []model.PublicDeclaration
+	RemovedPublicDeclarations []model.PublicDeclaration
+
 	// BecamePublic lists endpoints present on both sides that had at
 	// least one guard application in base and none in head — vision.md's
 	// "endpoints that became public", derived from the guard-application
@@ -132,6 +139,7 @@ func Compare(base, head Snapshot) Result {
 	basePermsByKey := indexPermissionReferences(base.Model, baseGuardsByID)
 	headPermsByKey := indexPermissionReferences(head.Model, headGuardsByID)
 	r.AddedPermissionReferences, r.RemovedPermissionReferences = diffPermissionReferences(basePermsByKey, headPermsByKey)
+	r.AddedPublicDeclarations, r.RemovedPublicDeclarations = diffPublicDeclarations(base.Model, head.Model)
 
 	r.BecamePublic = becamePublic(base.Model, head.Model)
 

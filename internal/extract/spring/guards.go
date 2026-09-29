@@ -22,6 +22,8 @@ var methodSecurityAnnotations = map[string]bool{
 	// (ADR 0012 Amendment 1). @PermitAll is NOT here: it is counted and
 	// announced project-wide (permit_all.go) until its meaning is decided.
 	"DenyAll": true,
+	// ADR 0043: read as a public declaration, not a guard.
+	"PermitAll": true,
 }
 
 // uninterpretedSpringAuth are Spring Security's own method-security
@@ -72,6 +74,10 @@ type pendingGuard struct {
 	rolesUnresolved bool
 	// deniesAll: @PreAuthorize("denyAll()") (ADR 0012 Amendment 1).
 	deniesAll bool
+	// public is set for a permit-all, "permitAll()" or "@PermitAll"
+	// (ADR 0043). Such a pendingGuard becomes a PublicDeclaration, not a
+	// GuardApplication.
+	public string
 	// declaresPermissions mirrors declaresRoles for the permission term
 	// (ADR 0035 §4). It is what keeps empty-role off a guard that read
 	// its requirement and found a permission rather than a role.
@@ -218,12 +224,10 @@ func springGuard(ann annotationCall, src []byte, file string, line int, roleByNa
 			// declared, so empty-role stays off it; it is still a guard.
 			return []pendingGuard{{guardName: ann.Name, deniesAll: true, file: file, line: line}}
 		case spelNoRole:
-			// permitAll()/denyAll(): read, and resolving to no role
-			// list. ADR 0017 decided these keep DeclaresRoles: true and
-			// keep surfacing through empty-role; ADR 0020 Amendment 3
-			// §10 preserves that deliberately rather than reversing it
-			// as a side effect, so rolesUnresolved stays false.
-			return []pendingGuard{{guardName: ann.Name, declaresRoles: true, file: file, line: line}}
+			// permitAll(): a public declaration (ADR 0043), which settles
+			// the question ADR 0017 left open. Not a guard, so empty-role
+			// cannot fire and the endpoint does not count as protected.
+			return []pendingGuard{{guardName: ann.Name, public: "permitAll()", file: file, line: line}}
 		default: // spelUnrecognized: a bean call, a boolean combination, ...
 			return []pendingGuard{{guardName: ann.Name, declaresRoles: true, rolesUnresolved: true, file: file, line: line}}
 		}
@@ -231,8 +235,12 @@ func springGuard(ann annotationCall, src []byte, file string, line int, roleByNa
 
 	// ADR 0012 Amendment 1: JSR-250's @DenyAll is what denyAll() is, under
 	// the jsr250Enabled gate (internal/lint's isConfirmedInert).
-	if ann.Name == "DenyAll" {
+	switch ann.Name {
+	case "DenyAll":
 		return []pendingGuard{{guardName: ann.Name, deniesAll: true, file: file, line: line}}
+	case "PermitAll":
+		// ADR 0043: a public declaration, as permitAll() is.
+		return []pendingGuard{{guardName: ann.Name, public: "@PermitAll", file: file, line: line}}
 	}
 
 	// Secured / RolesAllowed: plain string-array arguments, no SpEL.
@@ -287,6 +295,18 @@ func resolveRoleArgs(literals []string, roleByName map[string]model.ID) []roleAr
 // isAuthenticated().
 func (b *builder) applyGuards(endpointID model.ID, guards []pendingGuard, scope model.GuardScope) {
 	for _, g := range guards {
+		if g.public != "" {
+			b.publicOwner = append(b.publicOwner, b.curEndpoint)
+			b.model.PublicDeclarations = append(b.model.PublicDeclarations, model.PublicDeclaration{
+				ID:         b.nextIDFor("public"),
+				EndpointID: endpointID,
+				Form:       g.public,
+				AppliedAt:  scope,
+				File:       g.file,
+				Line:       g.line,
+			})
+			continue
+		}
 		appID := b.nextIDFor("guardapp")
 		b.guardOwner = append(b.guardOwner, b.curEndpoint)
 		b.model.GuardApplications = append(b.model.GuardApplications, model.GuardApplication{
@@ -330,4 +350,53 @@ func (b *builder) applyGuards(endpointID model.ID, guards []pendingGuard, scope 
 			})
 		}
 	}
+}
+
+// annotationFamily is the method-security interceptor an annotation is
+// evaluated by. Spring registers one per family, each resolving its own
+// annotations method first, then class (ADR 0043 §3); across families both
+// interceptors run.
+func annotationFamily(guardName string) string {
+	switch guardName {
+	case "PreAuthorize", "PostAuthorize":
+		return "prepost"
+	case "RolesAllowed", "DenyAll", "PermitAll":
+		return "jsr250"
+	case "Secured":
+		return "secured"
+	}
+	return ""
+}
+
+// applyFamilyPrecedence drops the class-level entries a method-level one
+// overrides, within the same family only (ADR 0043 §3): a method
+// permit-all over a class guard of its family, and a method guard over a
+// class permit-all of its family. Guards and guards are left as they were
+// before ADR 0043; only a permit-all on one side is resolved.
+func applyFamilyPrecedence(class, method []pendingGuard) []pendingGuard {
+	methodPublic := map[string]bool{}
+	methodGuard := map[string]bool{}
+	for _, g := range method {
+		f := annotationFamily(g.guardName)
+		if f == "" {
+			continue
+		}
+		if g.public != "" {
+			methodPublic[f] = true
+		} else {
+			methodGuard[f] = true
+		}
+	}
+	var out []pendingGuard
+	for _, g := range class {
+		f := annotationFamily(g.guardName)
+		switch {
+		case g.public == "" && methodPublic[f]:
+			continue
+		case g.public != "" && methodGuard[f]:
+			continue
+		}
+		out = append(out, g)
+	}
+	return out
 }

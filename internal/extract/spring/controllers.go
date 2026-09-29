@@ -178,6 +178,9 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 
 			subs := b.evalRoutePaths(mapping.Args, "value", file, className)
 			handlerName := handlerNameNode.Content(src)
+			// Read before any endpoint is created: a method-level permit-all
+			// or guard decides which class-level entries apply (ADR 0043 §3).
+			methodGuards, methodUnrecognized := pendingGuardsFromAnnotations(methodAnns, src, file, roleByName, imports)
 			pathUnresolved := bases.unresolved != "" || subs.unresolved != ""
 			unresolvedReason := bases.unresolved
 			if unresolvedReason == "" {
@@ -288,13 +291,12 @@ func extractControllers(root *sitter.Node, src []byte, file string, b *builder, 
 						// GuardApplications for no reason (both variants share the
 						// exact same class-level annotations by construction).
 						b.curEndpoint = idx
-						b.applyGuards(endpointID, classGuards, model.ScopeClass)
+						b.applyGuards(endpointID, applyFamilyPrecedence(classGuards, methodGuards), model.ScopeClass)
 						b.applyUnrecognized(endpointID, classUnrecognized, model.ScopeClass)
 					}
 					b.anchorOwner = append(b.anchorOwner, idx)
 					b.curEndpoint = idx
 
-					methodGuards, methodUnrecognized := pendingGuardsFromAnnotations(methodAnns, src, file, roleByName, imports)
 					b.applyGuards(endpointID, methodGuards, model.ScopeMethod)
 					b.applyUnrecognized(endpointID, methodUnrecognized, model.ScopeMethod)
 				}
