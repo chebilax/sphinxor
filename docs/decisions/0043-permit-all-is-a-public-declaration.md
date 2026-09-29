@@ -38,13 +38,14 @@ At `43eb2e0`, on the 20 corpus repositories at [ADR 0035](0035-permissions-in-th
 |---|---:|---:|
 | 20-repository corpus | 0 | 0 |
 | vendored `ruoyi-vue-pro` fixture | 0 | 1 (a `PUT`) |
-| upstream yudao | 0 | **109 uses in 47 files, 46 of them controllers** |
+| upstream yudao | 0 | **106 annotations, on 106 endpoints** (see *Validation*) |
 
-In upstream yudao:
-- **97 are on methods, none at class level.** None shares a method with another guard,
-  so JSR-250's method-over-class precedence never arises there.
-- **38 are on mutating mappings:** 34 `POST`, 3 `PUT`, 1 `DELETE`, plus 4
-  `@RequestMapping` whose verb is unread.
+In upstream yudao (counts from the extractor, see *Validation*):
+- **All 106 are on handler methods, none at class level, and none shares a method or a
+  class with another method-security guard.** So JSR-250's method-over-class precedence
+  never arises there.
+- **53 are on mutating endpoints:** 45 `POST`, 3 `PUT`, 1 `DELETE`, 4 verb-less
+  `@RequestMapping` (`ANY`).
 - **yudao enables `@EnableMethodSecurity(securedEnabled = true)`**, so Spring's own
   JSR-250 support is off and `@PermitAll` is inert to Spring (ADR 0015). It is
   `YudaoWebSecurityConfigurerAdapter` that reads it, on the handler or its class, to add
@@ -86,7 +87,7 @@ synthetic test.
 | diff, structural | `permitAll()` shows as a guard | public declarations added or removed get their own section |
 | Cerbos export | `permitAll()`: a guard with no role → `guarded-no-role` omission | omitted with a new reason, `declared-public`. A public endpoint does not belong behind a policy decision point that authorizes principals. Granting `roles: ["*"]` would assert "any authenticated principal", which is not what public means |
 | matrix / JSON | `permitAll()` hides under Roles as nothing | the Guards column shows `public (permitAll())` or `public (@PermitAll)` |
-| route-collision check | compares guards | a public declaration counts as a difference between the two sides |
+| route-collision check | compares guards | a public declaration counts as a difference between the two sides. On yudao this adds 4 warnings (*Validation*): the source does declare those sides differently, and at runtime yudao's filter turns the declaration into a URL rule for the shared path, so which handler's intent governs it is exactly what the warning asks a reader to check |
 | CLI warnings | the `@PermitAll` count | retired. The method-security "may be inert" caveat is unaffected, since permit-all protects nothing either way |
 | URL-layer `.permitAll()` | no requirement (ADR 0012 §1) | **unchanged** (Context) |
 
@@ -106,11 +107,12 @@ of class and method guards together is unchanged.
   - its one `PUT` gains a `PublicDeclaration` and a matrix label;
   - it keeps the Low finding it already has (its message names the declaration);
   - the project warning retires.
-- **Upstream yudao** (not vendored):
-  - 97 endpoints labelled public;
-  - the 38 mutating ones keep the Low finding they already get today, now with a message
+- **Upstream yudao** (not vendored), measured in *Validation*:
+  - 106 endpoints labelled public;
+  - the 53 mutating ones keep the Low finding they already get today, now with a message
     saying why and inviting `sphinxor-allow`;
-  - no `empty-role` anywhere.
+  - no `empty-role` anywhere;
+  - 4 more route-collision warnings, where a public side meets an unannotated one.
 
 ## Alternatives considered
 
@@ -123,7 +125,7 @@ of class and method guards together is unchanged.
 - **Let a permit-all exempt the mutating finding automatically**, as a framework-level
   `sphinxor-allow`. Rejected for this ADR: the declaration says what the application
   does, and the allowlist says the reviewer accepts it. Folding one into the other would
-  exempt 38 of yudao's public writes without anyone looking at them.
+  exempt 53 of yudao's public writes without anyone looking at them.
 - **Export a permit-all as `roles: ["*"]`.** Rejected in §2: `*` means any authenticated
   principal in Cerbos, not anyone.
 
@@ -147,3 +149,56 @@ of class and method guards together is unchanged.
   - the pinned ADR 0037 case still failing the build.
 - The fixture's output changes as predicted, and the corpus is byte-identical. Both are
   measured before merge.
+
+## Validation against upstream yudao (2026-09-29)
+
+Measured with the extractor at `bc46395` (v0.10.0), against yudao at `8e80602`, the vendored
+fixture's commit. The current binary was run on the whole tree, and each `@PermitAll`,
+bound by its import, was mapped to its extracted endpoint by file and line.
+
+**Correction.** The Context first gave 109 uses on 97 methods, 38 of them mutating. Those
+came from a text grep and a regular expression over annotation blocks, and both were
+wrong:
+- the grep's 3 extra hits are comments in `YudaoWebSecurityConfigurerAdapter`, mentions
+  rather than annotations;
+- the regular expression missed handler methods whose annotation arguments contain
+  nested parentheses.
+
+The extractor's counts replace them above. As ADR 0015 Amendment 1 §2 asks, this is
+recorded rather than quietly corrected.
+
+**Today (v0.10.0), for the 106 `@PermitAll` endpoints:**
+
+| | Count |
+|---|---:|
+| endpoints | 106: 53 `GET`, 45 `POST`, 3 `PUT`, 1 `DELETE`, 4 `ANY` |
+| carrying a guard, or an unrecognized authorization annotation | 0 |
+| mutating, with the Low `mutating-endpoint-without-access-control` | **53 of 53** |
+| `empty-role` | 0 |
+| under a class-level guard, or beside another guard on the method | 0 |
+| in a route collision | 27 |
+| path unresolved | 0 |
+| Cerbos export | all omitted: yudao has 2 `SecurityFilterChain` beans, so its URL layer is unknown (ADR 0040) |
+
+**What ADR 0043 changes on yudao, predicted from those numbers:**
+- **Findings: none added, none removed.** The 53 Low findings stay, and their message
+  names `@PermitAll` and suggests `sphinxor-allow`. No `empty-role` appears.
+- **The matrix:** 106 rows gain `public (@PermitAll)` in Guards; the project warning
+  counting them retires.
+- **The became-public gate:** nothing moves on yudao itself. No `@PermitAll` endpoint
+  carries a guard today, so no existing diff result changes. The gate matters for
+  transitions: replacing a guard with `@PermitAll` already trips it (tested in ADR 0012
+  Amendment 1), and replacing one with `permitAll()` newly will.
+- **Route collisions:** of the 26 colliding routes with a `@PermitAll` side,
+  - 21 already warn, since the other side carries a guard;
+  - 1 has `@PermitAll` on every side and stays quiet;
+  - **4 newly warn**, where the other side is unannotated. This is the one visible
+    change beyond labels, and the reason §2's collision row says why it is correct.
+- **The export:** unchanged on yudao. `url-layer-unknown` omits every endpoint before
+  any permit-all reason is reached.
+
+**The starting position holds on yudao as it does on the corpus.** The declaration never
+protects, never needs `empty-role`, and never suppresses the mutating finding. The only
+behaviour it adds beyond labels is the 4 collision warnings. The pinned ADR 0037 case is
+not exercised by yudao, which has no `permitAll()`; the synthetic test covers it.
+
