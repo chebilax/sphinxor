@@ -10,6 +10,7 @@ package cerbos
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/chebilax/sphinxor/internal/model"
@@ -36,6 +37,10 @@ type Rule struct {
 	// (ADR 0041 §4). Omitted from JSON when nil, so every export without
 	// declarations serializes exactly as before.
 	Condition *Condition `json:",omitempty"`
+	// Route is set when this rule is one part of an action split by route
+	// because its endpoints collided (ADR 0044): the rule's condition then
+	// requires R.attr.route to equal it. Omitted from JSON when empty.
+	Route string `json:",omitempty"`
 }
 
 // OmissionReason is why an endpoint did not become part of any Rule.
@@ -228,6 +233,11 @@ type Result struct {
 	// what the calling service must supply for the rules to mean them.
 	Declarations []string `json:",omitempty"`
 	Contract     string   `json:",omitempty"`
+	// RouteContract and RoutedActions are set only when some action was
+	// split by route (ADR 0044): what the calling service must pass, and
+	// for which resource/actions.
+	RouteContract string   `json:",omitempty"`
+	RoutedActions []string `json:",omitempty"`
 }
 
 // roleGrant is one role name resolved for one endpoint, and whether it
@@ -534,6 +544,7 @@ func TranslateWith(m *model.Model, d Declarations) Result {
 	}
 
 	var rules []Rule
+	var routedActions []string
 	omissions := pathOmissions
 	var unverified []UnverifiedRole
 
@@ -554,43 +565,7 @@ func TranslateWith(m *model.Model, d Declarations) Result {
 			// Nobody in this action shares any evidence at all — no
 			// collision to report, just each endpoint's own plain reason.
 			for _, en := range entries {
-				if conflict, ok := noCommonRole[en.endpoint.ID]; ok {
-					// This endpoint isn't unguarded — it has role-bearing
-					// evidence in two independent layers that share no
-					// common role (ADR 0012 §2), a more specific and more
-					// useful fact than the generic "guarded, no role"
-					// reason below.
-					omissions = append(omissions, Omission{
-						Endpoint: en.endpoint,
-						Resource: resource,
-						Reason:   ReasonNoCommonRole,
-						Detail:   noCommonRoleDetail(conflict),
-					})
-					continue
-				}
-				reason, detail := ReasonNoGuard, "no access control detected for this endpoint"
-				if o, ok := declOmission[en.endpoint.ID]; ok {
-					// ADR 0041: permissions are being exported, and this
-					// endpoint's call is undeclared or its combination is.
-					reason, detail = o.Reason, o.Detail
-				} else if permissionEndpoints[en.endpoint.ID] {
-					// ADR 0035 §7. Read, understood, and not a role.
-					reason, detail = ReasonPermissionNotExportable,
-						"requires a permission rather than a role ("+permissionDetail(m, en.endpoint.ID)+"). "+
-							"Cerbos rules grant to roles, so nothing was exported — this is a limit of the "+
-							"export, not a gap in what Sphinxor read. The endpoint's requirement is in the "+
-							"RBAC matrix's Permissions column"
-				} else if guardedEndpoints[en.endpoint.ID] {
-					// Endpoints genuinely "authenticated, any role" export
-					// via AuthenticationRequirement (ADR 0010) instead of
-					// landing here — this branch is only reached now by a
-					// guard extraction doesn't recognize (unknown
-					// authentication semantics) or a literal empty
-					// @Roles() (flagged separately, by empty-role, as a
-					// likely mistake, not exported as if it were correct).
-					reason, detail = ReasonNoRole, "has a guard, but Sphinxor could not determine what access it actually requires — either the guard isn't one Sphinxor recognizes, or the @Roles() call is empty (flagged separately as a likely mistake) — nothing was granted rather than guess"
-				}
-				omissions = append(omissions, Omission{Endpoint: en.endpoint, Resource: resource, Reason: reason, Detail: detail})
+				omissions = append(omissions, plainOmission(m, en, resource, noCommonRole, permissionEndpoints, guardedEndpoints, declOmission))
 			}
 
 		case agree:
@@ -622,10 +597,37 @@ func TranslateWith(m *model.Model, d Declarations) Result {
 			rules = append(rules, Rule{Resource: resource, Action: action, Roles: roleNames, Endpoints: endpoints, Condition: entries[0].condition})
 
 		default:
-			// Endpoints sharing this action disagree — some have roles
-			// and others don't, or they have different roles. The
-			// controller+method mapping can't tell them apart, so none
-			// of them can be safely represented.
+			// ADR 0044: endpoints sharing this action disagree. Split the
+			// group by route and export each part whose members agree,
+			// conditioned on R.attr.route; an unguarded part gets its own
+			// plain reason, which the collision used to hide.
+			split, stillColliding := splitByRoute(entries)
+			if len(split) > 0 {
+				routedActions = append(routedActions, resource+" "+action)
+			}
+			for _, part := range split {
+				if len(part[0].grants) == 0 {
+					for _, en := range part {
+						omissions = append(omissions, plainOmission(m, en, resource, noCommonRole, permissionEndpoints, guardedEndpoints, declOmission))
+					}
+					continue
+				}
+				roleNames, flagged := roleNamesOf(part, resource, action)
+				unverified = append(unverified, flagged...)
+				route := part[0].endpoint.Path
+				rc := Condition{Expr: strconv.Quote(route) + " == R.attr.route"}
+				cond := &rc
+				if part[0].condition != nil {
+					cond = &Condition{All: []Condition{rc, *part[0].condition}}
+				}
+				endpoints := make([]model.Endpoint, len(part))
+				for i, en := range part {
+					endpoints[i] = en.endpoint
+				}
+				sortEndpoints(endpoints)
+				rules = append(rules, Rule{Resource: resource, Action: action, Roles: roleNames, Endpoints: endpoints, Condition: cond, Route: route})
+			}
+			entries = stillColliding
 			for _, en := range entries {
 				omissions = append(omissions, Omission{
 					Endpoint: en.endpoint,
@@ -658,6 +660,11 @@ func TranslateWith(m *model.Model, d Declarations) Result {
 	if d.Active() {
 		result.Declarations = d.summary()
 		result.Contract = integrationContract
+	}
+	if len(routedActions) > 0 {
+		sort.Strings(routedActions)
+		result.RoutedActions = routedActions
+		result.RouteContract = RouteContract
 	}
 	return result
 }
@@ -892,4 +899,111 @@ func caveats(m *model.Model) []string {
 	return []string{"The project declares a Spring Security role hierarchy" + where + ", which this export does not apply: " +
 		"a role it places above another is not granted the lower role's endpoints here, so the policy may deny access " +
 		"the application allows. See docs/decisions/0038-role-hierarchy-read.md."}
+}
+
+// RouteContract is ADR 0044's calling contract for an action split by
+// route, stated in the report and in each policy file that uses it.
+const RouteContract = "Some actions are split by route because their endpoints needed different access. Their rules " +
+	"require the resource attribute `route` (`R.attr.route`) to equal the route TEMPLATE the framework matched, " +
+	"exactly as written in the source — `/users/:id` (NestJS: the route's path), `/api/customers/{id}` (Spring: " +
+	"HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE) — never the concrete request path such as `/users/42`. A request " +
+	"without the attribute, or with a concrete path, is denied. Renaming a route changes its template, so the rule " +
+	"stops matching and access is denied until the policy is regenerated."
+
+// splitByRoute partitions a disagreeing group by route (ADR 0044). A part
+// is returned when all its members agree; members sharing a route that
+// still disagree — possible only outside ADR 0014's merge — stay colliding.
+func splitByRoute(entries []endpointEntry) (parts [][]endpointEntry, colliding []endpointEntry) {
+	byRoute := map[string][]endpointEntry{}
+	var routes []string
+	for _, en := range entries {
+		if _, ok := byRoute[en.endpoint.Path]; !ok {
+			routes = append(routes, en.endpoint.Path)
+		}
+		byRoute[en.endpoint.Path] = append(byRoute[en.endpoint.Path], en)
+	}
+	sort.Strings(routes)
+	for _, r := range routes {
+		part := byRoute[r]
+		agree := true
+		for _, en := range part[1:] {
+			if !sameGrantSet(part[0].grants, en.grants) || part[0].condition.key() != en.condition.key() {
+				agree = false
+			}
+		}
+		if agree {
+			parts = append(parts, part)
+		} else {
+			colliding = append(colliding, part...)
+		}
+	}
+	return parts, colliding
+}
+
+// roleNamesOf merges a part's grants into a sorted role list and flags
+// the unverified ones, as the agreeing-group branch does.
+func roleNamesOf(part []endpointEntry, resource, action string) ([]string, []UnverifiedRole) {
+	var merged []roleGrant
+	for _, en := range part {
+		for _, g := range en.grants {
+			merged = appendUniqueGrant(merged, g)
+		}
+	}
+	var names []string
+	var flagged []UnverifiedRole
+	for _, gr := range merged {
+		names = append(names, gr.name)
+		if !gr.verified {
+			for _, en := range part {
+				flagged = append(flagged, UnverifiedRole{Resource: resource, Action: action, Role: gr.name, Endpoint: en.endpoint})
+			}
+		}
+	}
+	sort.Strings(names)
+	return names, flagged
+}
+
+// plainOmission is an endpoint's own reason for not being exported, when
+// no rule covers it and no collision explains it: no guard, a guard
+// without a readable role, a permission, an undeclared callee, or two
+// layers sharing no role. ADR 0044 uses it for the unguarded parts of an
+// action split by route, which a collision used to hide.
+func plainOmission(m *model.Model, en endpointEntry, resource string, noCommonRole map[model.ID]conflictingLayers,
+	permissionEndpoints, guardedEndpoints map[model.ID]bool, declOmission map[model.ID]Omission) Omission {
+	if conflict, ok := noCommonRole[en.endpoint.ID]; ok {
+		// This endpoint isn't unguarded — it has role-bearing
+		// evidence in two independent layers that share no
+		// common role (ADR 0012 §2), a more specific and more
+		// useful fact than the generic "guarded, no role"
+		// reason below.
+		return Omission{
+			Endpoint: en.endpoint,
+			Resource: resource,
+			Reason:   ReasonNoCommonRole,
+			Detail:   noCommonRoleDetail(conflict),
+		}
+	}
+	reason, detail := ReasonNoGuard, "no access control detected for this endpoint"
+	if o, ok := declOmission[en.endpoint.ID]; ok {
+		// ADR 0041: permissions are being exported, and this
+		// endpoint's call is undeclared or its combination is.
+		reason, detail = o.Reason, o.Detail
+	} else if permissionEndpoints[en.endpoint.ID] {
+		// ADR 0035 §7. Read, understood, and not a role.
+		reason, detail = ReasonPermissionNotExportable,
+			"requires a permission rather than a role ("+permissionDetail(m, en.endpoint.ID)+"). "+
+				"Cerbos rules grant to roles, so nothing was exported — this is a limit of the "+
+				"export, not a gap in what Sphinxor read. The endpoint's requirement is in the "+
+				"RBAC matrix's Permissions column"
+	} else if guardedEndpoints[en.endpoint.ID] {
+		// Endpoints genuinely "authenticated, any role" export
+		// via AuthenticationRequirement (ADR 0010) instead of
+		// landing here — this branch is only reached now by a
+		// guard extraction doesn't recognize (unknown
+		// authentication semantics) or a literal empty
+		// @Roles() (flagged separately, by empty-role, as a
+		// likely mistake, not exported as if it were correct).
+		reason, detail = ReasonNoRole, "has a guard, but Sphinxor could not determine what access it actually requires — either the guard isn't one Sphinxor recognizes, or the @Roles() call is empty (flagged separately as a likely mistake) — nothing was granted rather than guess"
+	}
+	return Omission{Endpoint: en.endpoint, Resource: resource, Reason: reason, Detail: detail}
 }

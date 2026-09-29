@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Colliding export actions are split by route instead of omitted.** Rules are keyed by
+  controller and HTTP verb. When endpoints sharing both needed different access, all of
+  them were omitted as an action collision. Now each guarded part becomes a rule
+  conditioned on the route template (`"/posts/:id" == R.attr.route`), and unguarded
+  siblings get their true omission reason instead of "collision". Actions that did not
+  collide are untouched: none of the 22 rules the default export produced changes.
+  Recovered: `nestjs-boilerplate` 8 → 10 endpoints in rules, videochat 5 → 13, and
+  RuoYi-Vue with declared permissions 51 → 117 of 117.
+
+  **This adds a calling contract for those actions.** The enforcement point must pass
+  `R.attr.route` as the framework's route template (`/users/:id`,
+  `/api/customers/{id}`), never the concrete path (`/users/42`). A missing or concrete
+  route is denied, and so is a renamed route until the policy is regenerated. The
+  contract is stated in each affected policy file's header and in the export report. See
+  [ADR 0044](docs/decisions/0044-export-action-granularity.md).
+
 ### Changed
 
 - **A method-level permit-all is read as a public declaration.** `@PreAuthorize("permitAll()")`

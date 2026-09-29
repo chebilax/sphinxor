@@ -3,6 +3,8 @@ package cerbos
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/chebilax/sphinxor/internal/extract/nestjs"
@@ -64,28 +66,37 @@ func TestRealWorldExport_NestjsBoilerplate(t *testing.T) {
 	}
 
 	// AuthController's get/patch/delete (all AuthGuard('jwt'), no @Roles())
-	// should now export as "authenticated, any role" grants (ADR 0010) --
-	// confirmed against real data, not just the synthetic
-	// authentication_test.go cases. "post" must NOT be among them: it
-	// shares its Cerbos action with six genuinely unguarded siblings
-	// (login, register, confirm, confirm/new, forgot/password,
-	// reset/password), so it still collides -- exactly the corrected
-	// worked example in ADR 0010's Consequences, not the original,
-	// wrong "post covering both logout and refresh" claim.
+	// export as "authenticated, any role" grants (ADR 0010). Its "post"
+	// shares the action with six unguarded siblings (login, register,
+	// confirm, confirm/new, forgot/password, reset/password): since ADR
+	// 0044 the guarded ones (logout, refresh) become route-conditioned
+	// rules and the six are omitted as no-guard, never covered by a rule.
 	authActions := map[string][]string{}
+	var authPostRoutes []string
 	for _, r := range result.Rules {
-		if r.Resource == "auth" {
+		if r.Resource == "auth" && r.Route == "" {
 			authActions[r.Action] = r.Roles
 		}
+		if r.Resource == "auth" && r.Action == "post" {
+			if r.Route == "" {
+				t.Errorf("auth post rule without a route condition would govern its unguarded siblings: %+v", r)
+			}
+			authPostRoutes = append(authPostRoutes, r.Route)
+		}
+	}
+	for _, o := range result.Omissions {
+		if o.Resource == "auth" && o.Reason != ReasonNoGuard {
+			t.Errorf("auth omission %s %s: reason %s, want no-guard", o.Endpoint.HTTPMethod, o.Endpoint.Path, o.Reason)
+		}
+	}
+	if len(authPostRoutes) != 2 {
+		t.Errorf("auth post routes = %v, want the two guarded ones (logout, refresh)", authPostRoutes)
 	}
 	for _, action := range []string{"get", "patch", "delete"} {
 		roles, ok := authActions[action]
 		if !ok || len(roles) != 1 || roles[0] != anyAuthenticatedRole {
 			t.Errorf("auth %s roles = %v, want [%q] (AuthenticationRequirement)", action, roles, anyAuthenticatedRole)
 		}
-	}
-	if _, ok := authActions["post"]; ok {
-		t.Errorf("auth \"post\" must still collide (shared with six unguarded siblings), got a rule: %+v", authActions["post"])
 	}
 
 	dir := t.TempDir()
@@ -96,11 +107,12 @@ func TestRealWorldExport_NestjsBoilerplate(t *testing.T) {
 }
 
 // TestRealWorldExport_AwesomeNestBoilerplate covers the case that drove
-// this design's action-collision handling: PostController's GET /posts
-// (role RoleType.USER) and GET /posts/:id (@Auth([]), no role) share a
-// Cerbos action under the controller+method mapping (ADR 0009 §2) but
-// have different confirmed roles. Both must be omitted, not merged —
-// confirmed here against the real extracted model, not a synthetic one.
+// the action-collision handling: PostController's GET /posts (role
+// RoleType.USER) and GET /posts/:id (@Auth([]), no role) share a Cerbos
+// action but differ. Since ADR 0044 each becomes a rule conditioned on its
+// own route. The real engine checks the contract ADR 0044 states: the
+// route TEMPLATE is allowed, and a concrete path or a missing route is
+// denied.
 func TestRealWorldExport_AwesomeNestBoilerplate(t *testing.T) {
 	m, _, err := nestjs.Extract("../../extract/nestjs/testdata/awesome-nest-boilerplate/src")
 	if err != nil {
@@ -108,20 +120,35 @@ func TestRealWorldExport_AwesomeNestBoilerplate(t *testing.T) {
 	}
 	result := Translate(m)
 
+	routes := map[string]bool{}
 	for _, r := range result.Rules {
 		if r.Resource == "post" && r.Action == "get" {
-			t.Fatalf("expected no \"get\" rule on \"post\" (GET /posts and GET /posts/:id disagree on roles and must collide), got %+v", r)
+			if r.Route == "" {
+				t.Fatalf("post get rule without a route condition: %+v", r)
+			}
+			routes[r.Route] = true
 		}
 	}
-	collisions := 0
+	if !routes["/posts"] || !routes["/posts/:id"] {
+		t.Errorf("post get routes = %v, want /posts and /posts/:id", routes)
+	}
 	for _, o := range result.Omissions {
 		if o.Reason == ReasonActionCollision {
-			collisions++
+			t.Errorf("no action collision may remain: %+v", o)
 		}
 	}
-	if collisions != 2 {
-		t.Errorf("got %d action-collision omissions, want 2 (GET /posts and GET /posts/:id): %+v", collisions, result.Omissions)
+	dirRoute := t.TempDir()
+	if _, err := WritePolicies(dirRoute, result); err != nil {
+		t.Fatal(err)
 	}
+	policy, err := os.ReadFile(filepath.Join(dirRoute, "post.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(policy), "ROUTE CONDITION") || !strings.Contains(string(policy), "never\n# the concrete request path") {
+		t.Errorf("post.yaml lacks the route-contract header:\n%s", policy)
+	}
+	testRouteContractInEngine(t, dirRoute)
 
 	dir := t.TempDir()
 	if _, err := WritePolicies(dir, result); err != nil {
@@ -159,4 +186,40 @@ export class HealthController {
 		t.Fatalf("WritePolicies: %v", err)
 	}
 	compileWithCerbos(t, out)
+}
+
+// testRouteContractInEngine runs a Cerbos policy test suite against the
+// generated post policy: GET /posts requires RoleType.USER on the route
+// template "/posts". A concrete path, or no route, is denied — the
+// fail-closed behaviour ADR 0044's contract relies on.
+func testRouteContractInEngine(t *testing.T, dir string) {
+	t.Helper()
+	cerbos := cerbosBinary(t)
+	if err := os.MkdirAll(filepath.Join(dir, "tests"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	suite := `name: RouteContract
+principals:
+  user: {id: u, roles: ["RoleType.USER"]}
+resources:
+  template: {kind: post, id: "1", attr: {route: "/posts"}}
+  concrete: {kind: post, id: "2", attr: {route: "/posts?page=1"}}
+  concreteId: {kind: post, id: "3", attr: {route: "/posts/42"}}
+  noroute: {kind: post, id: "4"}
+tests:
+  - name: the template is allowed, a concrete path or none is denied
+    input: {principals: [user], resources: [template, concrete, concreteId, noroute], actions: [get]}
+    expected:
+      - {principal: user, resource: template,   actions: {get: EFFECT_ALLOW}}
+      - {principal: user, resource: concrete,   actions: {get: EFFECT_DENY}}
+      - {principal: user, resource: concreteId, actions: {get: EFFECT_DENY}}
+      - {principal: user, resource: noroute,    actions: {get: EFFECT_DENY}}
+`
+	if err := os.WriteFile(filepath.Join(dir, "tests", "route_test.yaml"), []byte(suite), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(cerbos, "compile", dir).CombinedOutput()
+	if err != nil {
+		t.Fatalf("cerbos compile with the route test suite failed:\n%s", out)
+	}
 }

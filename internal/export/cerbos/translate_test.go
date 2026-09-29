@@ -108,14 +108,12 @@ func TestTranslate_SameActionSameRoleMerges(t *testing.T) {
 	}
 }
 
-// TestTranslate_DifferingRolesCollide is the case this design has to get
-// right: two endpoints on the same controller sharing an HTTP method
-// (real example: awesome-nest-boilerplate's PostController has GET /posts
-// requiring RoleType.USER and GET /posts/:id requiring no specific role).
-// Neither may be exported, since the controller+method mapping (ADR 0009
-// §2) has no path component to tell them apart, and merging would grant
-// the wrong permission to whichever endpoint didn't actually have it.
-func TestTranslate_DifferingRolesCollide(t *testing.T) {
+// TestTranslate_DifferingRolesSplitByRoute: two endpoints on one
+// controller and verb with different roles. Merging would grant the wrong
+// role to one of them; before ADR 0044 both were omitted as a collision.
+// Now each becomes its own rule, conditioned on its own route, so neither
+// rule can govern the other endpoint.
+func TestTranslate_DifferingRolesSplitByRoute(t *testing.T) {
 	m := &model.Model{
 		Controllers: []model.Controller{{ID: "c1", Name: "PostController"}},
 		Endpoints: []model.Endpoint{
@@ -134,27 +132,30 @@ func TestTranslate_DifferingRolesCollide(t *testing.T) {
 
 	result := Translate(m)
 
-	if len(result.Rules) != 0 {
-		t.Fatalf("expected no rules from a colliding action, got %+v", result.Rules)
+	if len(result.Omissions) != 0 || len(result.Rules) != 2 {
+		t.Fatalf("want two route-conditioned rules and no omission, got rules %+v omissions %+v", result.Rules, result.Omissions)
 	}
-	if len(result.Omissions) != 2 {
-		t.Fatalf("expected both colliding endpoints omitted, got %+v", result.Omissions)
-	}
-	for _, o := range result.Omissions {
-		if o.Reason != ReasonActionCollision {
-			t.Errorf("omission reason = %q, want %q", o.Reason, ReasonActionCollision)
+	want := map[string]string{"/posts": "RoleType.USER", "/posts/:id": "RoleType.ADMIN"}
+	for _, r := range result.Rules {
+		if r.Route == "" || r.Condition == nil || r.Condition.Expr != `"`+r.Route+`" == R.attr.route` {
+			t.Errorf("rule %+v is not conditioned on its own route", r)
 		}
+		if len(r.Roles) != 1 || r.Roles[0] != want[r.Route] {
+			t.Errorf("route %s roles %v, want [%s]", r.Route, r.Roles, want[r.Route])
+		}
+	}
+	if len(result.RoutedActions) != 1 || result.RouteContract == "" {
+		t.Errorf("RoutedActions = %v, contract set = %v", result.RoutedActions, result.RouteContract != "")
 	}
 }
 
-// TestTranslate_ConfirmedSiblingWithUnconfirmedCollide is the bug this
-// design was rewritten to close: one endpoint confirmed with a role, its
-// action-sharing sibling with NO guard at all (or guarded with no role).
-// A naive implementation that only compares "confirmed" endpoints against
-// each other would emit a Rule from the confirmed one alone and silently
-// let it also govern the unconfirmed sibling once matched by resource+
-// action in a real Cerbos deployment.
-func TestTranslate_ConfirmedSiblingWithUnconfirmedCollide(t *testing.T) {
+// TestTranslate_ConfirmedSiblingWithUnconfirmed is the bug the collision
+// design closed: a rule from the confirmed endpoint alone, keyed only by
+// resource and action, would also govern the unguarded sibling in Cerbos.
+// ADR 0044 keeps that closed a different way: the rule is conditioned on
+// the confirmed endpoint's route, so it cannot match the sibling, and the
+// sibling gets its true reason, no-guard, instead of "collision".
+func TestTranslate_ConfirmedSiblingWithUnconfirmed(t *testing.T) {
 	m := &model.Model{
 		Controllers: []model.Controller{{ID: "c1", Name: "PostController"}},
 		Endpoints: []model.Endpoint{
@@ -172,16 +173,11 @@ func TestTranslate_ConfirmedSiblingWithUnconfirmedCollide(t *testing.T) {
 
 	result := Translate(m)
 
-	if len(result.Rules) != 0 {
-		t.Fatalf("a confirmed endpoint must not produce a Rule when an action-sharing sibling has no confirmed role, got %+v", result.Rules)
+	if len(result.Rules) != 1 || result.Rules[0].Route != "/posts" || result.Rules[0].Condition == nil {
+		t.Fatalf("want one rule conditioned on /posts, got %+v", result.Rules)
 	}
-	if len(result.Omissions) != 2 {
-		t.Fatalf("expected both endpoints omitted (collision), got %+v", result.Omissions)
-	}
-	for _, o := range result.Omissions {
-		if o.Reason != ReasonActionCollision {
-			t.Errorf("omission reason = %q, want %q for endpoint %s", o.Reason, ReasonActionCollision, o.Endpoint.Path)
-		}
+	if len(result.Omissions) != 1 || result.Omissions[0].Endpoint.Path != "/posts/:id" || result.Omissions[0].Reason != ReasonNoGuard {
+		t.Errorf("want /posts/:id omitted as no-guard, got %+v", result.Omissions)
 	}
 }
 

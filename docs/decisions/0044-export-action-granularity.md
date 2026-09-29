@@ -2,7 +2,8 @@
 
 ## Status
 
-**Proposed — a measurement ADR.** It takes the decision [ADR 0041](0041-permission-export.md)
+**Accepted with option B** (2026-09-29), on the owner's condition that the second calling
+contract be stated where it is read (§ *The contract*). Implemented. It takes the decision [ADR 0041](0041-permission-export.md)
 §7 recorded as the export's next: rules are keyed by (controller, HTTP verb), so two
 endpoints of one controller and verb with different requirements collide, and both are
 omitted. It amends [ADR 0009](0009-cerbos-exporter.md) §2's action mapping, if accepted.
@@ -92,18 +93,63 @@ permission endpoint the export can reach becomes a rule: 117 of 117.
 none of the 22 rules exported today, and it asks the enforcement point for the route only on
 the actions that need it. A buys the same recovery by renaming every action.
 
-- **Route value:** `Endpoint.Path` verbatim, the framework's own template. The export
-  report states the contract: *"rules conditioned on `R.attr.route` expect the route
-  template the framework matched, as `HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE`
-  (Spring) or the route's `path` (NestJS) report it, never the concrete request path."*
-  The report lists which actions carry the condition.
+- **Route value:** `Endpoint.Path` verbatim, the framework's own template.
 - **Unguarded siblings** get their own omission reason (`no-guard`, or whatever their
-  requirement dictates), as if they had never collided.
+  requirement dictates), as if they had never collided. **39 endpoints** on the measured
+  targets move from "collision" to their true reason: 6 in `nestjs-boilerplate`, 1 in
+  `blog-api`, 21 in videochat, and 11 in RuoYi-Vue declared.
+- **Renaming a route changes the policy.** The condition names the template as written,
+  so a renamed route no longer matches its rule and access is denied until the policy is
+  regenerated. That is the safe direction, and it is also what happens to any policy
+  derived from source: it describes the source it was generated from.
 - **Endpoints whose route cannot be named** stay omitted exactly as today: unresolved
   paths, route collisions across controllers, unresolved versions, `ANY` verbs. B keys on
   a readable route and does not change those rules.
 - **A group whose members share a route and still disagree** cannot occur outside ADR
   0014's merge, which already unions them. If it ever did, it stays an action collision.
+
+### The contract, stated where it is read
+
+B creates two calling contracts: most actions need only resource and verb, and a
+route-split action also needs the route template. A deployer who does not know gets
+unexplained denials. So the contract appears in three places:
+- **each generated policy file** that uses a route condition carries a `ROUTE CONDITION`
+  header comment. It names the attribute (`R.attr.route`) and the format (the template,
+  `/users/:id` or `/api/customers/{id}`, never `/users/42`), and says that renaming a route
+  denies until regeneration;
+- **the export report** has a *Route-conditioned actions* section with the same contract,
+  listing each split action;
+- **the JSON report** carries `RouteContract` and `RoutedActions`, and each split rule
+  carries its `Route`.
+
+**The fail-closed behaviour is tested in the real engine**
+(`TestRealWorldExport_AwesomeNestBoilerplate`, run by CI's Cerbos step). On the generated
+`post` policy, a `RoleType.USER` principal is:
+- allowed with `route: "/posts"`;
+- denied with a concrete path (`/posts?page=1`, `/posts/42`);
+- denied with no route.
+
+Dropping the route condition from split rules fails the three deny cases, so the test
+catches the regression it exists for.
+
+### Measured, as implemented
+
+`main` at `7c64037` against this implementation:
+- **lint JSON:** byte-identical on all 42 targets;
+- **exit codes:** unchanged;
+- **exports:** changed on exactly the five predicted targets:
+
+| Target | Rules before → after | Omissions before → after |
+|---|---|---|
+| `nestjs-boilerplate` | 7 → 9 | 8 → 6 |
+| `awesome-nest-boilerplate` | 2 → 4 | 6 → 4 |
+| `ghostfolio-shape` | 2 → 3 | 2 → 1 |
+| `blog-api` | 0 → 1 | 4 → 3 |
+| videochat | 3 → 11 | 47 → 39 |
+
+**No existing rule line is removed** from any policy file. The only non-comment line
+removed anywhere is `blog-api`'s `rules: []`, which now holds a rule. The 22 rules the
+export produced before are unchanged.
 
 ## Alternatives considered
 
