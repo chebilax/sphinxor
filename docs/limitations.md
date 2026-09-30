@@ -2,6 +2,8 @@
 
 `vision.md` commits Sphinxor to heuristic, confidence-graded analysis, not formal verification — and to owning that openly rather than promising completeness general-purpose SAST tools already failed to deliver. This file is where that commitment gets kept concretely: real gaps in what the current static analysis can see, found empirically against real code, not hypothesized in advance.
 
+**How much of a real project this adds up to** is measured in [`coverage.md`](coverage.md). On Spring Security projects in the measurement corpus, 24% of endpoints are known protected, 1% known unprotected, and 75% unknown, mostly for a few mechanical reasons. It also covers the projects whose authorization is not Spring Security at all.
+
 ## Spring Security: no enumerated mechanism is silent, as of 2026-09-21 (commit `8afa4a1`)
 
 [ADR 0029](decisions/0029-spring-security-scope.md) enumerates every Spring Security mechanism Sphinxor's Spring extractor deals with, and defines "done" as **no mechanism on that list having status `silent`** — present in a project, not interpreted, and nothing saying so. **That state is now reached.** Every mechanism it lists is either *read* or *detected and announced*; the last two closed were functional routing ([ADR 0033](decisions/0033-functional-routing.md)) and the nested `@RestController` ([ADR 0034](decisions/0034-nested-controllers.md)), in commit `8afa4a1` (#40).
