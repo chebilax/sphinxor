@@ -82,6 +82,12 @@ type filterChainRule struct {
 	// absent — the rule may match any path, so it stops evaluation like
 	// any other opaque rule (ADR 0018) and contributes nothing.
 	matcherUnreadable bool
+
+	// conditional marks a rule that is not straight-line code at the top
+	// of its lambda — inside a branch, loop, try or nested lambda (ADR 0040
+	// §4). Its terminal is kept, but whether it is registered is decided at
+	// runtime, so it may not apply (ADR 0018 Amendment 1).
+	conditional bool
 }
 
 // findSecurityFilterChainRules locates the project's SecurityFilterChain
@@ -387,11 +393,10 @@ func collectChainRules(lambda *sitter.Node, src []byte, ctx chainContext) []filt
 			if rule, ok := chainRuleFromTerminal(n, src, ctx); ok {
 				if !straight {
 					// ADR 0040 §4/§5: a rule configured inside a branch,
-					// loop, try or nested lambda is decided at runtime.
-					// It keeps its matcher, so it still stops evaluation
-					// for what it could match (ADR 0018), and contributes
-					// nothing.
-					rule.kind, rule.roles = chainUnrecognized, nil
+					// loop, try or nested lambda is decided at runtime. It
+					// keeps its matcher and its terminal, and may or may
+					// not apply (ADR 0018 Amendment 1).
+					rule.conditional = true
 				}
 				out = append(out, rule)
 			} else if passesRegistry(n, registry, src) {
@@ -543,12 +548,13 @@ func chainRuleFromTerminal(terminal *sitter.Node, src []byte, ctx chainContext) 
 	// line using terminal.StartPoint() before this fix).
 	line := int(name.StartPoint().Row) + 1
 
-	// An unreadable matcher makes the whole rule opaque regardless of how
-	// recognizable its terminal is: knowing it grants ADMIN is useless
-	// when we can't tell which paths it grants ADMIN *on*. Reading the
-	// terminal anyway and attaching those roles is exactly the defect ADR
-	// 0020 §1 corrects. chainUnrecognized already carries the right
-	// semantics from ADR 0018 — opaque, still governs evaluation order.
+	// An unreadable matcher keeps its terminal. Attaching the terminal's
+	// roles to every path would be the defect ADR 0020 §1 corrects, and
+	// that never happens: evaluateURLRules treats a rule with an unreadable
+	// matcher as one that may or may not apply, never as a sure match.
+	// What the terminal says still decides whether that uncertainty could
+	// narrow access (ADR 0018 Amendment 1): permitAll() cannot, hasRole()
+	// can.
 	base := filterChainRule{
 		method:            method,
 		patterns:          patterns,
@@ -557,11 +563,6 @@ func chainRuleFromTerminal(terminal *sitter.Node, src []byte, ctx chainContext) 
 		line:              line,
 		offset:            name.StartByte(),
 	}
-	if matcherUnreadable {
-		base.kind = chainUnrecognized
-		return base, true
-	}
-
 	switch tname := name.Content(src); {
 	case chainRoleFuncs[tname]:
 		// ADR 0040 §3. Every role argument is evaluated — a literal, or a
@@ -779,6 +780,73 @@ func firstMatch(rules []filterChainRule, e model.Endpoint) (filterChainRule, boo
 	return filterChainRule{}, false
 }
 
+// urlOutcome is what the URL layer establishes for one endpoint.
+type urlOutcome int
+
+const (
+	// urlNoRule: no rule can match the endpoint.
+	urlNoRule urlOutcome = iota
+	// urlSure: exactly one rule governs it, read and recognized.
+	urlSure
+	// urlCannotNarrow: rules that may or may not apply were met, and every
+	// outcome they allow is permitAll(), authenticated() or no rule —
+	// none narrows the method layer.
+	urlCannotNarrow
+	// urlUnknown: some possible outcome could narrow access — a role rule,
+	// denyAll(), or an opaque rule — so the effective policy is unknown.
+	urlUnknown
+)
+
+// evaluateURLRules walks the rules in source order and collects every
+// outcome the endpoint can reach (ADR 0018 Amendment 1):
+//   - a rule that surely matches, readable and recognized, ends the walk;
+//   - a rule that may not apply (unreadable matcher, or conditional) adds
+//     its terminal as one outcome, and the walk continues past it;
+//   - an opaque rule (an unrecognized terminal, a helper call, or a
+//     verb-scoped rule met by an ANY endpoint, ADR 0028 §2) could be
+//     anything, so the result is unknown at once.
+//
+// The returned rule is the governing one for urlSure, and the first rule
+// that made the result uncertain for urlUnknown.
+func evaluateURLRules(rules []filterChainRule, e model.Endpoint) (filterChainRule, urlOutcome) {
+	var first filterChainRule
+	uncertain, narrowing := false, false
+	for _, r := range rules {
+		if !matchesRule(r, e) {
+			continue
+		}
+		mayNotApply := r.matcherUnreadable || r.conditional
+		opaque := r.kind == chainUnrecognized || (r.method != nil && e.HTTPMethod == model.MethodAny)
+		if !uncertain {
+			first = r
+		}
+		if opaque {
+			return first, urlUnknown
+		}
+		if r.kind == chainRoles || r.kind == chainDenyAll {
+			if !uncertain && !mayNotApply {
+				return r, urlSure
+			}
+			narrowing = true
+		}
+		if !mayNotApply {
+			if !uncertain {
+				return r, urlSure
+			}
+			break // a sure match ends the walk; its outcome is recorded above
+		}
+		uncertain = true
+	}
+	switch {
+	case !uncertain:
+		return filterChainRule{}, urlNoRule
+	case narrowing:
+		return first, urlUnknown
+	default:
+		return first, urlCannotNarrow
+	}
+}
+
 // applySecurityFilterChain evaluates rules against every endpoint in
 // b.model.Endpoints and attaches the URL layer's GuardApplication/
 // RoleReferences/authCandidate, mirroring guards.go's applyGuards for the
@@ -786,10 +854,19 @@ func firstMatch(rules []filterChainRule, e model.Endpoint) (filterChainRule, boo
 // SecurityConfig class), not the endpoint's controller — ADR 0012 §1: an
 // honest pointer to where the evidence actually lives.
 func (b *builder) applySecurityFilterChain(rules []filterChainRule, file string, roleByName map[string]model.ID) {
-	for _, e := range b.model.Endpoints {
-		rule, matched := firstMatch(rules, e)
-		if !matched {
-			continue // no rule matches at all: URL layer contributes nothing, same as no SecurityFilterChain
+	for i, e := range b.model.Endpoints {
+		rule, outcome := evaluateURLRules(rules, e)
+		switch outcome {
+		case urlNoRule, urlCannotNarrow:
+			// Nothing from the URL layer: no rule applies, or every rule
+			// that might apply is permitAll()/authenticated()-like and the
+			// method layer alone is exact (ADR 0018 Amendment 1).
+			continue
+		case urlUnknown:
+			b.model.Endpoints[i].URLRuleUnresolved = true
+			b.model.Endpoints[i].URLRuleFile = file
+			b.model.Endpoints[i].URLRuleLine = rule.line
+			continue
 		}
 		switch rule.kind {
 		case chainDenyAll:

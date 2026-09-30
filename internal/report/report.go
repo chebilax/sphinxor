@@ -73,8 +73,13 @@ type Row struct {
 	// renders the Guards cell "?" rather than "-": "-" says nothing
 	// guards this endpoint, which is the false claim that decision
 	// exists to stop.
-	UnrecognizedAuth bool            `json:"unrecognizedAuth,omitempty"`
-	Findings         []model.Finding `json:"findings,omitempty"`
+	UnrecognizedAuth bool `json:"unrecognizedAuth,omitempty"`
+	// URLRuleUnresolved marks an endpoint whose URL rule could not be read
+	// while it could narrow access (ADR 0018 Amendment 1). The guards and
+	// roles shown are the method layer's, kept as inventory; Markdown adds
+	// "URL ?" to the Guards cell.
+	URLRuleUnresolved bool            `json:"urlRuleUnresolved,omitempty"`
+	Findings          []model.Finding `json:"findings,omitempty"`
 }
 
 // Matrix is the full RBAC matrix: one row per endpoint, plus every
@@ -166,6 +171,7 @@ func BuildMatrix(m *model.Model, findings []model.Finding) Matrix {
 			RolesUnresolved:   rolesUnresolvedByEndpoint[e.ID],
 			Permissions:       permissionsByEndpoint[e.ID],
 			UnrecognizedAuth:  unrecognizedByEndpoint[e.ID],
+			URLRuleUnresolved: e.URLRuleUnresolved,
 			Findings:          findingsByEndpoint[e.ID],
 		})
 	}

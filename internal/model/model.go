@@ -548,6 +548,15 @@ type Endpoint struct {
 	// because assuming they are one endpoint is what merged their guards
 	// (NestJS) or dropped one of them outright (Spring).
 	RouteCollision bool
+
+	// URLRuleUnresolved marks an endpoint whose effective policy is unknown
+	// because a URL rule that may govern it could not be read and some
+	// outcome of it could narrow access (ADR 0018 Amendment 1). The method
+	// layer's guards stay as inventory; the export omits the endpoint.
+	// URLRuleLine is the line of the first such rule, for the warning.
+	URLRuleUnresolved bool
+	URLRuleFile       string
+	URLRuleLine       int
 	// VersionUnresolved marks a route that declares a version whose value
 	// could not be read — a constant reference, an array of them, a
 	// computed value. Two such endpoints must never be assumed equal, so

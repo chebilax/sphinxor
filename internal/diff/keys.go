@@ -181,6 +181,13 @@ func protectedEndpoints(m *model.Model) map[model.ID]bool {
 	for _, r := range m.AuthenticationRequirements {
 		out[r.EndpointID] = true
 	}
+	// ADR 0018 Amendment 1: a URL rule that may narrow access was not read.
+	// Not confirmed public, like an unrecognized annotation above.
+	for _, e := range m.Endpoints {
+		if e.URLRuleUnresolved {
+			out[e.ID] = true
+		}
+	}
 	return out
 }
 

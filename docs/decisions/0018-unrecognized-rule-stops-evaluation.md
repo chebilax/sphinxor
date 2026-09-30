@@ -4,6 +4,12 @@
 
 Accepted.
 
+**Amendment 1: Accepted** (2026-09-30, the owner's decision). An endpoint whose first
+matching rule is unresolved no longer gets "nothing from the URL layer". Its effective
+policy is unknown whenever some possible outcome of the unresolved rule could narrow
+access. That closes the latent over-grant recorded in *Consequences* below. See
+*Amendment 1*.
+
 ## Context
 
 ADR 0012 §1 states: "A rule using an unrecognized shape is simply not
@@ -122,3 +128,89 @@ convenience.
   determine" — which any exporter or rule needing that distinction would
   introduce. Getting evaluation order right by anticipation is cheaper
   than retrofitting it under a model that has started to trust it.
+
+## Amendment 1 — An unresolved rule makes the effective policy unknown when it could narrow access (2026-09-30)
+
+### The latent issue, now reachable
+
+*Consequences* recorded that "unresolved" was handled exactly like `permitAll()`: the
+URL layer contributes nothing. The false-permissive outcome was latent until "the model
+distinguishes 'intentionally public' from 'could not determine'".
+
+The Cerbos export already crosses that line. [ADR 0012](0012-securityfilterchain-effective-policy.md)
+makes the effective policy the intersection of both layers, and an intersection can only
+narrow. An endpoint with a method guard whose URL rule is opaque was exported with the
+method roles alone, as if the URL layer added nothing. The opaque rule may restrict
+further than the method guard, or deny outright, so the export can grant more than the
+application does. The shapes:
+- `.access(...)`;
+- a rule inside a branch ([ADR 0040](0040-multiple-security-filter-chains.md) §4, as read
+  since #74);
+- a helper method handed the registry.
+
+**Measured before this amendment** on corpus-20, the 12 corpus-40 projects drawn so
+far, and every fixture:
+- **No endpoint is exported** with a method guard behind an unresolved URL rule.
+- **Five projects have endpoints behind an unresolved rule:** RuoYi-Vue 148, mateclaw
+  501, wvp 395, arthas 22, and the `blog-api` fixture 1. Only RuoYi-Vue's are
+  method-guarded, 117 of them, and they are not exportable without declarations.
+- **With [ADR 0041](0041-permission-export.md)'s declarations for RuoYi-Vue,** the
+  export writes 100 rules on endpoints governed first by an opaque rule:
+
+  ```java
+  permitAllUrl.getUrls().forEach(url -> requests.requestMatchers(url).permitAll());
+  ```
+
+  Those 100 rules are correct, and that is what shapes this amendment.
+
+### Decision: the outcome set
+
+A rule that matches an endpoint but **may not apply** keeps its terminal. That is a rule
+with an unreadable matcher, or one that is not straight-line code (ADR 0040 §4). It then
+contributes two possible outcomes: its terminal, or evaluation continuing to the later
+rules. Evaluation collects every outcome an endpoint can reach:
+- **A rule that surely matches, is readable and recognized** ends the walk, as before.
+  With no uncertain rule before it, the result is exactly ADR 0012's.
+- **A rule that may not apply** adds its terminal and evaluation continues.
+- **An opaque rule adds "anything".** That is an unrecognized terminal such as
+  `.access(...)`, a helper call handed the registry, or a verb-scoped rule met by an ANY
+  endpoint (ADR 0028 §2).
+- **Reaching the end** without a sure match adds "no rule".
+
+**The effective policy is unknown only when some possible outcome could narrow access:**
+a role rule, `denyAll()`, or "anything". When every outcome is `permitAll()`,
+`authenticated()` or "no rule", the URL layer cannot narrow the method layer. The method
+layer alone is then exact, and it is exported.
+
+RuoYi-Vue is the second case. Its opaque rule ends in `permitAll()` or reaches
+`authenticated()`, so its 100 declared rules stay. A first draft of this amendment made
+every unresolved rule unknown. It would have dropped them, and was narrowed after this
+measurement.
+
+### Consumers (interim)
+
+| Consumer | An endpoint whose effective policy is unknown |
+|---|---|
+| **Cerbos export** | Omitted, under its own reason `url-rule-unresolved`, naming the rule's line. |
+| **Matrix** | The method layer's guards and roles still shown, as inventory. The Guards cell gains `URL ?`, and JSON rows gain `urlRuleUnresolved: true` (omitted when false, so every other row is byte-identical). A run warning names the endpoints. |
+| **`mutating-endpoint-without-access-control`** | Still fires at Low, with a message saying the URL rule that applies could not be read. The unread rule may be a `permitAll()`, so the endpoint may truly be public, and suppressing the finding would hide that. |
+| **`sphinxor diff` and the became-public gate** | Counted as not confirmed public, as [ADR 0036](0036-became-public-gates-ci.md) already does for an unrecognized annotation. The gate fires when an endpoint goes from protected, or unknown, to known unprotected. |
+
+### Measured after
+
+Main against this change, on corpus-20, the 12 corpus-40 projects, every fixture, and
+the #74 reproduction. Everything else is byte-identical in lint JSON, policies, export
+report and warnings.
+
+| Target | Rows marked `URL ?` | Export | Findings |
+|---|---:|---|---|
+| mateclaw | 501 of 559, all behind its unreadable `OPENAPI_PATHS` branch, whose `else` arm is `hasRole("ADMIN")` | 0 rules before and after; 501 omissions change reason from `no-guard` to `url-rule-unresolved` | 307, the same count, and the messages name the rule |
+| RuoYi-Vue | 1, `ANY /`: a verb-scoped `requestMatchers(GET, "/", …)` met by an ANY endpoint | policies byte-identical | unchanged |
+| `blog-api` fixture | 1 of 4, the `.access(exportForTenant)` endpoint | 1 rule before and after | unchanged |
+| #74 reproduction | 2 of 2 | 0 rules before and after | unchanged |
+
+RuoYi-Vue's export with ADR 0041 declarations is byte-identical: 100 rules, 31
+omissions.
+
+This table is the interim behaviour. The per-endpoint review list of the next ADR is
+meant to replace the `mutating-endpoint-without-access-control` row.

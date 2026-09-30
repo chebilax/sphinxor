@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An endpoint behind an unread URL rule is no longer exported from its method layer
+  alone.** The effective policy is the intersection of both layers (ADR 0012). When the
+  URL rule that may govern an endpoint could not be read, as with `.access(...)`, an
+  unreadable matcher, a rule in a branch or a helper call, the export still granted the
+  method guard's roles, although that rule may narrow them or deny outright.
+
+  The endpoint's effective policy is now unknown whenever some possible outcome of the
+  unread rule could narrow access: a role rule, `denyAll()`, or an opaque rule. See
+  [ADR 0018](docs/decisions/0018-unrecognized-rule-stops-evaluation.md) Amendment 1.
+  - The export omits it under a new reason, `url-rule-unresolved`.
+  - The matrix keeps the method layer as inventory and marks the row `URL ?`, and JSON
+    rows gain `urlRuleUnresolved`.
+  - A warning names the rule.
+  - `mutating-endpoint-without-access-control` still fires, and names the unread rule.
+  - `sphinxor diff` does not count the endpoint as public.
+
+  When every outcome is `permitAll()` or `authenticated()`, the method layer alone is
+  exact and is still exported. RuoYi-Vue's runtime `@Anonymous` URL list is that case,
+  and its export with declarations keeps all 100 rules.
+
+  Measured on corpus-20, the 12 corpus-40 projects and all fixtures: no exported rule
+  changes. mateclaw gains 501 marked rows, RuoYi-Vue and the `blog-api` fixture one each.
+
 - **A SecurityFilterChain rule inside an `if`/`else` was read as if it always applied.**
   With one chain, both arms of a branch inside the `authorizeHttpRequests` lambda were
   read as one list, and the first arm won. The Cerbos export could then grant a role that

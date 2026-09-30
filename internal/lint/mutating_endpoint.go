@@ -155,6 +155,13 @@ func mutatingMessage(e model.Endpoint, hasPostAuthorize bool, status model.Metho
 				"back, which is not visible here.",
 			e.HTTPMethod, e.Path)
 	}
+	if e.URLRuleUnresolved {
+		// ADR 0018 Amendment 1 (interim): the URL rule that applies was not
+		// read. It may be a permitAll(), so the endpoint may truly be
+		// public; the finding stays, and says what is missing.
+		return fmt.Sprintf("%s %s has no detected guard on its method, and the URL rule that applies to it "+
+			"(%s:%d) could not be read", e.HTTPMethod, e.Path, e.URLRuleFile, e.URLRuleLine)
+	}
 	return fmt.Sprintf("%s %s has no detected guard or role decorator", e.HTTPMethod, e.Path)
 }
 

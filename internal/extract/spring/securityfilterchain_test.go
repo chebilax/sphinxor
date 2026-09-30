@@ -291,4 +291,9 @@ func TestAppliesSecurityFilterChain_UnrecognizedMatchStopsEvaluation(t *testing.
 	if len(b.authCandidates) != 0 {
 		t.Errorf("expected no authCandidates (unresolved, not authenticated-any-role), got %+v", b.authCandidates)
 	}
+	// ADR 0018 Amendment 1: the latent value is now active. The opaque rule
+	// could narrow access, so the endpoint is marked and the export omits it.
+	if !b.model.Endpoints[0].URLRuleUnresolved {
+		t.Error("expected the endpoint marked URLRuleUnresolved: .access(exportForTenant) may narrow access")
+	}
 }
