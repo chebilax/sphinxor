@@ -119,6 +119,13 @@ func findSecurityFilterChainRules(files []parsedFile, consts *constIndex) (rules
 	if len(lambdas) != 1 {
 		return nil, "", false
 	}
+	// Exactly one BEAN, not one lambda: a second chain whose rules are
+	// configured another way (a method reference, a customizer bean) would
+	// otherwise leave this lambda read as the whole URL layer, while the
+	// other chain may govern some paths first (ADR 0012 §1, ADR 0040).
+	if countChainBeans(files).servlet != 1 {
+		return nil, "", false
+	}
 
 	ctx := chainContext{consts: consts, scope: consts.files[relPaths[0]], class: enclosingClassFQ(lambdas[0], srcs[0])}
 	rules = collectChainRules(lambdas[0], srcs[0], ctx)
