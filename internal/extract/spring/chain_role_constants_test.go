@@ -137,7 +137,7 @@ public class SecurityConfig {
 	for _, want := range []string{
 		"2 SecurityFilterChain beans were found",
 		"1 of them conditional on @Profile/@Conditional",
-		"1 configuring their rules inside a code branch",
+		"1 configuring their rules inside a code branch or a helper method",
 		"1 with a securityMatcher that is not string literals",
 	} {
 		if !strings.Contains(r, want) {

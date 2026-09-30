@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A SecurityFilterChain rule inside an `if`/`else` was read as if it always applied.**
+  With one chain, both arms of a branch inside the `authorizeHttpRequests` lambda were
+  read as one list, and the first arm won. The Cerbos export could then grant a role that
+  the running configuration denies: `USER` on `DELETE /reports/{id}` where the default
+  setting requires `ADMIN`. [ADR 0040](docs/decisions/0040-multiple-security-filter-chains.md)
+  §4 had already decided that such a rule is decided at runtime. The check looked only
+  for a branch around the `authorizeHttpRequests` call, never inside its lambda.
+
+  Every rule that is not straight-line code at the top level of the lambda is now read as
+  unknown and stops evaluation, per ADR 0018, so the export omits instead of granting:
+  - rules inside an `if`/`else`, `switch`, loop, ternary, `try` or nested lambda;
+  - rules added by a helper method that receives the registry. These were not read at
+    all before, so a later `anyRequest()` answered for their paths.
+
+  With several chains, the warning now names these shapes as a blocker, as ADR 0040 §5
+  intended.
+
+  Measured on corpus-20 and the 12 corpus-40 projects drawn so far: no endpoint, matrix
+  row or exported policy changes. mateclaw's one branched rule covers only springdoc
+  paths, which are not endpoints. Two warnings gain the blocker: fineract (one chain) and
+  spring-cloud-dataflow (two chains, each handing its registry to
+  `SecurityConfigUtils.configureSimpleSecurity`).
+
 ## [0.11.0] - 2026-09-29
 
 Two changes to how Sphinxor reads access, one in lint and one in the export:

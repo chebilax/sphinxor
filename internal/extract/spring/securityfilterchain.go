@@ -201,7 +201,7 @@ type urlLayerForms struct {
 	// ADR 0040 §5: among the servlet chains, what blocks reading several
 	// of them together — named in the warning, instead of the count alone.
 	servletConditional   int // @Profile / @Conditional… on the bean or its class
-	servletBranched      int // authorizeHttpRequests inside a code branch, or more than once
+	servletBranched      int // authorizeHttpRequests more than once, inside a code branch, or with rules off straight-line code in its lambda
 	servletOpaqueMatcher int // a securityMatcher that is not string literals
 }
 
@@ -258,14 +258,20 @@ func isConditionalBean(method, class *sitter.Node, src []byte) bool {
 }
 
 // rulesInBranch: the chain configures authorizeHttpRequests more than
-// once, or inside an if/else/switch, so which rules apply is decided at
-// runtime (ADR 0040 §4, 3) — microcks's `if (keycloakEnabled)`.
+// once, or inside an if/else/switch, or configures rules off straight-line
+// code inside its lambda (hasRuleOffStraightLine), so which rules apply is
+// decided at runtime (ADR 0040 §4, 3) — microcks's `if (keycloakEnabled)`.
 func rulesInBranch(method *sitter.Node, src []byte) bool {
 	calls := findMethodInvocations(method, src, "authorizeHttpRequests")
 	if len(calls) > 1 {
 		return true
 	}
 	for _, c := range calls {
+		// A branch inside the lambda counts too: ADR 0040 §4, 3 is about
+		// where the rules sit, not only where the call sits.
+		if lam := soleLambdaArg(c.ChildByFieldName("arguments")); lam != nil && hasRuleOffStraightLine(lam, src) {
+			return true
+		}
 		for p := c.Parent(); p != nil && p != method; p = p.Parent() {
 			switch p.Type() {
 			case "if_statement", "switch_expression", "switch_statement", "ternary_expression":
@@ -369,21 +375,137 @@ func enclosingClassFQ(n *sitter.Node, src []byte) string {
 	return ""
 }
 
-func collectChainRules(lambdaBody *sitter.Node, src []byte, ctx chainContext) []filterChainRule {
+func collectChainRules(lambda *sitter.Node, src []byte, ctx chainContext) []filterChainRule {
 	var out []filterChainRule
-	var walk func(n *sitter.Node)
-	walk = func(n *sitter.Node) {
+	registry := lambdaParamName(lambda, src)
+	var walk func(n *sitter.Node, straight bool)
+	walk = func(n *sitter.Node, straight bool) {
+		if n != lambda && notStraightLine[n.Type()] {
+			straight = false
+		}
 		if n.Type() == "method_invocation" {
 			if rule, ok := chainRuleFromTerminal(n, src, ctx); ok {
+				if !straight {
+					// ADR 0040 §4/§5: a rule configured inside a branch,
+					// loop, try or nested lambda is decided at runtime.
+					// It keeps its matcher, so it still stops evaluation
+					// for what it could match (ADR 0018), and contributes
+					// nothing.
+					rule.kind, rule.roles = chainUnrecognized, nil
+				}
 				out = append(out, rule)
+			} else if passesRegistry(n, registry, src) {
+				// The registry handed to another method: whatever that
+				// method adds is not read, and may match any path. An
+				// opaque rule at this position stops evaluation for every
+				// endpoint that reaches it.
+				out = append(out, filterChainRule{
+					kind:              chainUnrecognized,
+					matcherUnreadable: true,
+					line:              int(n.StartPoint().Row) + 1,
+					offset:            n.StartByte(),
+				})
 			}
 		}
 		for _, c := range namedChildren(n) {
-			walk(c)
+			walk(c, straight)
 		}
 	}
-	walk(lambdaBody)
+	walk(lambda, true)
 	return out
+}
+
+// notStraightLine are the constructs under which a rule no longer runs
+// unconditionally, once, in source order: whether it is registered, how
+// often, or in what order is decided at runtime.
+var notStraightLine = map[string]bool{
+	"if_statement":                 true,
+	"switch_expression":            true,
+	"switch_statement":             true,
+	"ternary_expression":           true,
+	"for_statement":                true,
+	"enhanced_for_statement":       true,
+	"while_statement":              true,
+	"do_statement":                 true,
+	"try_statement":                true,
+	"try_with_resources_statement": true,
+	"catch_clause":                 true,
+	"finally_clause":               true,
+	"synchronized_statement":       true,
+	"lambda_expression":            true,
+	"class_body":                   true,
+}
+
+// lambdaParamName is the name of an authorizeHttpRequests lambda's single
+// parameter, the rule registry. Empty when it cannot be read.
+func lambdaParamName(lambda *sitter.Node, src []byte) string {
+	p := lambda.ChildByFieldName("parameters")
+	if p == nil {
+		return ""
+	}
+	if p.Type() == "identifier" {
+		return p.Content(src)
+	}
+	for _, c := range namedChildren(p) {
+		if c.Type() == "identifier" {
+			return c.Content(src)
+		}
+		if name := c.ChildByFieldName("name"); name != nil {
+			return name.Content(src)
+		}
+	}
+	return ""
+}
+
+// passesRegistry reports whether call hands the registry itself to
+// another method as an argument, as in configureReports(auth).
+func passesRegistry(call *sitter.Node, registry string, src []byte) bool {
+	if registry == "" {
+		return false
+	}
+	for _, a := range namedChildren(call.ChildByFieldName("arguments")) {
+		if a.Type() == "identifier" && a.Content(src) == registry {
+			return true
+		}
+	}
+	return false
+}
+
+// ruleMatcherCalls are the calls that open a rule inside an
+// authorizeHttpRequests lambda.
+var ruleMatcherCalls = map[string]bool{
+	"requestMatchers": true, "anyRequest": true, "antMatchers": true,
+	"mvcMatchers": true, "regexMatchers": true, "dispatcherTypeMatchers": true,
+}
+
+// hasRuleOffStraightLine reports whether a lambda configures a rule that
+// is not straight-line code at its top level, or hands its registry to
+// another method: exactly the shapes collectChainRules reads as unknown.
+func hasRuleOffStraightLine(lambda *sitter.Node, src []byte) bool {
+	registry := lambdaParamName(lambda, src)
+	found := false
+	var walk func(n *sitter.Node, straight bool)
+	walk = func(n *sitter.Node, straight bool) {
+		if found {
+			return
+		}
+		if n != lambda && notStraightLine[n.Type()] {
+			straight = false
+		}
+		if n.Type() == "method_invocation" {
+			if name := n.ChildByFieldName("name"); name != nil && ruleMatcherCalls[name.Content(src)] && !straight {
+				found = true
+			}
+			if passesRegistry(n, registry, src) {
+				found = true
+			}
+		}
+		for _, c := range namedChildren(n) {
+			walk(c, straight)
+		}
+	}
+	walk(lambda, true)
+	return found
 }
 
 func chainRuleFromTerminal(terminal *sitter.Node, src []byte, ctx chainContext) (filterChainRule, bool) {

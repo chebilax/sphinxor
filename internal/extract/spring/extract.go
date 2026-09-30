@@ -401,7 +401,7 @@ func unreadableLayerReason(forms urlLayerForms, servletChainParsed bool) string 
 			blockers = append(blockers, fmt.Sprintf("%d of them conditional on @Profile/@Conditional, so which exist depends on configuration", forms.servletConditional))
 		}
 		if forms.servletBranched > 0 {
-			blockers = append(blockers, fmt.Sprintf("%d configuring their rules inside a code branch", forms.servletBranched))
+			blockers = append(blockers, fmt.Sprintf("%d configuring their rules inside a code branch or a helper method", forms.servletBranched))
 		}
 		if forms.servletOpaqueMatcher > 0 {
 			blockers = append(blockers, fmt.Sprintf("%d with a securityMatcher that is not string literals", forms.servletOpaqueMatcher))
