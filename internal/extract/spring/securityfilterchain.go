@@ -51,6 +51,12 @@ var chainHTTPMethodNames = map[string]model.HTTPMethod{
 	"PUT":    model.MethodPut,
 	"PATCH":  model.MethodPatch,
 	"DELETE": model.MethodDelete,
+	// HEAD and OPTIONS scope a rule to verbs no handler row answers
+	// directly: requestMatchers(HttpMethod.OPTIONS, "/**") is the CORS
+	// preflight idiom, and read without its verb it became a permitAll()
+	// on every path (ADR 0020 §1).
+	"HEAD":    model.MethodHead,
+	"OPTIONS": model.MethodOptions,
 }
 
 // filterChainRule is one recognized-or-not authorizeHttpRequests rule, in
@@ -625,6 +631,10 @@ func requestMatchersArgs(args *sitter.Node, src []byte) (*model.HTTPMethod, []st
 
 	var patterns []string
 	for _, n := range nodes[start:] {
+		switch n.Type() {
+		case "line_comment", "block_comment":
+			continue
+		}
 		if v, ok := stringLiteralValue(n, src); ok {
 			patterns = append(patterns, v)
 			continue
@@ -635,7 +645,13 @@ func requestMatchersArgs(args *sitter.Node, src []byte) (*model.HTTPMethod, []st
 				method = m
 			}
 			patterns = append(patterns, ps...)
+			continue
 		}
+		// ADR 0020 §1: one argument that cannot be read leaves the whole
+		// matcher unknown. Skipping it would read the rule as covering
+		// fewer paths than it does, and let an endpoint it governs fall
+		// through to a later rule.
+		return method, nil
 	}
 	return method, patterns
 }

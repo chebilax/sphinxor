@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A SecurityFilterChain matcher is no longer read partially.** An argument of
+  `requestMatchers(...)` that could not be read was skipped, where ADR 0020 §1 says the
+  whole matcher is unknown.
+  - `requestMatchers(HttpMethod.OPTIONS, "/**")`, the CORS preflight idiom, was read as
+    `requestMatchers("/**")`, because `OPTIONS` was not a known method. It became a
+    `permitAll()` on every path and every verb, and hid every rule after it.
+  - `requestMatchers("/open", somePath())` was read as `"/open"` alone.
+
+  Now one unread argument makes the matcher unknown, and `HEAD` and `OPTIONS` scope a
+  rule to those verbs. Both shapes occur only in projects whose URL layer is already
+  unknown (Stirling-PDF's SaaS chain, fineract), so no corpus output changes.
+
 - **Several SecurityFilterChain beans are no longer read as one.** The URL layer was read
   when exactly one `authorizeHttpRequests` lambda was found, not exactly one chain bean as
   [ADR 0012](docs/decisions/0012-securityfilterchain-effective-policy.md) §1 and ADR 0040

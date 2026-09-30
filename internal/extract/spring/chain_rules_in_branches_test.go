@@ -16,6 +16,7 @@ func chainBranchProject(t *testing.T, lambdaBody, extraMembers string) *model.Mo
 	return extractProject(t, map[string]string{
 		"SecurityConfig.java": `package app;
 import java.util.List;
+import org.springframework.http.HttpMethod;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
