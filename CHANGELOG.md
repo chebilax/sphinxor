@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The export no longer grants an endpoint that the project guards with its own
+  annotation.** When the URL layer required `authenticated()` and nothing on the method
+  was read, the export granted `"*"`, even when the handler carried an annotation that
+  the project enforces through an aspect or interceptor. mateclaw's
+  `@RequireWorkspaceRole` is the example: its interceptor answers 403 unless the caller
+  holds a workspace role.
+
+  Such an endpoint is now omitted under `project-enforcement-unread`, naming the
+  annotation and its reader. It counts when the annotation is declared in the project and
+  its reader can stop the request: it throws, calls a project method that throws, sends an
+  error, returns `false`, or proceeds only conditionally. See
+  [ADR 0023](docs/decisions/0023-third-party-authorization-annotations.md) Amendment 1.
+
+  Measured on corpus-20, the 12 corpus-40 projects and all fixtures: no exported rule
+  changes, and RuoYi-Vue's export with declarations keeps its 100 rules. On `main` the gap
+  was latent, since mateclaw's URL layer was unresolved. Reading it, in the next change,
+  would have exposed it.
+
 - **A SecurityFilterChain matcher is no longer read partially.** An argument of
   `requestMatchers(...)` that could not be read was skipped, where ADR 0020 §1 says the
   whole matcher is unknown.

@@ -125,6 +125,11 @@ type Model struct {
 	// UnrecognizedAuthAnnotations records access-control annotations that
 	// were found on an endpoint and could not be identified — ADR 0022.
 	UnrecognizedAuthAnnotations []UnrecognizedAuthAnnotation
+	// ProjectEnforcements are annotations the project declares and enforces
+	// with its own aspect or interceptor, found on an endpoint (ADR 0023
+	// Amendment 1). Not guards: what they require is not read. The export
+	// omits these endpoints; nothing else reads them yet.
+	ProjectEnforcements []ProjectEnforcement
 	// ThirdPartyAuth records, per third-party authorization framework
 	// actually seen in this project, whether the wiring that switches its
 	// annotations on was located — ADR 0023 §3.
@@ -206,6 +211,17 @@ type ThirdPartyAuthStatus struct {
 // endpoint anyway, with a message saying so (ADR 0030 §1/§3). Consumers
 // reading this collection as "something protects this endpoint" are
 // correct for a read and wrong for a write.
+// ProjectEnforcement is one project-declared annotation on an endpoint,
+// read by an @Aspect pointcut or a HandlerInterceptor in the analyzed
+// source — ADR 0023 Amendment 1. Detected by structure only, which cannot
+// tell authorization from logging or rate limiting: a consumer may treat it
+// as "something may deny this request", never as protection.
+type ProjectEnforcement struct {
+	EndpointID ID
+	Annotation string   // simple name, e.g. "RequireWorkspaceRole"
+	Readers    []string // the aspects or interceptors reading it, "Class (File.java)"
+}
+
 type UnrecognizedAuthAnnotation struct {
 	ID         ID
 	EndpointID ID

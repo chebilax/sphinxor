@@ -151,6 +151,10 @@ func Extract(dir string) (*model.Model, allowlist.Outcome, error) {
 		AnchorOwner: b.anchorOwner,
 	})
 
+	// ADR 0023 Amendment 1: annotations the project enforces with its own
+	// aspect or interceptor. After collide.Resolve, so IDs are final.
+	scanProjectEnforcement(files, b)
+
 	outcome := allowlist.Outcome{AllowlistedEndpoints: make(map[model.ID]bool)}
 	for _, f := range files {
 		var anchors []allowlist.Anchor
