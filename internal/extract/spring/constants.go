@@ -218,7 +218,9 @@ func (idx *constIndex) indexBody(decl *sitter.Node, fq string, scope *fileScope)
 		if !constant {
 			continue
 		}
-		if t := m.ChildByFieldName("type"); t == nil || t.Content(src) != "String" {
+		// String, and String[] for chain matcher patterns (Amendment 1).
+		// eval reads only the first; evalList reads both.
+		if t := m.ChildByFieldName("type"); t == nil || (t.Content(src) != "String" && strings.ReplaceAll(t.Content(src), " ", "") != "String[]") {
 			continue
 		}
 		for _, d := range namedChildren(m) {
@@ -413,6 +415,18 @@ func (idx *constIndex) eval(n *sitter.Node, scope *fileScope, cls string, depth 
 }
 
 func (idx *constIndex) evalName(n *sitter.Node, scope *fileScope, cls string, depth int) (string, bool, string, string) {
+	r, _, ok, term, reason := idx.resolveName(n, scope, cls)
+	if !ok {
+		return "", false, term, reason
+	}
+	return idx.eval(r.value, r.scope, r.class, depth+1)
+}
+
+// resolveName finds what a bare name refers to, in the order Java does: a
+// local variable, a field of the class or an enclosing class (each with
+// its supertypes), a single static import, then on-demand static imports.
+// local reports that it is a local variable.
+func (idx *constIndex) resolveName(n *sitter.Node, scope *fileScope, cls string) (r constRef, local, ok bool, term, reason string) {
 	src := scope.src
 	name := n.Content(src)
 	if callable := enclosingCallable(n); callable != nil {
@@ -420,7 +434,7 @@ func (idx *constIndex) evalName(n *sitter.Node, scope *fileScope, cls string, de
 			for _, d := range namedChildren(decl) {
 				if d.Type() == "variable_declarator" {
 					if id := d.ChildByFieldName("name"); id != nil && id.Content(src) == name {
-						return idx.eval(d.ChildByFieldName("value"), scope, cls, depth+1)
+						return constRef{value: d.ChildByFieldName("value"), scope: scope, class: cls}, true, true, "", ""
 					}
 				}
 			}
@@ -431,7 +445,7 @@ func (idx *constIndex) evalName(n *sitter.Node, scope *fileScope, cls string, de
 	for e := cls; e != ""; {
 		r, found, c := idx.fieldIn(e, name, 0)
 		if found {
-			return idx.eval(r.value, r.scope, r.class, depth+1)
+			return r, false, true, "", ""
 		}
 		complete = complete && c
 		i := strings.LastIndex(e, ".")
@@ -442,18 +456,18 @@ func (idx *constIndex) evalName(n *sitter.Node, scope *fileScope, cls string, de
 	}
 	if !complete {
 		// An inherited field from outside the tree would shadow any import.
-		return "", false, name, unresolvedOutside
+		return constRef{}, false, false, name, unresolvedOutside
 	}
 	if fq, ok := scope.staticSingle[name]; ok {
 		if r, found, _ := idx.fieldIn(fq, name, 0); found {
-			return idx.eval(r.value, r.scope, r.class, depth+1)
+			return r, false, true, "", ""
 		}
-		return "", false, name, unresolvedOutside
+		return constRef{}, false, false, name, unresolvedOutside
 	}
 	var cands []constRef
 	for _, w := range scope.staticWild {
 		if _, inTree := idx.classes[w]; !inTree {
-			return "", false, name, unresolvedOutside
+			return constRef{}, false, false, name, unresolvedOutside
 		}
 		if r, found, _ := idx.fieldIn(w, name, 0); found {
 			cands = append(cands, r)
@@ -461,11 +475,69 @@ func (idx *constIndex) evalName(n *sitter.Node, scope *fileScope, cls string, de
 	}
 	switch len(cands) {
 	case 1:
-		return idx.eval(cands[0].value, cands[0].scope, cands[0].class, depth+1)
+		return cands[0], false, true, "", ""
 	case 0:
-		return "", false, name, unresolvedOutside
+		return constRef{}, false, false, name, unresolvedOutside
 	}
-	return "", false, name, unresolvedAmbiguous
+	return constRef{}, false, false, name, unresolvedAmbiguous
+}
+
+// evalList evaluates a chain matcher argument to its patterns (Amendment 1):
+// one string by eval's rules, or an array — inline, or a static final
+// String[] field reached by Java's name resolution — whose every element
+// evaluates. A local array is not read: its elements can be reassigned.
+// ok is false for anything else; a partial list is never returned.
+func (idx *constIndex) evalList(n *sitter.Node, scope *fileScope, cls string, depth int) ([]string, bool) {
+	if n == nil || depth > 24 {
+		return nil, false
+	}
+	src := scope.src
+	switch n.Type() {
+	case "array_initializer":
+		var out []string
+		for _, e := range namedChildren(n) {
+			switch e.Type() {
+			case "line_comment", "block_comment":
+				continue
+			}
+			v, ok, _, _ := idx.eval(e, scope, cls, depth+1)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, v)
+		}
+		return out, len(out) > 0
+	case "array_creation_expression":
+		return idx.evalList(findChildByType(n, "array_initializer"), scope, cls, depth+1)
+	case "identifier":
+		r, local, ok, _, _ := idx.resolveName(n, scope, cls)
+		if !ok {
+			return nil, false
+		}
+		if isArrayValue(r.value) {
+			if local {
+				return nil, false
+			}
+			return idx.evalList(r.value, r.scope, r.class, depth+1)
+		}
+	case "field_access":
+		obj, field := n.ChildByFieldName("object"), n.ChildByFieldName("field")
+		if obj != nil && field != nil {
+			if fq, ok, _ := idx.resolveClass(obj.Content(src), scope, cls); ok {
+				if r, found, _ := idx.fieldIn(fq, field.Content(src), 0); found && isArrayValue(r.value) {
+					return idx.evalList(r.value, r.scope, r.class, depth+1)
+				}
+			}
+		}
+	}
+	if v, ok, _, _ := idx.eval(n, scope, cls, depth); ok {
+		return []string{v}, true
+	}
+	return nil, false
+}
+
+func isArrayValue(n *sitter.Node) bool {
+	return n != nil && (n.Type() == "array_initializer" || n.Type() == "array_creation_expression")
 }
 
 // enumName evaluates E.C.name() to "C", Java's defined meaning of name(),

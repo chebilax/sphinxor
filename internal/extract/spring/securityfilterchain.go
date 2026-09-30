@@ -544,7 +544,7 @@ func chainRuleFromTerminal(terminal *sitter.Node, src []byte, ctx chainContext) 
 	case "anyRequest":
 		anyRequest = true
 	case "requestMatchers":
-		method, patterns = requestMatchersArgs(object.ChildByFieldName("arguments"), src)
+		method, patterns = requestMatchersArgs(object.ChildByFieldName("arguments"), src, ctx)
 		// No pattern could be read out of a matcher that is definitely
 		// present. ADR 0020 §1: record that as unknown, not as universal.
 		matcherUnreadable = len(patterns) == 0
@@ -613,7 +613,7 @@ func chainRuleFromTerminal(terminal *sitter.Node, src []byte, ctx chainContext) 
 // optional leading HttpMethod (HttpMethod.X field access, or a bare
 // statically-imported identifier — both confirmed against real vendored
 // source), followed by one or more string-literal patterns.
-func requestMatchersArgs(args *sitter.Node, src []byte) (*model.HTTPMethod, []string) {
+func requestMatchersArgs(args *sitter.Node, src []byte, ctx chainContext) (*model.HTTPMethod, []string) {
 	if args == nil {
 		return nil, nil
 	}
@@ -640,12 +640,19 @@ func requestMatchersArgs(args *sitter.Node, src []byte) (*model.HTTPMethod, []st
 			continue
 		}
 		// A matcher-wrapper call carrying the pattern one level deeper.
-		if m, ps, ok := matcherWrapperArgs(n, src); ok {
+		if m, ps, ok := matcherWrapperArgs(n, src, ctx); ok {
 			if m != nil && method == nil {
 				method = m
 			}
 			patterns = append(patterns, ps...)
 			continue
+		}
+		// ADR 0039 Amendment 1: a constant, or a constant array of them.
+		if ctx.consts != nil && ctx.scope != nil {
+			if vs, ok := ctx.consts.evalList(n, ctx.scope, ctx.class, 0); ok {
+				patterns = append(patterns, vs...)
+				continue
+			}
 		}
 		// ADR 0020 §1: one argument that cannot be read leaves the whole
 		// matcher unknown. Skipping it would read the rule as covering
@@ -675,7 +682,7 @@ var antPatternWrappers = map[string]bool{
 // e.g. antMatcher("/admin/**") or antMatcher(HttpMethod.GET, "/admin/**"),
 // whether called bare (static import) or qualified
 // (AntPathRequestMatcher.antMatcher(...)).
-func matcherWrapperArgs(n *sitter.Node, src []byte) (*model.HTTPMethod, []string, bool) {
+func matcherWrapperArgs(n *sitter.Node, src []byte, ctx chainContext) (*model.HTTPMethod, []string, bool) {
 	if n.Type() != "method_invocation" {
 		return nil, nil, false
 	}
@@ -683,7 +690,7 @@ func matcherWrapperArgs(n *sitter.Node, src []byte) (*model.HTTPMethod, []string
 	if name == nil || !antPatternWrappers[name.Content(src)] {
 		return nil, nil, false
 	}
-	method, patterns := requestMatchersArgs(n.ChildByFieldName("arguments"), src)
+	method, patterns := requestMatchersArgs(n.ChildByFieldName("arguments"), src, ctx)
 	if len(patterns) == 0 {
 		return nil, nil, false
 	}

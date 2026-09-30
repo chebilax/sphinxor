@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Constants in SecurityFilterChain matchers are read.** `requestMatchers(PATHS)`, where
+  `PATHS` is a `static final String[]` or a `String` constant, or an inline
+  `new String[]{...}`, is read through the constant index of
+  [ADR 0039](docs/decisions/0039-route-path-constants.md) Amendment 1. Before, the matcher
+  was unreadable. A local array, or any element that cannot be evaluated, still leaves the
+  matcher unknown.
+
+  mateclaw's 501 endpoints are no longer unknown, and its export gains 49 `"*"` rules on
+  81 endpoints. Each is justified in the ADR. Nine of them sit on handlers that check a
+  workspace or admin role in code, which the `"*"` statement covers.
+
 ### Added
 
 - **A `"*"` grant says what it means.** Every exported policy file with a rule granting
