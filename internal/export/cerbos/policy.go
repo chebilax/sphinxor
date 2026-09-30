@@ -24,6 +24,32 @@ const routeHeader = "#\n" +
 	"# this policy is regenerated. Other rules need only the resource and the action.\n" +
 	"#\n"
 
+// WildcardMeaning is what a rule granting role "*" says, and what it does
+// not. "*" is how the export writes "authenticated, no role required", and
+// it is read by a deployer as "every authenticated user has access" — a
+// claim Sphinxor cannot make: a check in handler code, a servlet filter or
+// a framework it does not read leaves no signal. Stated in every policy
+// file with such a rule and in the export report, as ADR 0044 states the
+// route contract.
+const WildcardMeaning = `A rule granting role "*" means Sphinxor detected no restriction beyond
+authentication for that action. It never means that every authenticated user
+really has access: a check written in handler code, a servlet filter, or a
+framework Sphinxor does not read leaves no signal it can see. Review every "*"
+grant against the code before deploying.`
+
+// wildcardHeader carries WildcardMeaning into a policy file.
+var wildcardHeader = "#\n# ANY AUTHENTICATED (\"*\"): " + strings.ReplaceAll(WildcardMeaning, "\n", "\n# ") + "\n#\n"
+
+// grantsWildcard reports whether rule grants role "*".
+func grantsWildcard(rule *Rule) bool {
+	for _, r := range rule.Roles {
+		if r == anyAuthenticatedRole {
+			return true
+		}
+	}
+	return false
+}
+
 // ResourceNames returns every resource r has anything to say about — a
 // Rule or an Omission — sorted. A resource with only Omissions (every
 // endpoint on that controller was omitted) still gets a name here: its
@@ -113,6 +139,12 @@ func RenderPolicy(resource string, r Result) string {
 	for _, e := range entries {
 		if e.rule != nil && e.rule.Route != "" {
 			b.WriteString(routeHeader)
+			break
+		}
+	}
+	for _, e := range entries {
+		if e.rule != nil && grantsWildcard(e.rule) {
+			b.WriteString(wildcardHeader)
 			break
 		}
 	}

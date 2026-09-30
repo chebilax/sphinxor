@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/chebilax/sphinxor/internal/export/cerbos"
@@ -61,6 +62,15 @@ func writeExportMarkdown(w io.Writer, result cerbos.Result) error {
 			b.WriteString("- " + a + "\n")
 		}
 		b.WriteString("\n")
+	}
+
+	for _, rule := range result.Rules {
+		if slices.Contains(rule.Roles, "*") {
+			// What "*" means, where the report is read.
+			b.WriteString("## What \"*\" means\n\n")
+			b.WriteString(cerbos.WildcardMeaning + "\n\n")
+			break
+		}
 	}
 
 	if len(result.Caveats) > 0 {

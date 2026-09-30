@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A `"*"` grant says what it means.** Every exported policy file with a rule granting
+  role `"*"` starts with a statement, and so does the export report: `"*"` means Sphinxor
+  detected no restriction beyond authentication. It never means that every authenticated
+  user really has access, because a check in handler code, a servlet filter or a framework
+  Sphinxor does not read leaves no signal. This is stated the same way as the route
+  contract of ADR 0044. No current corpus export grants `"*"`.
+
 ### Fixed
 
 - **The export no longer grants an endpoint that the project guards with its own
