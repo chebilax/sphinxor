@@ -339,6 +339,18 @@ func projectWarnings(m *model.Model) []string {
 				"`sphinxor export cerbos` omits them, since a policy cannot be named after a fragment of a route.", 9, 100))
 	}
 
+	// ADR 0018 Amendment 1: endpoints whose URL rule was not read while it
+	// could narrow access. The matrix marks each row "URL ?"; this says
+	// which rules to read, since the method layer shown is not the whole
+	// policy.
+	if n, rules := unresolvedURLRules(m); n > 0 {
+		out = append(out, "the URL rule that may govern "+strconv.Itoa(n)+" endpoint(s) could not be read ("+
+			strings.Join(rules, ", ")+").\n"+
+			wrapIndented("Some outcome of it could narrow access, so the effective policy of these endpoints is "+
+				"unknown. The matrix marks them URL ? and shows their method layer only; `sphinxor export cerbos` "+
+				"omits them.", 9, 100))
+	}
+
 	// Amendment 2 §8: one route declared by two controllers, where the two
 	// sides carry different guards. It is conditioned on that difference
 	// deliberately: the survey behind that amendment found same-path
@@ -720,4 +732,38 @@ func thirdPartyStatusFor(m *model.Model, boundTo string) (model.ThirdPartyAuthSt
 		}
 	}
 	return model.ThirdPartyAuthStatus{}, false
+}
+
+// unresolvedURLRules counts endpoints marked URLRuleUnresolved and lists
+// the distinct rule locations responsible, in source order.
+func unresolvedURLRules(m *model.Model) (int, []string) {
+	n := 0
+	seen := map[string]bool{}
+	type loc struct {
+		file string
+		line int
+	}
+	var locs []loc
+	for _, e := range m.Endpoints {
+		if !e.URLRuleUnresolved {
+			continue
+		}
+		n++
+		k := e.URLRuleFile + ":" + strconv.Itoa(e.URLRuleLine)
+		if !seen[k] {
+			seen[k] = true
+			locs = append(locs, loc{e.URLRuleFile, e.URLRuleLine})
+		}
+	}
+	sort.Slice(locs, func(i, j int) bool {
+		if locs[i].file != locs[j].file {
+			return locs[i].file < locs[j].file
+		}
+		return locs[i].line < locs[j].line
+	})
+	out := make([]string, len(locs))
+	for i, l := range locs {
+		out[i] = l.file + ":" + strconv.Itoa(l.line)
+	}
+	return n, out
 }

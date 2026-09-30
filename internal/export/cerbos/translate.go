@@ -9,6 +9,7 @@
 package cerbos
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -190,6 +191,11 @@ const (
 	// not belong behind a decision point that authorizes principals, and
 	// roles ["*"] would mean "any authenticated principal", not anyone.
 	ReasonDeclaredPublic OmissionReason = "declared-public"
+	// ReasonURLRuleUnresolved: a URL rule that may govern the endpoint
+	// could not be read, and some outcome of it could narrow access, so
+	// the effective policy is unknown (ADR 0018 Amendment 1). Exporting
+	// the method layer alone could grant what the application denies.
+	ReasonURLRuleUnresolved OmissionReason = "url-rule-unresolved"
 )
 
 // Omission records one endpoint that could not become part of any Rule,
@@ -482,6 +488,21 @@ func TranslateWith(m *model.Model, d Declarations) Result {
 				Detail: "this handler answers every HTTP verb (a @RequestMapping with no method attribute), " +
 					"so it has no single action to name: \"any\" is not an action a request carries, and " +
 					"granting all eight would grant verbs the handler may never have been meant to serve",
+			})
+			continue
+		}
+		// ADR 0018 Amendment 1: a URL rule that may govern this endpoint
+		// was not read, and could narrow access. The effective policy is
+		// the intersection of both layers (ADR 0012), so the method layer
+		// alone could grant what the application denies.
+		if e.URLRuleUnresolved {
+			pathOmissions = append(pathOmissions, Omission{
+				Endpoint: e,
+				Resource: resource,
+				Reason:   ReasonURLRuleUnresolved,
+				Detail: fmt.Sprintf("a URL rule that may govern this endpoint (%s:%d) could not be read, and it "+
+					"could narrow access, so the effective policy is unknown — the method layer alone may be "+
+					"broader than what the application enforces", e.URLRuleFile, e.URLRuleLine),
 			})
 			continue
 		}

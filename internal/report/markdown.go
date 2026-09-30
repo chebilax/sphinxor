@@ -73,13 +73,23 @@ func countByStatus(findings []model.Finding) (blocking, warnings, allowlisted in
 // does and Sphinxor could not say what. The run's warning names the
 // package it actually came from.
 func renderGuards(row Row) string {
-	if !row.UnrecognizedAuth {
-		return joinOrDash(row.Guards)
+	cell := joinOrDash(row.Guards)
+	if row.UnrecognizedAuth {
+		if len(row.Guards) == 0 {
+			cell = "?"
+		} else {
+			cell = strings.Join(row.Guards, ", ") + ", ?"
+		}
 	}
-	if len(row.Guards) == 0 {
-		return "?"
+	// ADR 0018 Amendment 1: a URL rule that may narrow access was not read.
+	// What is shown is the method layer only.
+	if row.URLRuleUnresolved {
+		if cell == "-" {
+			return "URL ?"
+		}
+		return cell + ", URL ?"
 	}
-	return strings.Join(row.Guards, ", ") + ", ?"
+	return cell
 }
 
 // renderRoles shows an endpoint's role requirement, marking the case
