@@ -196,6 +196,11 @@ const (
 	// the effective policy is unknown (ADR 0018 Amendment 1). Exporting
 	// the method layer alone could grant what the application denies.
 	ReasonURLRuleUnresolved OmissionReason = "url-rule-unresolved"
+	// ReasonProjectEnforcementUnread: the endpoint carries an annotation the
+	// project declares and enforces with its own aspect or interceptor
+	// (ADR 0023 Amendment 1). What it requires is not read, and it may deny
+	// what both layers allow, so no grant can be exported.
+	ReasonProjectEnforcementUnread OmissionReason = "project-enforcement-unread"
 )
 
 // Omission records one endpoint that could not become part of any Rule,
@@ -334,6 +339,13 @@ func TranslateWith(m *model.Model, d Declarations) Result {
 		}
 		sortOmissions(result.Omissions)
 		return result
+	}
+
+	enforcedBy := make(map[model.ID]model.ProjectEnforcement, len(m.ProjectEnforcements))
+	for _, p := range m.ProjectEnforcements {
+		if _, seen := enforcedBy[p.EndpointID]; !seen {
+			enforcedBy[p.EndpointID] = p
+		}
 	}
 
 	guardAppByID := make(map[model.ID]model.GuardApplication, len(m.GuardApplications))
@@ -503,6 +515,17 @@ func TranslateWith(m *model.Model, d Declarations) Result {
 				Detail: fmt.Sprintf("a URL rule that may govern this endpoint (%s:%d) could not be read, and it "+
 					"could narrow access, so the effective policy is unknown — the method layer alone may be "+
 					"broader than what the application enforces", e.URLRuleFile, e.URLRuleLine),
+			})
+			continue
+		}
+		// ADR 0023 Amendment 1: enforced by the project's own code, unread.
+		if pe, ok := enforcedBy[e.ID]; ok {
+			pathOmissions = append(pathOmissions, Omission{
+				Endpoint: e,
+				Resource: resource,
+				Reason:   ReasonProjectEnforcementUnread,
+				Detail: fmt.Sprintf("carries @%s, declared in this project and enforced by %s; what it requires "+
+					"is not read, and it may deny what the URL and method layers allow", pe.Annotation, strings.Join(pe.Readers, ", ")),
 			})
 			continue
 		}

@@ -4,6 +4,11 @@
 
 Accepted.
 
+**Amendment 1: Accepted** (2026-09-30, the owner's decision). The Cerbos export omits an
+endpoint that carries an annotation the project declares and enforces with its own aspect
+or interceptor. The residue recorded in *Consequences* reached the export, not only the
+findings. See *Amendment 1*.
+
 §1's on-demand-import clause was reversed during implementation: a test showed that
 honoring a wildcard bound every unimported annotation in the file to the Shiro
 package, including `@RestController`. The reasoning and the measurement that make
@@ -301,3 +306,123 @@ figures above are what the tool actually does, and supersede the prediction.
     `AuthorizationAttributeSourceAdvisor` bean reports the wiring as located; the
     same project without one reports that it was not, without changing which
     findings are suppressed.
+
+## Amendment 1 — The export omits endpoints the project enforces with its own code (2026-09-30)
+
+### The residue reached the export
+
+*Consequences* recorded project-local annotations as a residue with one stated effect:
+"their endpoints keep their current findings". The export was never considered.
+
+When the URL layer requires `authenticated()` and nothing on the method is read, the
+export grants `"*"`, any authenticated principal. On an endpoint carrying such an
+annotation, that is a grant the application denies.
+
+**Found by ADR 0039 Amendment 1.** Reading mateclaw's constant matcher array made its
+URL layer readable, and the export went from 0 rules to 184. That included `"*"` on
+`DELETE /api/v1/agents/{id}`, which carries `@RequireWorkspaceRole("member")`, enforced
+with a 403 by `WorkspaceAccessInterceptor`. It was not merged. On `main`, no corpus
+export was affected, because mateclaw's URL layer was unresolved.
+
+### Decision
+
+An endpoint carrying an annotation that is **declared in the analyzed source** and read
+by a reader that **can stop the request** is recorded as a `ProjectEnforcement`. The
+Cerbos export omits it under `project-enforcement-unread`, naming the annotation and its
+readers.
+
+A reader is either:
+- an `@Aspect` advice whose pointcut selects the annotation, through `@annotation(...)`
+  or `@within(...)`, directly, through a bound advice parameter, or through a named
+  `@Pointcut`;
+- a Spring MVC `HandlerInterceptor` that looks it up with its class literal
+  (`get…`, `find…` or `has…Annotation`).
+
+It **can stop the request** when any of these holds:
+- **An exception can leave the method.** It throws, or it calls a project method whose
+  body throws.
+  - Project methods are followed one level deep.
+  - A project call beyond that level counts as able to stop, and so does a call whose
+    receiver cannot be typed. In doubt, the endpoint is omitted.
+  - A call is resolved by its receiver's declared type: a field, parameter, local, or
+    class name. A call on a type outside the analyzed source is not a project call.
+  - A `throw` or call inside a `try` whose `catch` of `Exception` or `Throwable` does not
+    rethrow cannot leave the method.
+- **It sends an error response** (`sendError`, `setStatus`).
+- **An interceptor returns `false`.**
+- **An `@Around` proceeds only conditionally, or never.**
+
+After-advice (`@AfterReturning`, `@AfterThrowing`, `@After`) counts when an exception
+can leave it. It still replaces the response, as `@PostAuthorize` does on a read, and
+counting it costs only omissions.
+
+It is recorded as a separate collection, not as a guard, for ADR 0022's reason: a
+consumer that has never heard of it cannot mistake it for protection. Nothing but the
+export reads it for now.
+
+### Structure alone was rejected, for the export too
+
+"Declared in the project and read by an aspect or interceptor" was the first criterion.
+It is safe, since over-inclusion only omits more. But it removes correct rules wherever
+logging runs through an aspect, which is common: **59 of the 100 rules in the ADR 0041
+reference case**, RuoYi-Vue with declarations. There, `@Log`, read by `LogAspect`, sits
+on 74 endpoints.
+
+`LogAspect` cannot deny:
+- its `@Before` records a start time in a `ThreadLocal`;
+- its after-advice calls `handleLog`, whose whole body sits inside a `catch
+  (Exception)` that only logs.
+
+### Two consumers, two criteria
+
+The export uses "can stop the request". Findings keep today's behaviour until ADR 0047
+decides, and ADR 0047 proposes the same question with the precision that findings need.
+The reason is that a false positive costs the two in opposite directions:
+- **In the export,** a reader wrongly counted as enforcing costs a rule, never a wrong
+  grant. The criterion leans that way: every `@Around` logger that rethrows counts.
+- **In findings,** the same mistake would hide a real finding.
+
+### Measured
+
+Every project-declared annotation on a handler and read by an aspect or interceptor, on
+corpus-20, the 12 corpus-40 projects and all fixtures. That is **36 annotation–reader
+pairs**:
+- **34 are classified enforcing.** They include every reader that enforces access:
+  - mateclaw's `@RequireWorkspaceRole`, `@RequireGlobalAdmin` and `@RequireKbScope`;
+  - zeus-iot's and streampark's `@Permission`;
+  - metersphere's `@CheckOwner`, `@CheckOrgOwner` and `@CheckProjectOwner`;
+  - JeecgBoot's `@SignatureCheck`;
+  - Stirling-PDF's licence gates.
+
+  They also include loggers, audit, rate limits and locks that can throw or skip
+  `proceed()`, such as `@AutoLog`, eladmin's `@Log`, `@OperationLog` and `@Limiter`.
+  They cost omissions, never a wrong grant.
+- **2 are classified non-enforcing,** and both were confirmed by reading:
+  - RuoYi-Vue's `@Log` (`LogAspect`), as above;
+  - shenyu's `@Log` (`LogInterceptor`, in `shenyu-examples`): an `@Around` whose
+    `proceed()` sits unconditionally in a `try`, whose `catch (Throwable)` only logs,
+    and whose `return null` is reached only after the handler has run.
+
+Against `main` at `021603c`:
+
+| Export | Effect |
+|---|---|
+| Default, corpus-20, the 12 corpus-40 projects and all fixtures | **No exported rule changes.** Endpoints that were already omitted change reason in dataease (1) and mateclaw (14) |
+| RuoYi-Vue with ADR 0041 declarations | **Byte-identical:** 100 rules |
+| With ADR 0039 Amendment 1 on top | Measured in that PR |
+
+### Residual risk, stated
+
+- **Missed denial mechanisms.** A reader that denies by a mechanism not listed is
+  counted non-enforcing, and its endpoints stay exportable. Examples:
+  - redirecting;
+  - writing a body without an error status;
+  - throwing an `Error`, which escapes a catch of `Exception`;
+  - denial through a callback registered elsewhere.
+- **Readers outside the analyzed source are not seen at all.** That covers an
+  annotation declared in a dependency, and a servlet filter.
+- **Resolution by simple name.** Methods resolve by simple name within a class. An
+  overloaded method is followed through every overload, which leans toward omitting.
+
+Only readers classified non-enforcing leave endpoints exportable. On the corpus there are
+two, and both were read.

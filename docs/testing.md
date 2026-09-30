@@ -18,6 +18,8 @@ Sphinxor is therefore validated empirically, against real, representative open s
 
 - **The measurement corpus changes only by an ADR** ([ADR 0046](decisions/0046-corpus-extension.md)). Candidates are found by scope (Spring Security as a dependency), never by searching for a shape under measurement. A project is excluded for what it is (no web dependency, a tutorial, a fork), never for what the tool makes of it: a web project where Sphinxor finds no endpoints stays in, as a finding. A figure from the corpus is an occurrence, "this shape exists in real applications", never a rate.
 
+- **A coverage change reports the rules it newly exports, and justifies each one.** Making an unknown known makes the export more willing to grant, so it can uncover an over-grant that was hidden behind the unknown: [ADR 0023](decisions/0023-third-party-authorization-annotations.md) Amendment 1 was found this way. "Existing exported rules are unchanged" is not enough for such a change. The PR lists every new exported rule, grouped as it helps, and says why each grant is correct.
+
 ## What's out of scope for now
 
 Formal verification, fuzzing of the parser, and performance benchmarking at scale are not part of the v0.1 testing effort. They may become relevant as the tool matures, but adding them now would be testing infrastructure ahead of the product it's meant to validate.
