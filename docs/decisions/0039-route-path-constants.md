@@ -7,6 +7,10 @@ recorded in §9, and the measured results in §10. Narrows [ADR 0020](0020-unana
 Amendment 1 §5 to the paths that genuinely cannot be read. It reuses and extends the
 constant evaluation [ADR 0038](0038-role-hierarchy-read.md) §1 introduced.
 
+**Amendment 1: Accepted** (2026-09-30, the owner's decision). The same constant evaluation
+reads the patterns of a SecurityFilterChain matcher, including `static final String[]`
+arrays. See *Amendment 1*.
+
 It is sequenced before the multiple-`SecurityFilterChain` work because chain selection
 happens by URL path, and that should not be designed against 637 endpoints whose path
 is unknown.
@@ -412,3 +416,83 @@ is ADR 0014's question, not this one, and it is recorded as open in `docs/limita
   - policy files unchanged, or each change explained;
   - the ADR 0038 hierarchy sample reads the same edges;
   - every other fixture byte-identical.
+
+## Amendment 1 — Constants and constant arrays in SecurityFilterChain matchers (2026-09-30)
+
+### Why
+
+§2's constant evaluation reads controller paths and, since ADR 0040 §3, the roles of a
+chain rule. It never reached a rule's **patterns**. `requestMatchers(...)` read string
+literals and matcher wrappers only, and any other argument made the matcher unreadable
+(ADR 0020 §1, enforced since #79).
+
+[`coverage.md`](../coverage.md) measured the cost. mateclaw's 501 endpoints are unknown
+because of one line:
+
+```java
+private static final String[] OPENAPI_PATHS = { "/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs", ... };
+...
+if (exposeOpenApiUi) { auth.requestMatchers(OPENAPI_PATHS).permitAll(); }
+else                 { auth.requestMatchers(OPENAPI_PATHS).hasRole("ADMIN"); }
+auth.requestMatchers("/api/**").authenticated()
+```
+
+The matcher is unreadable, so it may cover any path. Its `else` arm requires `ADMIN`,
+which could narrow access. So every endpoint it could reach has an unknown policy (ADR
+0018 Amendment 1).
+
+### Decision
+
+A matcher argument is evaluated with §2's rules: a string literal, `+` concatenation, a
+`static final String` resolved with Java's name resolution, or `E.C.name()`. On top of
+that, an argument evaluates to **several patterns** when it is:
+- an inline array: `new String[]{...}` or `{...}`, with every element evaluable;
+- a `static final String[]` field, resolved with the same name resolution, whose
+  initializer is such an array.
+
+A local array variable is not read, since its elements can be reassigned after it is
+declared. Neither is a collection (`List.of`, `toArray`): Fix 2 in `coverage.md` takes
+those up separately.
+
+**Anything else still makes the whole matcher unreadable** (ADR 0020 §1): an array
+element that cannot be evaluated, a method call, a bean.
+
+### Measured before
+
+Every `requestMatchers(...)` call in every chain bean, on corpus-20, the 12 corpus-40
+projects and all fixtures, at `021603c`:
+
+| Repository | Calls that become readable | Through | Endpoint effect |
+|---|---:|---|---|
+| mateclaw | 2 | `String[]` constant | its one chain is read, so 501 endpoints can become known |
+| apollo | 3 | `String[]` constant | none: several chains, so the URL layer stays unknown |
+| thingsboard | 3 | `String` constants, one `String[]` | none, for the same reason |
+| nacos | 1 | `String` constant | none, for the same reason |
+| X-Road | 1 | `String` constant | none, for the same reason |
+
+Nothing else changes. Everything still unreadable is a method call (a `toArray`, an
+actuator `EndpointRequest`, a project helper), a method reference, or a bean.
+
+### Measured after
+
+Against `main` at `d8fb627`, which already includes ADR 0023 Amendment 1 and the `"*"`
+statement, on corpus-20, the 12 corpus-40 projects and all fixtures:
+- **Every target is byte-identical except mateclaw.**
+- **mateclaw:**
+  - 501 endpoints are no longer `URL ?`, and the warning is gone;
+  - the export goes from 0 rules to **49 rules on 81 endpoints, all `"*"`**;
+  - 431 endpoints carrying `@RequireWorkspaceRole`, `@RequireGlobalAdmin` or
+    `@RequireKbScope` stay omitted as `project-enforcement-unread`;
+  - 47 `permitAll()` endpoints are omitted as `no-guard`.
+
+**Each new rule, justified** (`docs/testing.md`). Every one of the 81 endpoints is under
+`/api/** authenticated()`, and carries no guard and no annotation enforced by an aspect or
+interceptor. So `"*"` is what the export states for it: no restriction detected beyond
+authentication. Grouped by what the handler does, found by searching each handler body and
+confirmed by reading a sample:
+
+| What the handler does | Endpoints | What the `"*"` grant amounts to |
+|---|---:|---|
+| **A role-level check in code**: `WorkspaceController` calls `requirePermission(…, "owner"/"admin")` (8), `WikiAdminController.listFailures` calls `requireAdmin` (1). Read: `delete`, `removeMember`, `updateMemberRole`, `listFailures` | 9 | **Broader than the application.** The policy allows an authenticated user the handler denies. This is the in-handler limit that the `"*"` statement names |
+| **An ownership or caller check in code**: conversations, goals, uploaded files, own password. Read: `ConversationController.delete`, `AuthController.changePassword` | 26 | The correct role-level floor. The application adds a per-object check that a role-only policy cannot express |
+| **No check found in the handler body**: health, templates, own tokens, speech, chat, plans, docs, webchat administration | 46 | No restriction detected beyond authentication. The search does not follow service calls, so this is a candidate classification |
