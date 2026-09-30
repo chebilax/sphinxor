@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Several SecurityFilterChain beans are no longer read as one.** The URL layer was read
+  when exactly one `authorizeHttpRequests` lambda was found, not exactly one chain bean as
+  [ADR 0012](docs/decisions/0012-securityfilterchain-effective-policy.md) §1 and ADR 0040
+  specify. A second chain whose rules are configured another way, such as a method
+  reference or a customizer, was ignored, although it may govern some paths first. The
+  export could then grant a role that chain denies. More than one chain bean now leaves
+  the URL layer unknown, whatever form each chain's rules take.
+
+  Measured on corpus-20, the 12 corpus-40 projects and all fixtures: Stirling-PDF, with 4
+  chain beans (`@Profile("saas")`, two under `mcp.enabled`, a SAML chain), goes from 98
+  exported rules to 0. Its 404 endpoints are omitted as `url-layer-unknown`, and a
+  warning names the chains. No other project changes.
+
 - **An endpoint behind an unread URL rule is no longer exported from its method layer
   alone.** The effective policy is the intersection of both layers (ADR 0012). When the
   URL rule that may govern an endpoint could not be read, as with `.access(...)`, an
